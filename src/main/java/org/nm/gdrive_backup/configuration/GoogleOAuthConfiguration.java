@@ -7,7 +7,6 @@ import org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase;
 import org.nm.gdrive_backup.domain.port.in.GoogleAuthorizationApproval;
 import org.nm.gdrive_backup.domain.port.out.GoogleOAuthPort;
 import org.nm.gdrive_backup.domain.service.GoogleLoginService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -21,7 +20,8 @@ import java.nio.file.Path;
 public class GoogleOAuthConfiguration {
 
 	@Bean
-	GoogleOAuthPort googleOAuthPort(@Value("${google.oauth.client-secrets:}") String clientSecretsPath) {
+	GoogleOAuthPort googleOAuthPort(GoogleOAuthProperties properties) {
+		String clientSecretsPath = properties.clientSecrets();
 		if (clientSecretsPath == null || clientSecretsPath.isBlank()) {
 			return new UnconfiguredGoogleOAuthPort();
 		}

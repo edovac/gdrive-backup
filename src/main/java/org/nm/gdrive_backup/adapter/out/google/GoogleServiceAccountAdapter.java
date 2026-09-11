@@ -1,0 +1,57 @@
+package org.nm.gdrive_backup.adapter.out.google;
+
+import com.google.auth.oauth2.AccessToken;
+import com.google.auth.oauth2.GoogleCredentials;
+import com.google.auth.oauth2.ServiceAccountCredentials;
+import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
+import org.nm.gdrive_backup.domain.port.out.ServiceAccountCredentialPort;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort {
+
+	public static final String DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+	public static final String DIRECTORY_USER_READONLY_SCOPE =
+			"https://www.googleapis.com/auth/admin.directory.user.readonly";
+
+	private static final Set<String> SCOPES = Set.of(
+			DRIVE_READONLY_SCOPE,
+			DIRECTORY_USER_READONLY_SCOPE);
+
+	private final ServiceAccountCredentials serviceAccountCredentials;
+	private final Map<UUID, AccessToken> accessTokens = new ConcurrentHashMap<>();
+
+	public GoogleServiceAccountAdapter(Path keyPath) throws IOException {
+		try (InputStream key = Files.newInputStream(keyPath)) {
+			this.serviceAccountCredentials = ServiceAccountCredentials.fromStream(key);
+		}
+	}
+
+	@Override
+	public ServiceAccountAccess authenticateAs(String userEmail) {
+		try {
+			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) serviceAccountCredentials
+					.createScoped(SCOPES);
+			GoogleCredentials delegatedCredentials = scopedCredentials.createDelegated(userEmail);
+			delegatedCredentials.refreshIfExpired();
+			AccessToken accessToken = delegatedCredentials.getAccessToken();
+			if (accessToken == null || accessToken.getExpirationTime() == null) {
+				throw new GoogleOAuthException("Google service-account access token has no expiration");
+			}
+			UUID accessId = UUID.randomUUID();
+			accessTokens.put(accessId, accessToken);
+			return new ServiceAccountAccess(accessId, userEmail,
+					Instant.ofEpochMilli(accessToken.getExpirationTime().getTime()), SCOPES);
+		} catch (IOException | RuntimeException exception) {
+			throw new GoogleOAuthException("Google service-account authentication failed", exception);
+		}
+	}
+}
