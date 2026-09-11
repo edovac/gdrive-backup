@@ -11,7 +11,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class GoogleLoginServiceTests {
+class GoogleLoginServiceTest {
 
 	@Test
 	void loginReturnsOpaqueSessionFromOAuthPort() {
