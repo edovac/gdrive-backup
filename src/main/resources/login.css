@@ -1,0 +1,61 @@
+.root {
+	-fx-font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.window-controls {
+	-fx-padding: 12px;
+}
+
+.window-controls .button {
+	-fx-background-color: transparent;
+	-fx-text-fill: #586174;
+	-fx-font-size: 14px;
+	-fx-min-width: 28px;
+	-fx-min-height: 24px;
+	-fx-background-radius: 4px;
+}
+
+.window-controls .button:hover {
+	-fx-background-color: #e7eaf0;
+}
+
+.window-controls .button:last-child:hover {
+	-fx-background-color: #e45b5b;
+	-fx-text-fill: white;
+}
+
+.title {
+	-fx-text-fill: #172033;
+	-fx-font-size: 26px;
+	-fx-font-weight: bold;
+}
+
+.subtitle {
+	-fx-text-fill: #596579;
+	-fx-font-size: 16px;
+}
+
+.scope, .status {
+	-fx-text-fill: #748096;
+	-fx-font-size: 12px;
+}
+
+.primary-button {
+	-fx-background-color: #1a73e8;
+	-fx-text-fill: white;
+	-fx-font-size: 14px;
+	-fx-font-weight: bold;
+	-fx-padding: 11px 22px;
+	-fx-background-radius: 5px;
+}
+
+.primary-button:hover {
+	-fx-background-color: #155fc0;
+}
+
+.secondary-button {
+	-fx-background-color: #e7eaf0;
+	-fx-text-fill: #344054;
+	-fx-padding: 9px 18px;
+	-fx-background-radius: 5px;
+}

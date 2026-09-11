@@ -10,10 +10,10 @@ import com.google.api.client.http.HttpTransport;
 import com.google.api.client.http.UrlEncodedContent;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.gson.GsonFactory;
-import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.util.store.MemoryDataStoreFactory;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
+import org.nm.gdrive_backup.domain.port.in.GoogleAuthorizationApproval;
 import org.nm.gdrive_backup.domain.port.out.GoogleOAuthPort;
 
 import java.io.IOException;
@@ -40,7 +40,8 @@ public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 	}
 
 	@Override
-	public GoogleLoginSession authenticate() {
+	public GoogleLoginSession authenticate(GoogleAuthorizationApproval approval) {
+		LocalServerReceiver receiver = null;
 		try {
 			GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
 					httpTransport,
@@ -50,14 +51,34 @@ public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 					.setAccessType("offline")
 					.setDataStoreFactory(new MemoryDataStoreFactory())
 					.build();
-			LocalServerReceiver receiver = new LocalServerReceiver.Builder().setPort(0).build();
-			Credential credential = new AuthorizationCodeInstalledApp(flow, receiver)
-					.authorize(UUID.randomUUID().toString());
+			receiver = new LocalServerReceiver.Builder().setPort(0).build();
+			String userId = UUID.randomUUID().toString();
+			String redirectUri = receiver.getRedirectUri();
+			String authorizationUrl = flow.newAuthorizationUrl()
+					.setResponseTypes(Set.of("code"))
+					.setRedirectUri(redirectUri)
+					.build();
+			if (!approval.approve(java.net.URI.create(authorizationUrl))) {
+				receiver.stop();
+				throw new GoogleOAuthException("Google login cancelled");
+			}
+			String authorizationCode = receiver.waitForCode();
+			Credential credential = flow.createAndStoreCredential(
+					flow.newTokenRequest(authorizationCode)
+							.setRedirectUri(redirectUri)
+							.execute(), userId);
 			UUID sessionId = UUID.randomUUID();
 			credentials.put(sessionId, credential);
 			return new GoogleLoginSession(sessionId, expirationOf(credential), Set.of(DRIVE_READONLY_SCOPE));
 		} catch (IOException exception) {
 			throw new GoogleOAuthException("Google authentication failed", exception);
+		} finally {
+			if (receiver != null) {
+				try {
+					receiver.stop();
+				} catch (IOException ignored) {
+				}
+			}
 		}
 	}
 

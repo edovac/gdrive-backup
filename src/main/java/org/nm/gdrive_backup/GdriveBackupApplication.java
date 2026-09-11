@@ -12,6 +12,7 @@ public class GdriveBackupApplication {
 				.headless(false)
 				.run(args);
 		JavaFxApplication.setSpringContext(springContext);
+		JavaFxApplication.setLoginUseCase(springContext.getBean(org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase.class));
 		JavaFxApplication.launch(JavaFxApplication.class, args);
 	}
 

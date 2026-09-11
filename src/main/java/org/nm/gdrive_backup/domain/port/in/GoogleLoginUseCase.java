@@ -4,7 +4,7 @@ import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
 
 public interface GoogleLoginUseCase {
 
-	GoogleLoginSession login();
+	GoogleLoginSession login(GoogleAuthorizationApproval approval);
 
 	void logout(GoogleLoginSession session);
 }

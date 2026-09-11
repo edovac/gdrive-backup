@@ -2,6 +2,7 @@ package org.nm.gdrive_backup.domain.service;
 
 import org.junit.jupiter.api.Test;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
+import org.nm.gdrive_backup.domain.port.in.GoogleAuthorizationApproval;
 import org.nm.gdrive_backup.domain.port.out.GoogleOAuthPort;
 
 import java.time.Instant;
@@ -18,7 +19,7 @@ class GoogleLoginServiceTest {
 		GoogleLoginSession expected = session();
 		FakeGoogleOAuthPort port = new FakeGoogleOAuthPort(expected);
 
-		GoogleLoginSession actual = new GoogleLoginService(port).login();
+		GoogleLoginSession actual = new GoogleLoginService(port).login(uri -> true);
 
 		assertSame(expected, actual);
 	}
@@ -56,7 +57,7 @@ class GoogleLoginServiceTest {
 		}
 
 		@Override
-		public GoogleLoginSession authenticate() {
+		public GoogleLoginSession authenticate(GoogleAuthorizationApproval approval) {
 			return session;
 		}
 

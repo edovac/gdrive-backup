@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.awt.Desktop;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,7 +33,17 @@ class GoogleOAuthClientAdapterIT {
 					new NetHttpTransport(), clientSecrets);
 			GoogleLoginService loginService = new GoogleLoginService(adapter);
 
-			GoogleLoginSession session = loginService.login();
+			GoogleLoginSession session = loginService.login(authorizationUri -> {
+				if (!Desktop.isDesktopSupported()) {
+					return false;
+				}
+				try {
+					Desktop.getDesktop().browse(authorizationUri);
+					return true;
+				} catch (IOException exception) {
+					return false;
+				}
+			});
 
 			assertNotNull(session.sessionId());
 			assertFalse(session.isExpired(Instant.now()));

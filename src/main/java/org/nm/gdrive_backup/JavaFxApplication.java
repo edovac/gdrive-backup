@@ -3,19 +3,41 @@ package org.nm.gdrive_backup;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Label;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
+import org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase;
+
+import java.awt.Desktop;
+import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class JavaFxApplication extends Application {
 
 	private static ConfigurableApplicationContext springContext;
+	private static GoogleLoginUseCase loginUseCase;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
 		springContext = context;
+	}
+
+	static void setLoginUseCase(GoogleLoginUseCase useCase) {
+		loginUseCase = useCase;
 	}
 
 	@Override
@@ -28,13 +50,137 @@ public class JavaFxApplication extends Application {
 		maximize.setOnAction(event -> stage.setMaximized(!stage.isMaximized()));
 		close.setOnAction(event -> Platform.exit());
 
-		HBox controls = new HBox(minimize, maximize, close);
+		HBox controls = new HBox(6, minimize, maximize, close);
 		controls.setAlignment(Pos.TOP_RIGHT);
-		Scene scene = new Scene(controls, 640, 400);
+		controls.getStyleClass().add("window-controls");
+
+		BorderPane root = new BorderPane();
+		root.setTop(controls);
+		root.setCenter(loginView());
+		root.setStyle("-fx-background-color: #f7f8fa;");
+		Scene scene = new Scene(root, 640, 400);
+		scene.getStylesheets().add("/login.css");
 		stage.initStyle(StageStyle.UNDECORATED);
 		stage.setScene(scene);
 		stage.setOnCloseRequest(event -> Platform.exit());
 		stage.show();
+	}
+
+	private Node loginView() {
+		Label title = new Label("Google Drive Backup");
+		title.getStyleClass().add("title");
+		Label subtitle = new Label("Sign in to continue");
+		subtitle.getStyleClass().add("subtitle");
+		Label scope = new Label("Read-only access to Google Drive");
+		scope.getStyleClass().add("scope");
+		Label status = new Label();
+		status.getStyleClass().add("status");
+		Button signIn = new Button("Sign in with Google");
+		signIn.getStyleClass().add("primary-button");
+		Button signOut = new Button("Sign out");
+		signOut.getStyleClass().add("secondary-button");
+		signOut.setVisible(false);
+		signOut.setManaged(false);
+
+		signIn.setOnAction(event -> authenticate(signIn, signOut, status));
+		signOut.setOnAction(event -> {
+			GoogleLoginSession session = (GoogleLoginSession) signOut.getUserData();
+			loginUseCase.logout(session);
+			signOut.setUserData(null);
+			signOut.setVisible(false);
+			signOut.setManaged(false);
+			signIn.setVisible(true);
+			signIn.setManaged(true);
+			subtitle.setText("Sign in to continue");
+			status.setText("");
+		});
+
+		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, status);
+		content.setAlignment(Pos.CENTER);
+		content.setMaxWidth(320);
+		return content;
+	}
+
+	private void authenticate(Button signIn, Button signOut, Label status) {
+		signIn.setDisable(true);
+		status.setText("Waiting for Google sign-in...");
+		CompletableFuture.supplyAsync(() -> loginUseCase.login(this::requestAuthorization))
+				.whenComplete((session, error) -> Platform.runLater(() -> {
+					signIn.setDisable(false);
+					if (error != null) {
+						status.setText(messageFor(error));
+						return;
+					}
+					signIn.setVisible(false);
+					signIn.setManaged(false);
+					signOut.setUserData(session);
+					signOut.setVisible(true);
+					signOut.setManaged(true);
+					status.setText("Connected with read-only access");
+				}));
+	}
+
+	private static String messageFor(Throwable error) {
+		Throwable current = error;
+		while (current.getCause() != null && current.getCause() != current) {
+			current = current.getCause();
+		}
+		return current.getMessage() == null ? "Google authentication failed" : current.getMessage();
+	}
+
+	private boolean requestAuthorization(URI authorizationUri) {
+		CountDownLatch completed = new CountDownLatch(1);
+		AtomicBoolean approved = new AtomicBoolean(false);
+		Platform.runLater(() -> {
+			Alert prompt = new Alert(Alert.AlertType.CONFIRMATION);
+			prompt.setTitle("Google authorization");
+			prompt.setHeaderText("Open Google authorization in your browser?");
+			prompt.setContentText("Google will grant read-only Drive access.\n\n" + authorizationUri);
+			prompt.getDialogPane().setMinWidth(520);
+			if (prompt.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+				try {
+					openBrowser(authorizationUri);
+					approved.set(true);
+				} catch (IOException | UnsupportedOperationException exception) {
+				}
+			}
+			completed.countDown();
+		});
+		try {
+			completed.await();
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+		}
+		return approved.get();
+	}
+
+	private static void openBrowser(URI uri) throws IOException {
+		if (isWsl()) {
+			try {
+				new ProcessBuilder("wslview", uri.toString()).start();
+				return;
+			} catch (IOException ignored) {
+				String windowsUrl = uri.toString().replace("&", "^&");
+				new ProcessBuilder("cmd.exe", "/c", "start", "", windowsUrl).start();
+			}
+			return;
+		}
+		if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+			throw new IOException("System browser is not available");
+		}
+		Desktop.getDesktop().browse(uri);
+	}
+
+	private static boolean isWsl() {
+		if (System.getenv("WSL_DISTRO_NAME") != null) {
+			return true;
+		}
+		try {
+			String kernelVersion = Files.readString(Path.of("/proc/version"));
+			return kernelVersion.contains("Microsoft") || kernelVersion.contains("microsoft");
+		} catch (IOException exception) {
+			return false;
+		}
 	}
 
 	@Override
