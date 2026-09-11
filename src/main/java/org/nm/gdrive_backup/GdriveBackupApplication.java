@@ -4,6 +4,9 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.nm.gdrive_backup.configuration.DrivePreviewProperties;
+import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
+import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 
 @SpringBootApplication
 @ConfigurationPropertiesScan
@@ -15,6 +18,10 @@ public class GdriveBackupApplication {
 				.run(args);
 		JavaFxApplication.setSpringContext(springContext);
 		JavaFxApplication.setLoginUseCase(springContext.getBean(org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase.class));
+		JavaFxApplication.setDriveServices(
+				springContext.getBeanProvider(ServiceAccountAuthenticationUseCase.class).getIfAvailable(),
+				springContext.getBeanProvider(DriveReadPort.class).getIfAvailable(),
+				springContext.getBean(DrivePreviewProperties.class).userEmail());
 		JavaFxApplication.launch(JavaFxApplication.class, args);
 	}
 

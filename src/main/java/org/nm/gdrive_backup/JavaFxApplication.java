@@ -9,6 +9,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
@@ -17,6 +18,10 @@ import javafx.stage.StageStyle;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
 import org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase;
+import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
+import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
+import org.nm.gdrive_backup.domain.model.AvailableDrive;
+import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 
 import java.awt.Desktop;
 import java.io.IOException;
@@ -31,6 +36,9 @@ public class JavaFxApplication extends Application {
 
 	private static ConfigurableApplicationContext springContext;
 	private static GoogleLoginUseCase loginUseCase;
+	private static ServiceAccountAuthenticationUseCase serviceAccountUseCase;
+	private static DriveReadPort driveReadPort;
+	private static String previewUserEmail;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
 		springContext = context;
@@ -38,6 +46,13 @@ public class JavaFxApplication extends Application {
 
 	static void setLoginUseCase(GoogleLoginUseCase useCase) {
 		loginUseCase = useCase;
+	}
+
+	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
+			DriveReadPort readPort, String userEmail) {
+		serviceAccountUseCase = authenticationUseCase;
+		driveReadPort = readPort;
+		previewUserEmail = userEmail;
 	}
 
 	@Override
@@ -73,16 +88,29 @@ public class JavaFxApplication extends Application {
 		subtitle.getStyleClass().add("subtitle");
 		Label scope = new Label("Read-only access to Google Drive");
 		scope.getStyleClass().add("scope");
-		Label status = new Label();
-		status.getStyleClass().add("status");
+		Label connectionStatus = new Label();
+		connectionStatus.getStyleClass().add("status");
+		Label driveStatus = new Label();
+		driveStatus.getStyleClass().add("status");
 		Button signIn = new Button("Sign in with Google");
 		signIn.getStyleClass().add("primary-button");
 		Button signOut = new Button("Sign out");
+		ListView<AvailableDrive> drives = new ListView<>();
+		drives.setPlaceholder(new Label("No drives loaded"));
+		drives.setVisible(false);
+		drives.setManaged(false);
+		drives.setCellFactory(view -> new javafx.scene.control.ListCell<>() {
+			@Override
+			protected void updateItem(AvailableDrive drive, boolean empty) {
+				super.updateItem(drive, empty);
+				setText(empty || drive == null ? null : (drive.shared() ? "Shared: " : "") + drive.name());
+			}
+		});
 		signOut.getStyleClass().add("secondary-button");
 		signOut.setVisible(false);
 		signOut.setManaged(false);
 
-		signIn.setOnAction(event -> authenticate(signIn, signOut, status));
+		signIn.setOnAction(event -> authenticate(signIn, signOut, connectionStatus, driveStatus, drives));
 		signOut.setOnAction(event -> {
 			GoogleLoginSession session = (GoogleLoginSession) signOut.getUserData();
 			loginUseCase.logout(session);
@@ -92,23 +120,30 @@ public class JavaFxApplication extends Application {
 			signIn.setVisible(true);
 			signIn.setManaged(true);
 			subtitle.setText("Sign in to continue");
-			status.setText("");
+			connectionStatus.setText("");
+			driveStatus.setText("");
+			drives.getItems().clear();
+			drives.setVisible(false);
+			drives.setManaged(false);
 		});
 
-		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, status);
+		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope,
+				connectionStatus, driveStatus, drives);
 		content.setAlignment(Pos.CENTER);
 		content.setMaxWidth(320);
 		return content;
 	}
 
-	private void authenticate(Button signIn, Button signOut, Label status) {
+	private void authenticate(Button signIn, Button signOut, Label connectionStatus,
+			Label driveStatus, ListView<AvailableDrive> drives) {
 		signIn.setDisable(true);
-		status.setText("Waiting for Google sign-in...");
+		connectionStatus.setText("Waiting for Google sign-in...");
+		driveStatus.setText("");
 		CompletableFuture.supplyAsync(() -> loginUseCase.login(this::requestAuthorization))
 				.whenComplete((session, error) -> Platform.runLater(() -> {
 					signIn.setDisable(false);
 					if (error != null) {
-						status.setText(messageFor(error));
+						connectionStatus.setText(messageFor(error));
 						return;
 					}
 					signIn.setVisible(false);
@@ -116,8 +151,31 @@ public class JavaFxApplication extends Application {
 					signOut.setUserData(session);
 					signOut.setVisible(true);
 					signOut.setManaged(true);
-					status.setText("Connected with read-only access");
+					connectionStatus.setText("Google connected");
+					loadDrives(drives, driveStatus);
 				}));
+	}
+
+	private void loadDrives(ListView<AvailableDrive> drives, Label status) {
+		if (serviceAccountUseCase == null || driveReadPort == null || previewUserEmail == null
+				|| previewUserEmail.isBlank()) {
+			status.setText("Google connected, Drive preview unavailable. Configure GOOGLE_IMPERSONATED_USER.");
+			return;
+		}
+		status.setText("Loading available drives...");
+		CompletableFuture.supplyAsync(() -> {
+			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(previewUserEmail);
+			return driveReadPort.listAvailableDrives(access);
+		}).whenComplete((availableDrives, error) -> Platform.runLater(() -> {
+			if (error != null) {
+				status.setText("Google connected, Drive preview unavailable: " + messageFor(error));
+				return;
+			}
+			drives.getItems().setAll(availableDrives);
+			drives.setVisible(true);
+			drives.setManaged(true);
+			status.setText("Available drives");
+		}));
 	}
 
 	private static String messageFor(Throwable error) {

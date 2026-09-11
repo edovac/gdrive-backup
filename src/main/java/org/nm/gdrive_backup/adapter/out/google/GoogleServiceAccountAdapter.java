@@ -27,7 +27,7 @@ public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort
 			DIRECTORY_USER_READONLY_SCOPE);
 
 	private final ServiceAccountCredentials serviceAccountCredentials;
-	private final Map<UUID, AccessToken> accessTokens = new ConcurrentHashMap<>();
+	private final Map<UUID, GoogleCredentials> credentials = new ConcurrentHashMap<>();
 
 	public GoogleServiceAccountAdapter(Path keyPath) throws IOException {
 		try (InputStream key = Files.newInputStream(keyPath)) {
@@ -47,11 +47,24 @@ public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort
 				throw new GoogleOAuthException("Google service-account access token has no expiration");
 			}
 			UUID accessId = UUID.randomUUID();
-			accessTokens.put(accessId, accessToken);
+			credentials.put(accessId, delegatedCredentials);
 			return new ServiceAccountAccess(accessId, userEmail,
 					Instant.ofEpochMilli(accessToken.getExpirationTime().getTime()), SCOPES);
 		} catch (IOException | RuntimeException exception) {
 			throw new GoogleOAuthException("Google service-account authentication failed", exception);
+		}
+	}
+
+	GoogleCredentials credentialsFor(ServiceAccountAccess access) {
+		GoogleCredentials credential = credentials.get(access.accessId());
+		if (credential == null) {
+			throw new GoogleOAuthException("Unknown or expired service-account access");
+		}
+		try {
+			credential.refreshIfExpired();
+			return credential;
+		} catch (IOException exception) {
+			throw new GoogleOAuthException("Unable to refresh service-account access", exception);
 		}
 	}
 }
