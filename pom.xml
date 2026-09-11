@@ -28,11 +28,17 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
+		<javafx.version>25.0.1</javafx.version>
 	</properties>
 	<dependencies>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.openjfx</groupId>
+			<artifactId>javafx-controls</artifactId>
+			<version>${javafx.version}</version>
 		</dependency>
 
 		<dependency>
