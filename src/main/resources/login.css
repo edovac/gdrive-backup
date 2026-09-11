@@ -38,6 +38,11 @@
 .scope, .status {
 	-fx-text-fill: #748096;
 	-fx-font-size: 12px;
+	-fx-text-alignment: center;
+}
+
+.status {
+	-fx-padding: 0 12px;
 }
 
 .primary-button {

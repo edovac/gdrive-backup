@@ -77,6 +77,9 @@ public class JavaFxApplication extends Application {
 		scene.getStylesheets().add("/login.css");
 		stage.initStyle(StageStyle.UNDECORATED);
 		stage.setScene(scene);
+		stage.setMinWidth(640);
+		stage.setMinHeight(400);
+		stage.setResizable(true);
 		stage.setOnCloseRequest(event -> Platform.exit());
 		stage.show();
 	}
@@ -130,7 +133,11 @@ public class JavaFxApplication extends Application {
 		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope,
 				connectionStatus, driveStatus, drives);
 		content.setAlignment(Pos.CENTER);
-		content.setMaxWidth(320);
+		content.setMaxWidth(560);
+		connectionStatus.setMaxWidth(540);
+		driveStatus.setMaxWidth(540);
+		connectionStatus.setWrapText(true);
+		driveStatus.setWrapText(true);
 		return content;
 	}
 
