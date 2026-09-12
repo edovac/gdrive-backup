@@ -11,11 +11,9 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
-import javafx.scene.layout.HBox;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
-import javafx.stage.StageStyle;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
 import org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase;
@@ -64,25 +62,11 @@ public class JavaFxApplication extends Application {
 
 	@Override
 	public void start(Stage stage) {
-		Button minimize = new Button("-");
-		Button maximize = new Button("+");
-		Button close = new Button("x");
-
-		minimize.setOnAction(event -> stage.setIconified(true));
-		maximize.setOnAction(event -> stage.setMaximized(!stage.isMaximized()));
-		close.setOnAction(event -> Platform.exit());
-
-		HBox controls = new HBox(6, minimize, maximize, close);
-		controls.setAlignment(Pos.TOP_RIGHT);
-		controls.getStyleClass().add("window-controls");
-
 		BorderPane root = new BorderPane();
-		root.setTop(controls);
 		root.setCenter(loginView());
 		root.setStyle("-fx-background-color: #f7f8fa;");
 		Scene scene = new Scene(root, 640, 400);
 		scene.getStylesheets().add("/login.css");
-		stage.initStyle(StageStyle.UNDECORATED);
 		stage.setScene(scene);
 		stage.setMinWidth(640);
 		stage.setMinHeight(400);
