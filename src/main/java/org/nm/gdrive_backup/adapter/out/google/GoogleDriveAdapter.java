@@ -13,13 +13,15 @@ import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
+import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.util.List;
 
-public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort {
+public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, DriveContentPort {
 
 	private static final String FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 	private static final String DEFAULT_PARENT_ID = "root";
@@ -119,6 +121,32 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort {
 			return new DriveChangePage(changes, response.getNextPageToken(), response.getNewStartPageToken());
 		} catch (IOException | GeneralSecurityException exception) {
 			throw new GoogleDriveException("Unable to list Drive changes", exception);
+		}
+	}
+
+	@Override
+	public InputStream download(ServiceAccountAccess access, String fileId) throws IOException {
+		if (fileId == null || fileId.isBlank()) {
+			throw new IllegalArgumentException("fileId must not be blank");
+		}
+		try {
+			return drive(access).files().get(fileId)
+					.setSupportsAllDrives(true)
+					.executeMediaAsInputStream();
+		} catch (GeneralSecurityException exception) {
+			throw new GoogleDriveException("Unable to download Drive file", exception);
+		}
+	}
+
+	@Override
+	public InputStream export(ServiceAccountAccess access, String fileId, String exportMimeType) throws IOException {
+		if (fileId == null || fileId.isBlank() || exportMimeType == null || exportMimeType.isBlank()) {
+			throw new IllegalArgumentException("fileId and exportMimeType must not be blank");
+		}
+		try {
+			return drive(access).files().export(fileId, exportMimeType).executeMediaAsInputStream();
+		} catch (GeneralSecurityException exception) {
+			throw new GoogleDriveException("Unable to export Google-native Drive file", exception);
 		}
 	}
 

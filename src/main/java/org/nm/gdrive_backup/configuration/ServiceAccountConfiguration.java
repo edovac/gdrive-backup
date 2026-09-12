@@ -9,6 +9,7 @@ import org.nm.gdrive_backup.adapter.out.google.GoogleWorkspaceUsageReportAdapter
 import org.nm.gdrive_backup.adapter.out.google.GoogleCloudQuotaLimitAdapter;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
+import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.DriveUsageQuotaPort;
 import org.nm.gdrive_backup.domain.port.out.WorkspaceUsageReportPort;
 import org.nm.gdrive_backup.domain.port.out.CloudQuotaLimitPort;
@@ -79,6 +80,12 @@ public class ServiceAccountConfiguration {
 	@Primary
 	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
 	DriveChangePort driveChangePort(@Qualifier("googleServiceAccountAdapter") GoogleServiceAccountAdapter adapter) {
+		return new GoogleDriveAdapter(adapter);
+	}
+
+	@Bean
+	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
+	DriveContentPort driveContentPort(@Qualifier("googleServiceAccountAdapter") GoogleServiceAccountAdapter adapter) {
 		return new GoogleDriveAdapter(adapter);
 	}
 
