@@ -38,7 +38,7 @@ Last reviewed: 2026-09-12
 - [-] Headless initial and incremental sync using `changes.list`. The paged change-feed port, Google adapter, persisted start-token loop, and metadata/event application are in place; initial listing and content download remain.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
-- [-] Google-native export handling and the 10MB fallback behavior. Office export selection and raw downloads are in place; the 10MB fallback policy remains.
+- [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [ ] Backup trigger, progress reporting, and partial-failure handling.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.

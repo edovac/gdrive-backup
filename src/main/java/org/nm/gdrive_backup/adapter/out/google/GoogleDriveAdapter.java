@@ -3,6 +3,7 @@ package org.nm.gdrive_backup.adapter.out.google;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.json.gson.GsonFactory;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.model.File;
 import com.google.auth.http.HttpCredentialsAdapter;
@@ -11,6 +12,7 @@ import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
+import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
@@ -145,9 +147,24 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		}
 		try {
 			return drive(access).files().export(fileId, exportMimeType).executeMediaAsInputStream();
+		} catch (GoogleJsonResponseException exception) {
+			if (isExportLimitExceeded(exception)) {
+				throw new DriveExportLimitException("Google export exceeds the supported size limit", exception);
+			}
+			throw exception;
 		} catch (GeneralSecurityException exception) {
 			throw new GoogleDriveException("Unable to export Google-native Drive file", exception);
 		}
+	}
+
+	private static boolean isExportLimitExceeded(GoogleJsonResponseException exception) {
+		String message = exception.getDetails() == null ? exception.getMessage() : exception.getDetails().getMessage();
+		if (message == null) {
+			return false;
+		}
+		String normalized = message.toLowerCase(java.util.Locale.ROOT);
+		return normalized.contains("10 mb") || normalized.contains("10mb")
+				|| normalized.contains("maximum allowed size") || normalized.contains("export size");
 	}
 
 	private static void configureDriveScope(Drive.Changes.GetStartPageToken request, String scopeKey) {

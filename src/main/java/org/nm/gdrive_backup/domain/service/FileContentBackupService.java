@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import org.nm.gdrive_backup.domain.model.FileVersion;
+import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
@@ -44,6 +45,24 @@ public class FileContentBackupService {
 			throw new IllegalArgumentException("file with a revision id is required");
 		}
 		ExportFormat exportFormat = EXPORT_FORMATS.get(file.mimeType());
+		try {
+			return backupContent(access, file, exportFormat, false);
+		} catch (DriveExportLimitException exception) {
+			if (exportFormat == null) {
+				throw new IllegalStateException("Unexpected export limit for a non-native Drive file", exception);
+			}
+			try {
+				return backupContent(access, file, new ExportFormat("application/pdf", ".pdf"), true);
+			} catch (IOException fallbackException) {
+				throw new IllegalStateException("Unable to back up file content using PDF fallback", fallbackException);
+			}
+		} catch (IOException exception) {
+			throw new IllegalStateException("Unable to back up file content", exception);
+		}
+	}
+
+	private FileVersion backupContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
+			boolean fallback) throws IOException {
 		String fileName = exportFormat == null ? file.name() : withExtension(file.name(), exportFormat.extension());
 		try (InputStream content = exportFormat == null
 				? contentPort.download(access, file.fileId())
@@ -52,6 +71,11 @@ public class FileContentBackupService {
 			FileVersion version = new FileVersion(null, file.fileId(), file.headRevisionId(), Instant.now(),
 					localPath.toString(), Files.size(localPath));
 			return versionPort.save(version);
+		} catch (DriveExportLimitException exception) {
+			if (fallback) {
+				throw new IllegalStateException("Google PDF fallback also exceeded the export limit", exception);
+			}
+			throw exception;
 		} catch (IOException exception) {
 			throw new IllegalStateException("Unable to back up file content", exception);
 		}
