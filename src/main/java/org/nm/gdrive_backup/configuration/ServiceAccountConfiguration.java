@@ -73,6 +73,7 @@ public class ServiceAccountConfiguration {
 	}
 
 	@Bean
+	@Primary
 	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
 	DriveChangePort driveChangePort(@Qualifier("googleServiceAccountAdapter") GoogleServiceAccountAdapter adapter) {
 		return new GoogleDriveAdapter(adapter);
