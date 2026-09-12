@@ -7,19 +7,18 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 import org.nm.gdrive_backup.domain.port.out.VersionStoragePort;
-import org.springframework.stereotype.Component;
 
-@Component
 public class LocalVersionStorageAdapter implements VersionStoragePort {
 
 	private final Path backupRoot;
 
-	public LocalVersionStorageAdapter() {
-		this(resolveBackupRoot());
-	}
-
-	LocalVersionStorageAdapter(Path backupRoot) {
+	public LocalVersionStorageAdapter(Path backupRoot) {
 		this.backupRoot = backupRoot;
+		try {
+			Files.createDirectories(backupRoot);
+		} catch (IOException exception) {
+			throw new IllegalStateException("Unable to create backup root directory", exception);
+		}
 	}
 
 	@Override
@@ -36,16 +35,6 @@ public class LocalVersionStorageAdapter implements VersionStoragePort {
 		Path target = targetDirectory.resolve(safeFileName(fileName));
 		Files.copy(content, target, StandardCopyOption.REPLACE_EXISTING);
 		return target;
-	}
-
-	private static Path resolveBackupRoot() {
-		String configuredRoot = System.getProperty("gdrive.backup.root");
-		if (configuredRoot == null || configuredRoot.isBlank()) {
-			configuredRoot = System.getenv("GOOGLE_BACKUP_ROOT");
-		}
-		return configuredRoot == null || configuredRoot.isBlank()
-				? Path.of(System.getProperty("user.home"), ".gdrive-backup", "backupRoot")
-				: Path.of(configuredRoot);
 	}
 
 	private static String safePathPart(String value, String label) {

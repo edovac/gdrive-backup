@@ -10,20 +10,13 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 
-import org.springframework.stereotype.Component;
-
-@Component
 public class SqliteDatabase {
 
 	private static final String SCHEMA_RESOURCE = "/db/schema.sql";
 
 	private final String jdbcUrl;
 
-	public SqliteDatabase() {
-		this(resolveDatabasePath());
-	}
-
-	SqliteDatabase(Path databasePath) {
+	public SqliteDatabase(Path databasePath) {
 		this.jdbcUrl = "jdbc:sqlite:" + databasePath;
 	}
 
@@ -43,19 +36,6 @@ public class SqliteDatabase {
 		} catch (SQLException | IOException exception) {
 			throw new IllegalStateException("Unable to initialize SQLite database", exception);
 		}
-	}
-
-	private static Path resolveDatabasePath() {
-		String configuredPath = System.getProperty("gdrive.backup.database");
-		Path path = configuredPath == null || configuredPath.isBlank()
-				? Path.of(System.getProperty("user.home"), ".gdrive-backup", "backup.db")
-				: Path.of(configuredPath);
-		try {
-			Files.createDirectories(path.toAbsolutePath().getParent());
-		} catch (IOException exception) {
-			throw new IllegalStateException("Unable to create SQLite database directory", exception);
-		}
-		return path;
 	}
 
 	private static String readSchema() throws IOException {
