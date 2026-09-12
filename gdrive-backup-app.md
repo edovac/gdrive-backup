@@ -29,12 +29,12 @@ Last reviewed: 2026-09-12
 
 ### In progress
 
-- [-] Make the user-selection and impersonated Drive-preview flow discoverable and usable in the JavaFX layout.
+- [x] Make the user-selection and impersonated Drive-preview flow discoverable and usable in the JavaFX layout.
 - [-] Continue exposing the remaining backend capabilities through the UI.
+- [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
 
 ### Not started
 
-- [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
 - [ ] Headless initial and incremental sync using `changes.list`.
 - [ ] Detection and persistence of renames, moves, trashing, deletion, and content revisions.
 - [ ] Versioned local storage writer.

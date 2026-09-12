@@ -98,7 +98,7 @@ public class ServiceAccountConfiguration {
 	}
 
 	@Bean
-	@Primary
+	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() == 0")
 	WorkspaceUserDirectoryPort workspaceUserDirectoryPortFallback() {
 		return access -> {
 			throw new GoogleOAuthException(
