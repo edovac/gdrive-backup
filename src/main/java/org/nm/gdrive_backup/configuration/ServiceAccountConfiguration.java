@@ -4,12 +4,16 @@ import org.nm.gdrive_backup.adapter.out.google.GoogleOAuthException;
 import org.nm.gdrive_backup.adapter.out.google.GoogleDriveAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleServiceAccountAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleWorkspaceUserDirectoryAdapter;
+import org.nm.gdrive_backup.adapter.out.google.GoogleDriveUsageQuotaAdapter;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
+import org.nm.gdrive_backup.domain.port.out.DriveUsageQuotaPort;
 import org.nm.gdrive_backup.domain.port.out.WorkspaceUserDirectoryPort;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
+import org.nm.gdrive_backup.domain.port.in.DriveUsageQuotaUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.out.ServiceAccountCredentialPort;
 import org.nm.gdrive_backup.domain.service.ServiceAccountAuthenticationService;
+import org.nm.gdrive_backup.domain.service.DriveUsageQuotaService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
@@ -64,6 +68,13 @@ public class ServiceAccountConfiguration {
 	}
 
 	@Bean
+	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
+	DriveUsageQuotaPort driveUsageQuotaPort(
+			@Qualifier("googleServiceAccountAdapter") GoogleServiceAccountAdapter adapter) {
+		return new GoogleDriveUsageQuotaAdapter(adapter);
+	}
+
+	@Bean
 	@Primary
 	WorkspaceUserDirectoryPort workspaceUserDirectoryPortFallback() {
 		return access -> {
@@ -83,5 +94,18 @@ public class ServiceAccountConfiguration {
 	WorkspaceUserListingUseCase workspaceUserListingUseCase(
 			WorkspaceUserDirectoryPort workspaceUserDirectoryPort) {
 		return new WorkspaceUserListingService(workspaceUserDirectoryPort);
+	}
+
+	@Bean
+	DriveUsageQuotaUseCase driveUsageQuotaUseCase(ObjectProvider<DriveUsageQuotaPort> portProvider) {
+		DriveUsageQuotaPort port = portProvider.getIfAvailable();
+		if (port == null) {
+			return access -> {
+				throw new GoogleOAuthException(
+						"Google Drive usage quota is not configured. "
+								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
+			};
+		}
+		return new DriveUsageQuotaService(port);
 	}
 }
