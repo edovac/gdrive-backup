@@ -35,7 +35,7 @@ Last reviewed: 2026-09-12
 
 ### Not started
 
-- [ ] Headless initial and incremental sync using `changes.list`.
+- [-] Headless initial and incremental sync using `changes.list`. The paged change-feed port, Google adapter, and persisted start-token loop are in place; change application remains.
 - [ ] Detection and persistence of renames, moves, trashing, deletion, and content revisions.
 - [ ] Versioned local storage writer.
 - [ ] Google-native export handling and the 10MB fallback behavior.

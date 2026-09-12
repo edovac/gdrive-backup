@@ -8,6 +8,7 @@ import org.nm.gdrive_backup.adapter.out.google.GoogleDriveUsageQuotaAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleWorkspaceUsageReportAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleCloudQuotaLimitAdapter;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
+import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveUsageQuotaPort;
 import org.nm.gdrive_backup.domain.port.out.WorkspaceUsageReportPort;
 import org.nm.gdrive_backup.domain.port.out.CloudQuotaLimitPort;
@@ -23,6 +24,9 @@ import org.nm.gdrive_backup.domain.service.DriveUsageQuotaService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUsageReportService;
 import org.nm.gdrive_backup.domain.service.CloudQuotaLimitService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
+import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
+import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
+import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -66,6 +70,26 @@ public class ServiceAccountConfiguration {
 	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
 	DriveReadPort driveReadPort(@Qualifier("googleServiceAccountAdapter") GoogleServiceAccountAdapter adapter) {
 		return new GoogleDriveAdapter(adapter);
+	}
+
+	@Bean
+	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
+	DriveChangePort driveChangePort(@Qualifier("googleServiceAccountAdapter") GoogleServiceAccountAdapter adapter) {
+		return new GoogleDriveAdapter(adapter);
+	}
+
+	@Bean
+	DriveChangeSyncUseCase driveChangeSyncUseCase(
+			ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort) {
+		DriveChangePort changePort = changePortProvider.getIfAvailable();
+		if (changePort == null) {
+			return (access, scopeKey) -> {
+				throw new GoogleOAuthException(
+						"Drive change synchronization is not configured. "
+								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
+			};
+		}
+		return new DriveChangeSyncService(changePort, syncStatePort);
 	}
 
 	@Bean
