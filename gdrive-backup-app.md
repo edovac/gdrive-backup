@@ -10,6 +10,43 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 **SQLite** (local state/history), packaged as a native Windows installer via
 `jpackage`.
 
+## Implementation progress
+
+Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
+
+Last reviewed: 2026-09-12
+
+### Completed
+
+- [x] Spring Boot and JavaFX application startup, including Spring context loading.
+- [x] Hexagonal architecture foundations and architecture boundary test.
+- [x] Admin OAuth login with browser authorization approval.
+- [x] Service-account authentication with domain-wide delegation and user impersonation.
+- [x] Workspace user enumeration through the Admin SDK.
+- [x] My Drive and Shared Drive listing through the impersonation-backed Drive adapter.
+- [x] JavaFX user picker and Drive preview browsing, including folder navigation.
+- [x] Focused unit tests and opt-in real-account integration tests for the implemented Google adapters and services.
+
+### In progress
+
+- [-] Refine the vertical UI slice and continue exposing the remaining backend capabilities through the UI.
+
+### Not started
+
+- [ ] SQLite schema and persistence for users, drives, files, versions, events, and sync state.
+- [ ] Headless initial and incremental sync using `changes.list`.
+- [ ] Detection and persistence of renames, moves, trashing, deletion, and content revisions.
+- [ ] Versioned local storage writer.
+- [ ] Google-native export handling and the 10MB fallback behavior.
+- [ ] Backup trigger, progress reporting, and partial-failure handling.
+- [ ] History view for file events and versions.
+- [ ] Scheduled unattended backups.
+- [ ] Windows packaging with `jpackage` and clean-machine verification.
+
+This section is the working roadmap. Update the status markers and the
+`Last reviewed` date as each vertical slice is completed; keep the detailed
+requirements below as the source of truth for expected behavior.
+
 ---
 
 ## Core requirements (confirmed)
