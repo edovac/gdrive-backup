@@ -15,13 +15,21 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	private final DriveChangePort changePort;
 	private final FileMetadataPort fileMetadataPort;
 	private final SyncStatePort syncStatePort;
+	private final FileContentBackupService contentBackupService;
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort) {
+		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, null);
+	}
+
+	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
+			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort,
+			FileContentBackupService contentBackupService) {
 		this.fileListingPort = fileListingPort;
 		this.changePort = changePort;
 		this.fileMetadataPort = fileMetadataPort;
 		this.syncStatePort = syncStatePort;
+		this.contentBackupService = contentBackupService;
 	}
 
 	@Override
@@ -30,9 +38,18 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 			throw new IllegalStateException("Drive scope already has a sync baseline: " + scopeKey);
 		}
 		var files = fileListingPort.listAllFiles(access, scopeKey);
-		files.forEach(fileMetadataPort::save);
+		files.forEach(file -> {
+			fileMetadataPort.save(file);
+			if (contentBackupService != null && !isFolder(file)) {
+				contentBackupService.backup(access, file);
+			}
+		});
 		String pageToken = changePort.getStartPageToken(access, scopeKey);
 		syncStatePort.save(new SyncState(scopeKey, pageToken));
 		return new InitialSyncResult(scopeKey, files.size(), pageToken);
+	}
+
+	private static boolean isFolder(org.nm.gdrive_backup.domain.model.StoredFile file) {
+		return "application/vnd.google-apps.folder".equals(file.mimeType());
 	}
 }

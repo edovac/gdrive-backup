@@ -35,7 +35,7 @@ Last reviewed: 2026-09-12
 
 ### Not started
 
-- [-] Headless initial and incremental sync using `changes.list`. The paged change-feed port, Google adapter, initial full listing, persisted start-token loop, and metadata/event application are in place; content download during initial sync remains.
+- [-] Headless initial and incremental sync using `changes.list`. Initial listing now persists metadata and downloads versions for non-folder files before saving the start token; incremental content backup and richer progress reporting remain.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.

@@ -129,7 +129,7 @@ public class ServiceAccountConfiguration {
 	InitialDriveSyncUseCase initialDriveSyncUseCase(
 			ObjectProvider<DriveFileListingPort> fileListingPortProvider,
 			ObjectProvider<DriveChangePort> changePortProvider, FileMetadataPort fileMetadataPort,
-			SyncStatePort syncStatePort) {
+			SyncStatePort syncStatePort, ObjectProvider<FileContentBackupService> contentBackupProvider) {
 		DriveFileListingPort fileListingPort = fileListingPortProvider.getIfAvailable();
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
 		if (fileListingPort == null || changePort == null) {
@@ -139,7 +139,8 @@ public class ServiceAccountConfiguration {
 								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
 			};
 		}
-		return new InitialDriveSyncService(fileListingPort, changePort, fileMetadataPort, syncStatePort);
+		return new InitialDriveSyncService(fileListingPort, changePort, fileMetadataPort, syncStatePort,
+				contentBackupProvider.getIfAvailable());
 	}
 
 	@Bean

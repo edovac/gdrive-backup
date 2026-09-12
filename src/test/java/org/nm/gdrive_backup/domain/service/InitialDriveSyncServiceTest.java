@@ -6,6 +6,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 import java.time.Instant;
 import java.util.List;
@@ -65,5 +66,28 @@ class InitialDriveSyncServiceTest {
 
 		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, "user@example.com"));
 		verify(statePort).findByScopeKey("user@example.com");
+	}
+
+	@Test
+	void backsUpFilesButSkipsFoldersBeforeSavingBaseline() {
+		DriveFileListingPort listingPort = mock(DriveFileListingPort.class);
+		DriveChangePort changePort = mock(DriveChangePort.class);
+		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		FileContentBackupService contentService = mock(FileContentBackupService.class);
+		StoredFile file = new StoredFile("file-1", "user@example.com", "Report", "root", null,
+				"text/plain", false, "revision-1", null);
+		StoredFile folder = new StoredFile("folder-1", "user@example.com", "Folder", "root", null,
+				"application/vnd.google-apps.folder", false, null, null);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
+		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(file, folder));
+		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("start-token");
+
+		new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort, contentService)
+				.synchronize(ACCESS, "user@example.com");
+
+		verify(contentService).backup(ACCESS, file);
+		verify(contentService, never()).backup(ACCESS, folder);
+		verify(statePort).save(new SyncState("user@example.com", "start-token"));
 	}
 }
