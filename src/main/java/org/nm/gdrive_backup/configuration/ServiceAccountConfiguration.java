@@ -10,6 +10,7 @@ import org.nm.gdrive_backup.adapter.out.google.GoogleCloudQuotaLimitAdapter;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
+import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
 import org.nm.gdrive_backup.domain.port.out.DriveUsageQuotaPort;
 import org.nm.gdrive_backup.domain.port.out.WorkspaceUsageReportPort;
 import org.nm.gdrive_backup.domain.port.out.CloudQuotaLimitPort;
@@ -27,7 +28,9 @@ import org.nm.gdrive_backup.domain.service.CloudQuotaLimitService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
 import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
 import org.nm.gdrive_backup.domain.service.FileContentBackupService;
+import org.nm.gdrive_backup.domain.service.InitialDriveSyncService;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
+import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 import org.nm.gdrive_backup.domain.port.out.FileEventPort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
@@ -92,6 +95,14 @@ public class ServiceAccountConfiguration {
 	}
 
 	@Bean
+	@Primary
+	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
+	DriveFileListingPort driveFileListingPort(
+			@Qualifier("googleServiceAccountAdapter") GoogleServiceAccountAdapter adapter) {
+		return new GoogleDriveAdapter(adapter);
+	}
+
+	@Bean
 	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
 	FileContentBackupService fileContentBackupService(
 			@Qualifier("driveContentPort") DriveContentPort contentPort,
@@ -112,6 +123,23 @@ public class ServiceAccountConfiguration {
 			};
 		}
 		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, fileEventPort, fileVersionPort);
+	}
+
+	@Bean
+	InitialDriveSyncUseCase initialDriveSyncUseCase(
+			ObjectProvider<DriveFileListingPort> fileListingPortProvider,
+			ObjectProvider<DriveChangePort> changePortProvider, FileMetadataPort fileMetadataPort,
+			SyncStatePort syncStatePort) {
+		DriveFileListingPort fileListingPort = fileListingPortProvider.getIfAvailable();
+		DriveChangePort changePort = changePortProvider.getIfAvailable();
+		if (fileListingPort == null || changePort == null) {
+			return (access, scopeKey) -> {
+				throw new GoogleOAuthException(
+						"Initial Drive synchronization is not configured. "
+								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
+			};
+		}
+		return new InitialDriveSyncService(fileListingPort, changePort, fileMetadataPort, syncStatePort);
 	}
 
 	@Bean

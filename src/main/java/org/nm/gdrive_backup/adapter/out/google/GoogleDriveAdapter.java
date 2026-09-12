@@ -16,6 +16,7 @@ import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
+import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 
 import java.io.IOException;
@@ -23,7 +24,7 @@ import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.util.List;
 
-public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, DriveContentPort {
+public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, DriveContentPort, DriveFileListingPort {
 
 	private static final String FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 	private static final String DEFAULT_PARENT_ID = "root";
@@ -127,6 +128,34 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	}
 
 	@Override
+	public List<StoredFile> listAllFiles(ServiceAccountAccess access, String scopeKey) {
+		try {
+			List<StoredFile> files = new java.util.ArrayList<>();
+			String pageToken = null;
+			do {
+				Drive.Files.List request = drive(access).files().list()
+						.setQ("trashed = false")
+						.setPageSize(1000)
+						.setPageToken(pageToken)
+						.setSpaces("drive")
+						.setSupportsAllDrives(true)
+						.setIncludeItemsFromAllDrives(true)
+						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId),nextPageToken");
+				configureFileScope(request, scopeKey);
+				var response = request.execute();
+				if (response.getFiles() != null) {
+					files.addAll(response.getFiles().stream()
+							.map(file -> mapStoredFile(file, access.impersonatedUserEmail())).toList());
+				}
+				pageToken = response.getNextPageToken();
+			} while (pageToken != null && !pageToken.isBlank());
+			return files;
+		} catch (IOException | GeneralSecurityException exception) {
+			throw new GoogleDriveException("Unable to list all Drive files", exception);
+		}
+	}
+
+	@Override
 	public InputStream download(ServiceAccountAccess access, String fileId) throws IOException {
 		if (fileId == null || fileId.isBlank()) {
 			throw new IllegalArgumentException("fileId must not be blank");
@@ -176,6 +205,12 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	private static void configureDriveScope(Drive.Changes.List request, String scopeKey) {
 		if (isSharedDriveScope(scopeKey)) {
 			request.setDriveId(scopeKey);
+		}
+	}
+
+	private static void configureFileScope(Drive.Files.List request, String scopeKey) {
+		if (isSharedDriveScope(scopeKey)) {
+			request.setCorpora("drive").setDriveId(scopeKey);
 		}
 	}
 
