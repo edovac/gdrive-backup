@@ -27,8 +27,12 @@ public class SqliteDatabase {
 		this.jdbcUrl = "jdbc:sqlite:" + databasePath;
 	}
 
+	Connection openConnection() throws SQLException {
+		return DriverManager.getConnection(jdbcUrl);
+	}
+
 	public void initialize() {
-		try (Connection connection = DriverManager.getConnection(jdbcUrl);
+		try (Connection connection = openConnection();
 			Statement statement = connection.createStatement()) {
 			statement.execute("PRAGMA foreign_keys = ON");
 			for (String schemaStatement : readSchema().split(";")) {
