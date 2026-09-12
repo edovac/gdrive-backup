@@ -7,6 +7,8 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.nm.gdrive_backup.configuration.DrivePreviewProperties;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveUsageQuotaUseCase;
+import org.nm.gdrive_backup.domain.port.in.WorkspaceUsageReportUseCase;
+import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 
@@ -25,6 +27,8 @@ public class GdriveBackupApplication {
 				springContext.getBeanProvider(DriveReadPort.class).getIfAvailable(),
 				springContext.getBeanProvider(WorkspaceUserListingUseCase.class).getIfAvailable(),
 				 springContext.getBeanProvider(DriveUsageQuotaUseCase.class).getIfAvailable(),
+				 springContext.getBeanProvider(WorkspaceUsageReportUseCase.class).getIfAvailable(),
+				 springContext.getBeanProvider(CloudQuotaLimitUseCase.class).getIfAvailable(),
 				springContext.getBean(DrivePreviewProperties.class).userEmail());
 		JavaFxApplication.launch(JavaFxApplication.class, args);
 	}

@@ -21,6 +21,10 @@ public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort
 	public static final String DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 	public static final String DIRECTORY_USER_READONLY_SCOPE =
 			"https://www.googleapis.com/auth/admin.directory.user.readonly";
+	public static final String REPORTS_USAGE_READONLY_SCOPE =
+				"https://www.googleapis.com/auth/admin.reports.usage.readonly";
+	public static final String CLOUD_PLATFORM_SCOPE =
+				"https://www.googleapis.com/auth/cloud-platform";
 
 	private static final Set<String> SCOPES = Set.of(
 			DRIVE_READONLY_SCOPE,
@@ -65,6 +69,32 @@ public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort
 			return credential;
 		} catch (IOException exception) {
 			throw new GoogleOAuthException("Unable to refresh service-account access", exception);
+		}
+	}
+
+	GoogleCredentials reportsCredentialsFor(ServiceAccountAccess access) {
+		if (access == null) {
+			throw new IllegalArgumentException("access must not be null");
+		}
+		try {
+			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) serviceAccountCredentials
+					.createScoped(Set.of(REPORTS_USAGE_READONLY_SCOPE));
+			GoogleCredentials delegatedCredentials = scopedCredentials.createDelegated(access.impersonatedUserEmail());
+			delegatedCredentials.refreshIfExpired();
+			return delegatedCredentials;
+		} catch (IOException | RuntimeException exception) {
+			throw new GoogleOAuthException("Unable to create Workspace Reports access", exception);
+		}
+	}
+
+	GoogleCredentials cloudCredentials() {
+		try {
+			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) serviceAccountCredentials
+					.createScoped(Set.of(CLOUD_PLATFORM_SCOPE));
+			scopedCredentials.refreshIfExpired();
+			return scopedCredentials;
+		} catch (IOException | RuntimeException exception) {
+			throw new GoogleOAuthException("Unable to create Cloud project access", exception);
 		}
 	}
 }
