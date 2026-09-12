@@ -11,6 +11,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -248,7 +249,11 @@ public class JavaFxApplication extends Application {
 		reportStatus.setWrapText(true);
 		cloudQuotaStatus.setWrapText(true);
 		driveStatus.setWrapText(true);
-		return content;
+		ScrollPane scrollPane = new ScrollPane(content);
+		scrollPane.setFitToWidth(true);
+		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		scrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+		return scrollPane;
 	}
 
 	private void authenticate(Button signIn, Button signOut, Label connectionStatus,

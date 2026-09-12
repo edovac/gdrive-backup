@@ -29,7 +29,8 @@ Last reviewed: 2026-09-12
 
 ### In progress
 
-- [-] Refine the vertical UI slice and continue exposing the remaining backend capabilities through the UI.
+- [-] Make the user-selection and impersonated Drive-preview flow discoverable and usable in the JavaFX layout.
+- [-] Continue exposing the remaining backend capabilities through the UI.
 
 ### Not started
 
