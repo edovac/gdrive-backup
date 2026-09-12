@@ -34,7 +34,7 @@ Last reviewed: 2026-09-12
 
 ### Not started
 
-- [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization and sync-state persistence are in place; file/version/event repositories remain.
+- [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization, sync-state persistence, and file metadata persistence are in place; users/drives, version, and event repositories remain.
 - [ ] Headless initial and incremental sync using `changes.list`.
 - [ ] Detection and persistence of renames, moves, trashing, deletion, and content revisions.
 - [ ] Versioned local storage writer.
