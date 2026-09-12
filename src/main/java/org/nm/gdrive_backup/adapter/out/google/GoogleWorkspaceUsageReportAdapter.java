@@ -69,6 +69,12 @@ public class GoogleWorkspaceUsageReportAdapter implements WorkspaceUsageReportPo
 		} catch (GoogleJsonResponseException exception) {
 			String reason = exception.getDetails() == null ? exception.getStatusMessage()
 					: exception.getDetails().getMessage();
+			if (isReportingAccessDenied(exception.getStatusCode(), reason)) {
+				LOGGER.warn("Workspace usage report unavailable: delegated account is not authorized for Reports data");
+				throw new GoogleDriveException(
+						"Workspace Reports access is not authorized. Add the Reports read-only scope "
+								+ "and use an administrator account.", exception);
+			}
 			LOGGER.error("Workspace usage report failed: status={}, reason={}, details={}",
 					exception.getStatusCode(), reason, exception.getDetails(), exception);
 			throw new GoogleDriveException(
@@ -78,6 +84,11 @@ public class GoogleWorkspaceUsageReportAdapter implements WorkspaceUsageReportPo
 			LOGGER.error("Workspace usage report failed before receiving a Google response", exception);
 			throw new GoogleDriveException("Unable to load Workspace usage report", exception);
 		}
+	}
+
+	static boolean isReportingAccessDenied(int statusCode, String reason) {
+		return statusCode == 403 && reason != null
+				&& reason.toLowerCase(java.util.Locale.ROOT).contains("caller does not have access");
 	}
 
 	private List<WorkspaceUsageMetric> loadReportForDate(Reports reports, LocalDate reportDate) throws IOException {

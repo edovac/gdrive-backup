@@ -25,11 +25,13 @@ import org.nm.gdrive_backup.domain.port.in.WorkspaceUsageReportUseCase;
 import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
+import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
+import org.nm.gdrive_backup.domain.model.SyncResult;
 
 import java.awt.Desktop;
 import java.io.IOException;
@@ -51,6 +53,7 @@ public class JavaFxApplication extends Application {
 	private static WorkspaceUsageReportUseCase workspaceUsageReportUseCase;
 	private static CloudQuotaLimitUseCase cloudQuotaLimitUseCase;
 	private static DriveReadPort driveReadPort;
+	private static DriveChangeSyncUseCase driveChangeSyncUseCase;
 	private static String previewUserEmail;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
@@ -64,13 +67,14 @@ public class JavaFxApplication extends Application {
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
 			DriveReadPort readPort, WorkspaceUserListingUseCase workspaceUserUseCase,
 			DriveUsageQuotaUseCase usageQuotaUseCase, WorkspaceUsageReportUseCase usageReportUseCase,
-			CloudQuotaLimitUseCase cloudQuotaUseCase, String userEmail) {
+			CloudQuotaLimitUseCase cloudQuotaUseCase, DriveChangeSyncUseCase changeSyncUseCase, String userEmail) {
 		serviceAccountUseCase = authenticationUseCase;
 		driveReadPort = readPort;
 		workspaceUserListingUseCase = workspaceUserUseCase;
 		driveUsageQuotaUseCase = usageQuotaUseCase;
 		workspaceUsageReportUseCase = usageReportUseCase;
 		cloudQuotaLimitUseCase = cloudQuotaUseCase;
+		driveChangeSyncUseCase = changeSyncUseCase;
 		previewUserEmail = userEmail;
 	}
 
@@ -169,6 +173,11 @@ public class JavaFxApplication extends Application {
 				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 			}
 		});
+		Button syncNow = new Button("Sync selected user");
+		syncNow.getStyleClass().add("primary-button");
+		syncNow.setVisible(false);
+		syncNow.setManaged(false);
+		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, syncNow, driveStatus));
 		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
 		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
 		refreshCloudQuota.setOnAction(event -> loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota));
@@ -191,7 +200,8 @@ public class JavaFxApplication extends Application {
 
 		signIn.setOnAction(event -> authenticate(signIn, signOut, connectionStatus, driveStatus,
 				drives, userPicker, driveItems, quotaStatus, quotaDetails, refreshQuota,
-				reportStatus, reportDetails, refreshReport, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota));
+				reportStatus, reportDetails, refreshReport, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota,
+				syncNow));
 		signOut.setOnAction(event -> {
 			GoogleLoginSession session = (GoogleLoginSession) signOut.getUserData();
 			loginUseCase.logout(session);
@@ -207,6 +217,8 @@ public class JavaFxApplication extends Application {
 			userPicker.setValue(null);
 			userPicker.setVisible(false);
 			userPicker.setManaged(false);
+			syncNow.setVisible(false);
+			syncNow.setManaged(false);
 			driveItems.getItems().clear();
 			driveItems.setVisible(false);
 			driveItems.setManaged(false);
@@ -233,7 +245,7 @@ public class JavaFxApplication extends Application {
 			drives.setManaged(false);
 		});
 
-		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker,
+		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, syncNow,
 				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
 				reportTitle, reportStatus, reportDetails, refreshReport, driveStatus, drives, driveItems);
 		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
@@ -260,7 +272,8 @@ public class JavaFxApplication extends Application {
 			Label driveStatus, ListView<AvailableDrive> drives, ComboBox<WorkspaceUser> userPicker,
 			ListView<DriveItem> driveItems, Label quotaStatus, ListView<String> quotaDetails,
 			Button refreshQuota, Label reportStatus, ListView<String> reportDetails, Button refreshReport,
-			Label cloudQuotaStatus, ListView<String> cloudQuotaDetails, Button refreshCloudQuota) {
+			Label cloudQuotaStatus, ListView<String> cloudQuotaDetails, Button refreshCloudQuota,
+			Button syncNow) {
 		signIn.setDisable(true);
 		connectionStatus.setText("Waiting for Google sign-in...");
 		driveStatus.setText("");
@@ -279,14 +292,14 @@ public class JavaFxApplication extends Application {
 					connectionStatus.setText("Google connected");
 					loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
 					loadWorkspaceUsers(drives, userPicker, driveItems, driveStatus,
-							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport);
+							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport, syncNow);
 				}));
 	}
 
 	private void loadWorkspaceUsers(ListView<AvailableDrive> drives, ComboBox<WorkspaceUser> userPicker,
 			ListView<DriveItem> driveItems, Label status, Label quotaStatus,
 			ListView<String> quotaDetails, Button refreshQuota, Label reportStatus,
-			ListView<String> reportDetails, Button refreshReport) {
+			ListView<String> reportDetails, Button refreshReport, Button syncNow) {
 		if (serviceAccountUseCase == null || workspaceUserListingUseCase == null || previewUserEmail == null
 				|| previewUserEmail.isBlank()) {
 			userPicker.setVisible(false);
@@ -326,10 +339,39 @@ public class JavaFxApplication extends Application {
 			userPicker.setValue(selected);
 			userPicker.setVisible(true);
 			userPicker.setManaged(true);
+			syncNow.setVisible(driveChangeSyncUseCase != null);
+			syncNow.setManaged(driveChangeSyncUseCase != null);
 			loadDrives(drives, status, userPicker, driveItems);
 			loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
 			loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 		}));
+	}
+
+	private void synchronizeSelectedUser(ComboBox<WorkspaceUser> userPicker, Button syncNow, Label status) {
+		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
+		if (driveChangeSyncUseCase == null || serviceAccountUseCase == null
+				|| selectedUserEmail == null || selectedUserEmail.isBlank()) {
+			status.setText("Sync unavailable. Select a Workspace user and configure service-account access.");
+			return;
+		}
+		syncNow.setDisable(true);
+		status.setText("Synchronizing changes for " + selectedUserEmail + "...");
+		CompletableFuture.supplyAsync(() -> {
+			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
+			return driveChangeSyncUseCase.synchronize(access, selectedUserEmail);
+		}).whenComplete((result, error) -> Platform.runLater(() -> {
+			syncNow.setDisable(false);
+			if (error != null) {
+				status.setText("Synchronization failed: " + messageFor(error));
+				return;
+			}
+			status.setText(syncMessage(result));
+		}));
+	}
+
+	private static String syncMessage(SyncResult result) {
+		return "Synchronization complete for " + result.scopeKey() + ": "
+				+ result.changeCount() + " changes processed";
 	}
 
 	private void loadQuota(ComboBox<WorkspaceUser> userPicker, Label status,

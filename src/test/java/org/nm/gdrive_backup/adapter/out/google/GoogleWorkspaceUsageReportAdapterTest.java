@@ -25,4 +25,10 @@ class GoogleWorkspaceUsageReportAdapterTest {
 		assertEquals("true", GoogleWorkspaceUsageReportAdapter.scalarValue(flag));
 		assertNull(GoogleWorkspaceUsageReportAdapter.scalarValue(new UsageReport.Parameters()));
 	}
+
+	@Test
+	void identifiesMissingReportsAccessAsAnOptionalCapabilityFailure() {
+		assertEquals(true, GoogleWorkspaceUsageReportAdapter.isReportingAccessDenied(403,
+				"Caller does not have access to the customers reporting data."));
+	}
 }
