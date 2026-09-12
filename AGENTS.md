@@ -19,6 +19,7 @@
 
 - Use the Maven wrapper from the repository root; the project targets Java 25 and Spring Boot 4.1.1.
 - Run `./mvnw test` for the full test suite and `./mvnw spring-boot:run` to start the application locally.
+- Verify new production code against `HexagonalArchitectureTest`; run `./mvnw -Dtest=HexagonalArchitectureTest test` after changes to packages, dependencies, ports, adapters, or configuration, and keep the architecture test passing with the full suite.
 - Name unit test classes with the `*Test` suffix and real external integration test classes with the `*IT` suffix. Surefire runs `*Test`; Failsafe runs `*IT` during `verify`.
 - Keep real-account OAuth tests opt-in and never commit client-secrets JSON, access tokens, refresh tokens, or service-account keys.
 - Keep production code under `src/main/java` and tests under `src/test/java`.

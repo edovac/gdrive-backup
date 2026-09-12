@@ -10,6 +10,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.port.out.GoogleOAuthPort;
 import org.nm.gdrive_backup.domain.port.out.ServiceAccountCredentialPort;
+import org.nm.gdrive_backup.domain.port.out.WorkspaceUserDirectoryPort;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -83,6 +84,12 @@ class HexagonalArchitectureTest {
 	static final ArchRule credential_adapters_are_named_as_adapters = classes()
 			.that().resideInAnyPackage("..adapter..")
 			.and().implement(ServiceAccountCredentialPort.class)
+			.should().haveSimpleNameEndingWith("Adapter");
+
+	@ArchTest
+	static final ArchRule workspace_directory_adapters_are_named_as_adapters = classes()
+			.that().resideInAnyPackage("..adapter..")
+			.and().implement(WorkspaceUserDirectoryPort.class)
 			.should().haveSimpleNameEndingWith("Adapter");
 
 	@ArchTest

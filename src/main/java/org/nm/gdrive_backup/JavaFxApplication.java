@@ -19,15 +19,18 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
 import org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
+import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
+import org.nm.gdrive_backup.domain.model.WorkspaceUser;
 
 import java.awt.Desktop;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,6 +40,7 @@ public class JavaFxApplication extends Application {
 	private static ConfigurableApplicationContext springContext;
 	private static GoogleLoginUseCase loginUseCase;
 	private static ServiceAccountAuthenticationUseCase serviceAccountUseCase;
+	private static WorkspaceUserListingUseCase workspaceUserListingUseCase;
 	private static DriveReadPort driveReadPort;
 	private static String previewUserEmail;
 
@@ -49,9 +53,10 @@ public class JavaFxApplication extends Application {
 	}
 
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
-			DriveReadPort readPort, String userEmail) {
+			DriveReadPort readPort, WorkspaceUserListingUseCase workspaceUserUseCase, String userEmail) {
 		serviceAccountUseCase = authenticationUseCase;
 		driveReadPort = readPort;
+		workspaceUserListingUseCase = workspaceUserUseCase;
 		previewUserEmail = userEmail;
 	}
 
@@ -172,6 +177,10 @@ public class JavaFxApplication extends Application {
 		status.setText("Loading available drives...");
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(previewUserEmail);
+			if (workspaceUserListingUseCase != null) {
+				List<WorkspaceUser> users = workspaceUserListingUseCase.listUsers(access);
+				System.out.println("Loaded Workspace users: " + users.size());
+			}
 			return driveReadPort.listAvailableDrives(access);
 		}).whenComplete((availableDrives, error) -> Platform.runLater(() -> {
 			if (error != null) {
