@@ -27,6 +27,9 @@ import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
 import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
+import org.nm.gdrive_backup.domain.port.out.FileEventPort;
+import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
+import org.nm.gdrive_backup.domain.port.out.FileVersionPort;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -81,7 +84,8 @@ public class ServiceAccountConfiguration {
 
 	@Bean
 	DriveChangeSyncUseCase driveChangeSyncUseCase(
-			ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort) {
+			ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort,
+			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileVersionPort fileVersionPort) {
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
 		if (changePort == null) {
 			return (access, scopeKey) -> {
@@ -90,7 +94,7 @@ public class ServiceAccountConfiguration {
 								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
 			};
 		}
-		return new DriveChangeSyncService(changePort, syncStatePort);
+		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, fileEventPort, fileVersionPort);
 	}
 
 	@Bean
