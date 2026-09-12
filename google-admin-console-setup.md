@@ -24,6 +24,17 @@ In **APIs & Services > Library**, enable:
 
 The Drive API is used for Drive listing and backup operations. The Admin SDK API is used later for Workspace user enumeration.
 
+For the optional quota and usage view planned for a later implementation, also
+enable:
+
+- **Admin SDK Reports API** for Workspace-wide usage reports.
+- **Service Usage API** for project quota definitions.
+- **Cloud Monitoring API** for observed quota consumption and quota errors.
+
+The current application build does not call these three APIs yet. The Drive
+storage usage view uses the existing Drive API and does not require these
+additional APIs.
+
 ## 3. Configure OAuth login
 
 OAuth login unlocks the application UI for the administrator. It uses only the
@@ -116,9 +127,44 @@ https://www.googleapis.com/auth/drive.readonly
 https://www.googleapis.com/auth/admin.directory.user.readonly
 ```
 
+For the planned Workspace Reports integration, add this additional scope:
+
+```text
+https://www.googleapis.com/auth/admin.reports.usage.readonly
+```
+
 7. Save the authorization.
 
 The scopes must exactly match the scopes requested by the application. The first scope allows read-only Drive access for the impersonated user. The second allows read-only Workspace user enumeration.
+
+The Reports scope is also read-only and is used for customer or user usage
+reports. It does not grant Drive file access. After changing the delegation,
+allow a few minutes for the authorization to propagate before testing.
+
+## 8a. Grant project-level quota monitoring access
+
+Cloud API request quotas belong to the Google Cloud project, not to the
+impersonated Workspace user. The planned quota integration therefore needs
+project-level access for the service account itself, in addition to the
+Workspace domain-wide delegation above.
+
+In **IAM & Admin > IAM**, on the application Cloud project, grant the service
+account these roles:
+
+- **Service Usage Viewer** (`roles/serviceusage.serviceUsageViewer`) to read
+	service quota definitions and limits.
+- **Monitoring Viewer** (`roles/monitoring.viewer`) to read Cloud Monitoring
+	quota metrics and observed usage.
+
+Grant these roles at the project level only. Do not grant Owner, Editor, or
+Service Usage Admin for read-only quota display. The exact permissions exposed
+by a metric can vary by Google service; if a metric remains unavailable, keep
+the quota section unavailable rather than broadening permissions blindly.
+
+The planned Cloud APIs use the `cloud-platform` OAuth scope for the service
+account's own project credentials. These project-level calls are separate from
+the delegated Workspace calls and should not be made by impersonating a
+Workspace user.
 
 ## 8. Choose an impersonated Workspace user
 
