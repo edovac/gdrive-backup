@@ -31,9 +31,11 @@ enable:
 - **Service Usage API** for project quota definitions.
 - **Cloud Monitoring API** for observed quota consumption and quota errors.
 
-The current application build does not call these three APIs yet. The Drive
-storage usage view uses the existing Drive API and does not require these
-additional APIs.
+The current application uses the Admin SDK Reports API for the Workspace usage
+panel and the Service Usage API for the Cloud API quota-limits panel. Cloud
+Monitoring is enabled for the planned current-consumption panel but is not yet
+queried by the application. The Drive storage usage view uses the existing
+Drive API and does not require these additional APIs.
 
 ## 3. Configure OAuth login
 
@@ -191,6 +193,7 @@ Set the following environment variables before starting the application:
 ```bash
 export GOOGLE_SERVICE_ACCOUNT_KEY=/home/edoardo/gdrive-service-account.json
 export GOOGLE_IMPERSONATED_USER=admin@your-workspace-domain.com
+export GOOGLE_CLOUD_PROJECT_ID=your-cloud-project-id
 ```
 
 The OAuth UI login also requires a desktop OAuth client-secrets file:
@@ -211,6 +214,7 @@ Or provide the values for one command:
 GOOGLE_OAUTH_CLIENT_SECRETS=/home/edoardo/client_secret.json \
 GOOGLE_SERVICE_ACCOUNT_KEY=/home/edoardo/gdrive-service-account.json \
 GOOGLE_IMPERSONATED_USER=admin@your-workspace-domain.com \
+GOOGLE_CLOUD_PROJECT_ID=your-cloud-project-id \
 ./mvnw spring-boot:run
 ```
 
@@ -230,7 +234,9 @@ If the UI shows `Google connected, Drive preview unavailable`, check:
 4. Both scopes are authorized exactly as shown above.
 5. The Drive API and Admin SDK API are enabled.
 6. The Workspace user exists and has access to the expected Drive data.
-7. Changes to domain-wide delegation have had a few minutes to propagate.
+7. `GOOGLE_CLOUD_PROJECT_ID` is the project that owns the service account and
+	has the Service Usage Viewer role if Cloud quota limits are unavailable.
+8. Changes to domain-wide delegation or IAM have had a few minutes to propagate.
 
 ## Security checklist
 
