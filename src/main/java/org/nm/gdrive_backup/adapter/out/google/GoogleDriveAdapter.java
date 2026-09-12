@@ -92,7 +92,7 @@ public class GoogleDriveAdapter implements DriveReadPort {
 				.build();
 	}
 
-	private static List<DriveItem> mapFiles(List<File> files) {
+	static List<DriveItem> mapFiles(List<File> files) {
 		if (files == null) {
 			return List.of();
 		}

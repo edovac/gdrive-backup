@@ -8,6 +8,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.layout.HBox;
@@ -22,6 +23,7 @@ import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
+import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
 
@@ -114,11 +116,44 @@ public class JavaFxApplication extends Application {
 				setText(empty || drive == null ? null : (drive.shared() ? "Shared: " : "") + drive.name());
 			}
 		});
+		ListView<DriveItem> driveItems = new ListView<>();
+		driveItems.setPlaceholder(new Label("No items loaded"));
+		driveItems.setVisible(false);
+		driveItems.setManaged(false);
+		driveItems.setCellFactory(view -> new javafx.scene.control.ListCell<>() {
+			@Override
+			protected void updateItem(DriveItem item, boolean empty) {
+				super.updateItem(item, empty);
+				setText(empty || item == null ? null : (item.folder() ? "[Folder] " : "") + item.name());
+			}
+		});
+		ComboBox<WorkspaceUser> userPicker = new ComboBox<>();
+		userPicker.setPromptText("Select Workspace user");
+		userPicker.setVisible(false);
+		userPicker.setManaged(false);
+		userPicker.setOnAction(event -> {
+			if (userPicker.getValue() != null) {
+				loadDrives(drives, driveStatus, userPicker, driveItems);
+			}
+		});
 		signOut.getStyleClass().add("secondary-button");
 		signOut.setVisible(false);
 		signOut.setManaged(false);
 
-		signIn.setOnAction(event -> authenticate(signIn, signOut, connectionStatus, driveStatus, drives));
+		drives.setOnMouseClicked(event -> {
+			AvailableDrive selected = drives.getSelectionModel().getSelectedItem();
+			if (selected != null && event.getClickCount() >= 1) {
+				loadDriveContents(selectedUserEmailFor(userPicker, previewUserEmail), selected, driveItems, driveStatus);
+			}
+		});
+		driveItems.setOnMouseClicked(event -> {
+			DriveItem selected = driveItems.getSelectionModel().getSelectedItem();
+			if (selected != null && event.getClickCount() >= 2 && selected.folder()) {
+				loadFolderContents(selectedUserEmailFor(userPicker, previewUserEmail), selected, driveItems, driveStatus);
+			}
+		});
+
+		signIn.setOnAction(event -> authenticate(signIn, signOut, connectionStatus, driveStatus, drives, userPicker, driveItems));
 		signOut.setOnAction(event -> {
 			GoogleLoginSession session = (GoogleLoginSession) signOut.getUserData();
 			loginUseCase.logout(session);
@@ -130,13 +165,20 @@ public class JavaFxApplication extends Application {
 			subtitle.setText("Sign in to continue");
 			connectionStatus.setText("");
 			driveStatus.setText("");
+			userPicker.getItems().clear();
+			userPicker.setValue(null);
+			userPicker.setVisible(false);
+			userPicker.setManaged(false);
+			driveItems.getItems().clear();
+			driveItems.setVisible(false);
+			driveItems.setManaged(false);
 			drives.getItems().clear();
 			drives.setVisible(false);
 			drives.setManaged(false);
 		});
 
-		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope,
-				connectionStatus, driveStatus, drives);
+		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker,
+				connectionStatus, driveStatus, drives, driveItems);
 		content.setAlignment(Pos.CENTER);
 		content.setMaxWidth(560);
 		connectionStatus.setMaxWidth(540);
@@ -147,7 +189,8 @@ public class JavaFxApplication extends Application {
 	}
 
 	private void authenticate(Button signIn, Button signOut, Label connectionStatus,
-			Label driveStatus, ListView<AvailableDrive> drives) {
+			Label driveStatus, ListView<AvailableDrive> drives, ComboBox<WorkspaceUser> userPicker,
+			ListView<DriveItem> driveItems) {
 		signIn.setDisable(true);
 		connectionStatus.setText("Waiting for Google sign-in...");
 		driveStatus.setText("");
@@ -164,34 +207,135 @@ public class JavaFxApplication extends Application {
 					signOut.setVisible(true);
 					signOut.setManaged(true);
 					connectionStatus.setText("Google connected");
-					loadDrives(drives, driveStatus);
+					loadWorkspaceUsers(drives, userPicker, driveItems, driveStatus);
 				}));
 	}
 
-	private void loadDrives(ListView<AvailableDrive> drives, Label status) {
-		if (serviceAccountUseCase == null || driveReadPort == null || previewUserEmail == null
+	private void loadWorkspaceUsers(ListView<AvailableDrive> drives, ComboBox<WorkspaceUser> userPicker,
+			ListView<DriveItem> driveItems, Label status) {
+		if (serviceAccountUseCase == null || workspaceUserListingUseCase == null || previewUserEmail == null
 				|| previewUserEmail.isBlank()) {
+			userPicker.setVisible(false);
+			userPicker.setManaged(false);
+			loadDrives(drives, status, userPicker, driveItems);
+			return;
+		}
+		status.setText("Loading Workspace users...");
+		CompletableFuture.supplyAsync(() -> {
+			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(previewUserEmail);
+			return workspaceUserListingUseCase.listUsers(access);
+		}).whenComplete((users, error) -> Platform.runLater(() -> {
+			if (error != null) {
+				status.setText("Google connected, user selection unavailable: " + messageFor(error));
+				userPicker.setVisible(false);
+				userPicker.setManaged(false);
+				loadDrives(drives, status, userPicker, driveItems);
+				return;
+			}
+			userPicker.getItems().setAll(users);
+			if (users.isEmpty()) {
+				userPicker.setVisible(false);
+				userPicker.setManaged(false);
+				loadDrives(drives, status, userPicker, driveItems);
+				return;
+			}
+			WorkspaceUser selected = users.stream()
+					.filter(user -> user.email().equalsIgnoreCase(previewUserEmail))
+					.findFirst()
+					.orElse(users.getFirst());
+			userPicker.setValue(selected);
+			userPicker.setVisible(true);
+			userPicker.setManaged(true);
+			loadDrives(drives, status, userPicker, driveItems);
+		}));
+	}
+
+	private void loadDrives(ListView<AvailableDrive> drives, Label status, ComboBox<WorkspaceUser> userPicker,
+			ListView<DriveItem> driveItems) {
+		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
+		if (serviceAccountUseCase == null || driveReadPort == null || selectedUserEmail == null
+				|| selectedUserEmail.isBlank()) {
+			driveItems.getItems().clear();
+			driveItems.setVisible(false);
+			driveItems.setManaged(false);
 			status.setText("Google connected, Drive preview unavailable. Configure GOOGLE_IMPERSONATED_USER.");
 			return;
 		}
-		status.setText("Loading available drives...");
+		status.setText("Loading available drives for " + selectedUserEmail + "...");
 		CompletableFuture.supplyAsync(() -> {
-			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(previewUserEmail);
-			if (workspaceUserListingUseCase != null) {
-				List<WorkspaceUser> users = workspaceUserListingUseCase.listUsers(access);
-				System.out.println("Loaded Workspace users: " + users.size());
-			}
+			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
 			return driveReadPort.listAvailableDrives(access);
 		}).whenComplete((availableDrives, error) -> Platform.runLater(() -> {
 			if (error != null) {
 				status.setText("Google connected, Drive preview unavailable: " + messageFor(error));
+				driveItems.getItems().clear();
+				driveItems.setVisible(false);
+				driveItems.setManaged(false);
 				return;
 			}
 			drives.getItems().setAll(availableDrives);
 			drives.setVisible(true);
 			drives.setManaged(true);
-			status.setText("Available drives");
+			driveItems.getItems().clear();
+			driveItems.setVisible(false);
+			driveItems.setManaged(false);
+			status.setText("Available drives for " + selectedUserEmail);
 		}));
+	}
+
+	private void loadDriveContents(String userEmail, AvailableDrive selectedDrive, ListView<DriveItem> driveItems,
+			Label status) {
+		if (selectedDrive == null || serviceAccountUseCase == null || driveReadPort == null) {
+			return;
+		}
+		status.setText("Loading contents for " + selectedDrive.name() + "...");
+		CompletableFuture.supplyAsync(() -> {
+			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(userEmail);
+			if (selectedDrive.shared()) {
+				return driveReadPort.listSharedDriveItems(access, selectedDrive.id());
+			}
+			return driveReadPort.listMyDriveItems(access, "root");
+		}).whenComplete((items, error) -> Platform.runLater(() -> {
+			if (error != null) {
+				status.setText("Unable to load contents: " + messageFor(error));
+				return;
+			}
+			driveItems.getItems().setAll(items);
+			driveItems.setVisible(true);
+			driveItems.setManaged(true);
+			status.setText("Contents for " + selectedDrive.name());
+		}));
+	}
+
+	private void loadFolderContents(String userEmail, DriveItem selectedItem, ListView<DriveItem> driveItems,
+			Label status) {
+		if (selectedItem == null || serviceAccountUseCase == null || driveReadPort == null) {
+			return;
+		}
+		status.setText("Loading folder: " + selectedItem.name() + "...");
+		CompletableFuture.supplyAsync(() -> {
+			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(userEmail);
+			if (selectedItem.driveId() != null && !selectedItem.driveId().isBlank()) {
+				return driveReadPort.listSharedDriveItems(access, selectedItem.driveId());
+			}
+			return driveReadPort.listMyDriveItems(access, selectedItem.id());
+		}).whenComplete((items, error) -> Platform.runLater(() -> {
+			if (error != null) {
+				status.setText("Unable to load folder: " + messageFor(error));
+				return;
+			}
+			driveItems.getItems().setAll(items);
+			driveItems.setVisible(true);
+			driveItems.setManaged(true);
+			status.setText("Folder contents: " + selectedItem.name());
+		}));
+	}
+
+	private static String selectedUserEmailFor(ComboBox<WorkspaceUser> userPicker, String fallbackEmail) {
+		if (userPicker != null && userPicker.getValue() != null) {
+			return userPicker.getValue().email();
+		}
+		return fallbackEmail;
 	}
 
 	private static String messageFor(Throwable error) {
