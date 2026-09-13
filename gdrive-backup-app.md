@@ -46,11 +46,14 @@ Last reviewed: 2026-09-13
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes. The sync trigger now also backs up every Shared Drive the selected user can see, deduplicated by `drive_id` via the `drives` table; if any one scope fails the whole run stops. Full progress reporting, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
-- [ ] Per-drive backup scope selection: let the admin choose which drive(s) — the
+- [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes, per selected drive. If any one scope fails the whole run stops. Full progress reporting, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
+- [x] Per-drive backup scope selection: let the admin choose which drive(s) — the
   personal drive and/or one or more specific Shared Drives — to include in a
-  backup job, instead of today's behavior of automatically including every
-  Shared Drive the selected user can see.
+  backup job. The drive list gets a checkbox per row (`CheckBoxListCell`); the
+  admin checks the drives to include and clicks **Sync selected drives**.
+  Shared Drives synced this way are still deduplicated by `drive_id` via the
+  `drives` table. This replaces the previous behavior of automatically
+  including every Shared Drive the selected user could see.
 - [-] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per selected drive.
   Full versus incremental mode selection is implemented: the admin picks the mode in the
   UI before starting a sync, `INCREMENTAL` falls back to a full inventory when no
@@ -81,7 +84,7 @@ requirements below as the source of truth for expected behavior.
 
 - [x] Runtime backup-destination and database-location selection.
 - [x] Full versus incremental backup selection.
-- [ ] Per-drive backup scope selection (personal drive and/or specific Shared
+- [x] Per-drive backup scope selection (personal drive and/or specific Shared
   Drives), replacing automatic inclusion of every visible Shared Drive.
 - Interruptible backups with defined database and archive recovery behavior.
 - Progress bar and concise current-operation status.

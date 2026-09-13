@@ -153,10 +153,9 @@ public class ServiceAccountConfiguration {
 	@Bean
 	DriveBackupUseCase driveBackupUseCase(SyncStatePort syncStatePort,
 			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase,
-			BackupActivity backupActivity, @Qualifier("driveReadPort") ObjectProvider<DriveReadPort> driveReadPortProvider,
-			DriveMetadataPort driveMetadataPort) {
+			BackupActivity backupActivity, DriveMetadataPort driveMetadataPort) {
 		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase,
-				backupActivity, driveReadPortProvider.getIfAvailable(), driveMetadataPort);
+				backupActivity, driveMetadataPort);
 	}
 
 	@Bean

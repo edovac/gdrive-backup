@@ -12,11 +12,15 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.cell.CheckBoxListCell;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.util.StringConverter;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
 import org.nm.gdrive_backup.domain.model.DriveUsageQuota;
@@ -46,7 +50,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
@@ -156,17 +162,28 @@ public class JavaFxApplication extends Application {
 		Button refreshCloudQuota = new Button("Refresh API limits");
 		refreshCloudQuota.setVisible(false);
 		refreshCloudQuota.setManaged(false);
+		Label drivesLabel = new Label("Select the drive(s) to back up:");
+		drivesLabel.getStyleClass().add("scope");
+		drivesLabel.setVisible(false);
+		drivesLabel.setManaged(false);
+		Map<AvailableDrive, BooleanProperty> driveSelections = new HashMap<>();
 		ListView<AvailableDrive> drives = new ListView<>();
 		drives.setPlaceholder(new Label("No drives loaded"));
 		drives.setVisible(false);
 		drives.setManaged(false);
-		drives.setCellFactory(view -> new javafx.scene.control.ListCell<>() {
-			@Override
-			protected void updateItem(AvailableDrive drive, boolean empty) {
-				super.updateItem(drive, empty);
-				setText(empty || drive == null ? null : (drive.shared() ? "Shared: " : "") + drive.name());
-			}
-		});
+		drives.setCellFactory(CheckBoxListCell.forListView(
+				drive -> driveSelections.computeIfAbsent(drive, key -> new SimpleBooleanProperty(false)),
+				new StringConverter<AvailableDrive>() {
+					@Override
+					public String toString(AvailableDrive drive) {
+						return drive == null ? "" : (drive.shared() ? "Shared: " : "") + drive.name();
+					}
+
+					@Override
+					public AvailableDrive fromString(String string) {
+						return null;
+					}
+				}));
 		ListView<DriveItem> driveItems = new ListView<>();
 		driveItems.setPlaceholder(new Label("No items loaded"));
 		driveItems.setVisible(false);
@@ -184,7 +201,7 @@ public class JavaFxApplication extends Application {
 		userPicker.setManaged(false);
 		userPicker.setOnAction(event -> {
 			if (userPicker.getValue() != null) {
-				loadDrives(drives, driveStatus, userPicker, driveItems);
+				loadDrives(drives, drivesLabel, driveSelections, driveStatus, userPicker, driveItems);
 				loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
 				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 			}
@@ -196,11 +213,12 @@ public class JavaFxApplication extends Application {
 		backupModeCombo.setButtonCell(backupModeCell());
 		backupModeCombo.setVisible(false);
 		backupModeCombo.setManaged(false);
-		Button syncNow = new Button("Sync user & shared drives");
+		Button syncNow = new Button("Sync selected drives");
 		syncNow.getStyleClass().add("primary-button");
 		syncNow.setVisible(false);
 		syncNow.setManaged(false);
-		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, drives, driveStatus));
+		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, drives,
+				driveSelections, driveStatus));
 		locationsPanel = new LocationsPanel(syncNow);
 		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
 		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
@@ -223,7 +241,7 @@ public class JavaFxApplication extends Application {
 		});
 
 		signIn.setOnAction(event -> authenticate(signIn, signOut, connectionStatus, driveStatus,
-				drives, userPicker, driveItems, quotaStatus, quotaDetails, refreshQuota,
+				drives, drivesLabel, driveSelections, userPicker, driveItems, quotaStatus, quotaDetails, refreshQuota,
 				reportStatus, reportDetails, refreshReport, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota,
 				backupModeCombo, syncNow));
 		signOut.setOnAction(event -> {
@@ -267,16 +285,19 @@ public class JavaFxApplication extends Application {
 			cloudQuotaDetails.setManaged(false);
 			refreshCloudQuota.setVisible(false);
 			refreshCloudQuota.setManaged(false);
+			driveSelections.clear();
 			drives.getItems().clear();
 			drives.setVisible(false);
 			drives.setManaged(false);
+			drivesLabel.setVisible(false);
+			drivesLabel.setManaged(false);
 			locationsPanel.hide();
 		});
 
 		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(),
-				backupModeCombo, syncNow,
+				drivesLabel, drives, backupModeCombo, syncNow,
 				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
-				reportTitle, reportStatus, reportDetails, refreshReport, driveStatus, drives, driveItems);
+				reportTitle, reportStatus, reportDetails, refreshReport, driveStatus, driveItems);
 		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
 		content.setAlignment(Pos.CENTER);
 		content.setMaxWidth(560);
@@ -298,7 +319,8 @@ public class JavaFxApplication extends Application {
 	}
 
 	private void authenticate(Button signIn, Button signOut, Label connectionStatus,
-			Label driveStatus, ListView<AvailableDrive> drives, ComboBox<WorkspaceUser> userPicker,
+			Label driveStatus, ListView<AvailableDrive> drives, Label drivesLabel,
+			Map<AvailableDrive, BooleanProperty> driveSelections, ComboBox<WorkspaceUser> userPicker,
 			ListView<DriveItem> driveItems, Label quotaStatus, ListView<String> quotaDetails,
 			Button refreshQuota, Label reportStatus, ListView<String> reportDetails, Button refreshReport,
 			Label cloudQuotaStatus, ListView<String> cloudQuotaDetails, Button refreshCloudQuota,
@@ -321,13 +343,14 @@ public class JavaFxApplication extends Application {
 					connectionStatus.setText("Google connected");
 					locationsPanel.show();
 					loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
-					loadWorkspaceUsers(drives, userPicker, driveItems, driveStatus,
+					loadWorkspaceUsers(drives, drivesLabel, driveSelections, userPicker, driveItems, driveStatus,
 							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport,
 							backupModeCombo, syncNow);
 				}));
 	}
 
-	private void loadWorkspaceUsers(ListView<AvailableDrive> drives, ComboBox<WorkspaceUser> userPicker,
+	private void loadWorkspaceUsers(ListView<AvailableDrive> drives, Label drivesLabel,
+			Map<AvailableDrive, BooleanProperty> driveSelections, ComboBox<WorkspaceUser> userPicker,
 			ListView<DriveItem> driveItems, Label status, Label quotaStatus,
 			ListView<String> quotaDetails, Button refreshQuota, Label reportStatus,
 			ListView<String> reportDetails, Button refreshReport, ComboBox<BackupMode> backupModeCombo,
@@ -336,7 +359,7 @@ public class JavaFxApplication extends Application {
 				|| previewUserEmail.isBlank()) {
 			userPicker.setVisible(false);
 			userPicker.setManaged(false);
-			loadDrives(drives, status, userPicker, driveItems);
+			loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
 			loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
 			loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 			return;
@@ -350,7 +373,7 @@ public class JavaFxApplication extends Application {
 				status.setText("Google connected, user selection unavailable: " + messageFor(error));
 				userPicker.setVisible(false);
 				userPicker.setManaged(false);
-				loadDrives(drives, status, userPicker, driveItems);
+				loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
 				loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
 				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 				return;
@@ -359,7 +382,7 @@ public class JavaFxApplication extends Application {
 			if (users.isEmpty()) {
 				userPicker.setVisible(false);
 				userPicker.setManaged(false);
-				loadDrives(drives, status, userPicker, driveItems);
+				loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
 				loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
 				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 				return;
@@ -375,18 +398,26 @@ public class JavaFxApplication extends Application {
 			syncNow.setManaged(driveBackupUseCase != null);
 			backupModeCombo.setVisible(driveBackupUseCase != null);
 			backupModeCombo.setManaged(driveBackupUseCase != null);
-			loadDrives(drives, status, userPicker, driveItems);
+			loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
 			loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
 			loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 		}));
 	}
 
 	private void synchronizeSelectedUser(ComboBox<WorkspaceUser> userPicker, ComboBox<BackupMode> backupModeCombo,
-			Button syncNow, ListView<AvailableDrive> drives, Label status) {
+			Button syncNow, ListView<AvailableDrive> drives, Map<AvailableDrive, BooleanProperty> driveSelections,
+			Label status) {
 		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
 		if (driveBackupUseCase == null || serviceAccountUseCase == null
 				|| selectedUserEmail == null || selectedUserEmail.isBlank()) {
 			status.setText("Sync unavailable. Select a Workspace user and configure service-account access.");
+			return;
+		}
+		List<AvailableDrive> selectedDrives = drives.getItems().stream()
+				.filter(drive -> driveSelections.getOrDefault(drive, new SimpleBooleanProperty(false)).get())
+				.toList();
+		if (selectedDrives.isEmpty()) {
+			status.setText("Select at least one drive to back up.");
 			return;
 		}
 		BackupMode mode = backupModeCombo.getValue();
@@ -397,10 +428,9 @@ public class JavaFxApplication extends Application {
 				: " into " + backupLocationUseCase.currentLocations().backupDestination();
 		status.setText("Synchronizing " + modeLabel(mode).toLowerCase() + " backup for " + selectedUserEmail
 				+ destination + "...");
-		List<AvailableDrive> knownDrives = List.copyOf(drives.getItems());
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
-			return driveBackupUseCase.synchronizeVisibleScopes(access, mode);
+			return driveBackupUseCase.synchronizeSelectedDrives(access, selectedDrives, mode);
 		}).whenComplete((results, error) -> Platform.runLater(() -> {
 			syncNow.setDisable(false);
 			backupModeCombo.setDisable(false);
@@ -409,7 +439,7 @@ public class JavaFxApplication extends Application {
 				status.setText("Synchronization failed: " + messageFor(error));
 				return;
 			}
-			status.setText(syncMessage(results, knownDrives));
+			status.setText(syncMessage(results, selectedDrives));
 		}));
 	}
 
@@ -590,7 +620,8 @@ public class JavaFxApplication extends Application {
 		}));
 	}
 
-	private void loadDrives(ListView<AvailableDrive> drives, Label status, ComboBox<WorkspaceUser> userPicker,
+	private void loadDrives(ListView<AvailableDrive> drives, Label drivesLabel,
+			Map<AvailableDrive, BooleanProperty> driveSelections, Label status, ComboBox<WorkspaceUser> userPicker,
 			ListView<DriveItem> driveItems) {
 		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
 		if (serviceAccountUseCase == null || driveReadPort == null || selectedUserEmail == null
@@ -613,9 +644,12 @@ public class JavaFxApplication extends Application {
 				driveItems.setManaged(false);
 				return;
 			}
+			driveSelections.clear();
 			drives.getItems().setAll(availableDrives);
 			drives.setVisible(true);
 			drives.setManaged(true);
+			drivesLabel.setVisible(true);
+			drivesLabel.setManaged(true);
 			driveItems.getItems().clear();
 			driveItems.setVisible(false);
 			driveItems.setManaged(false);
