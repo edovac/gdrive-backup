@@ -9,6 +9,8 @@ import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 
+import java.util.Optional;
+
 public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 
 	private final DriveFileListingPort fileListingPort;
@@ -39,8 +41,13 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		}
 		var files = fileListingPort.listAllFiles(access, scopeKey);
 		files.forEach(file -> {
-			fileMetadataPort.save(file);
-			if (contentBackupService != null && !isFolder(file)) {
+			Optional<org.nm.gdrive_backup.domain.model.StoredFile> previous = fileMetadataPort.findByFileId(file.fileId());
+			org.nm.gdrive_backup.domain.model.StoredFile metadata = previous
+					.filter(existing -> java.util.Objects.equals(existing.headRevisionId(), file.headRevisionId()))
+					.map(existing -> withCurrentVersion(file, existing.currentVersionId()))
+					.orElse(file);
+			fileMetadataPort.save(metadata);
+			if (shouldBackUpContent(previous, file)) {
 				var version = contentBackupService.backup(access, file);
 				fileMetadataPort.save(withCurrentVersion(file, version.id()));
 			}
@@ -52,6 +59,14 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 
 	private static boolean isFolder(org.nm.gdrive_backup.domain.model.StoredFile file) {
 		return "application/vnd.google-apps.folder".equals(file.mimeType());
+	}
+
+	private boolean shouldBackUpContent(Optional<org.nm.gdrive_backup.domain.model.StoredFile> previous,
+			org.nm.gdrive_backup.domain.model.StoredFile file) {
+		return contentBackupService != null && !isFolder(file) && file.headRevisionId() != null
+				&& !file.headRevisionId().isBlank()
+				&& previous.map(existing -> !java.util.Objects.equals(existing.headRevisionId(), file.headRevisionId())
+						|| existing.currentVersionId() == null).orElse(true);
 	}
 
 	private static org.nm.gdrive_backup.domain.model.StoredFile withCurrentVersion(

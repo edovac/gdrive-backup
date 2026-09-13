@@ -9,4 +9,6 @@ public interface SyncStatePort {
 	Optional<SyncState> findByScopeKey(String scopeKey);
 
 	void save(SyncState state);
+
+	void deleteByScopeKey(String scopeKey);
 }

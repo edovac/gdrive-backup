@@ -16,6 +16,7 @@ import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.SyncResult;
 import org.nm.gdrive_backup.domain.model.SyncState;
+import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
@@ -56,5 +57,25 @@ class DriveBackupServiceTest {
 
 		assertEquals(new BackupResult("user@example.com", 2, false), result);
 		verify(changeSync).synchronize(ACCESS, "user@example.com");
+	}
+
+	@Test
+	void reInventoriesScopeWhenDriveChangeTokenHasExpired() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		when(statePort.findByScopeKey("user@example.com"))
+				.thenReturn(Optional.of(new SyncState("user@example.com", "expired-token")));
+		when(changeSync.synchronize(ACCESS, "user@example.com"))
+				.thenThrow(new StaleDrivePageTokenException("expired", null));
+		when(initialSync.synchronize(ACCESS, "user@example.com"))
+				.thenReturn(new InitialSyncResult("user@example.com", 5, "fresh-token"));
+
+		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync)
+				.synchronize(ACCESS, "user@example.com");
+
+		assertEquals(new BackupResult("user@example.com", 5, true), result);
+		verify(statePort).deleteByScopeKey("user@example.com");
+		verify(initialSync).synchronize(ACCESS, "user@example.com");
 	}
 }

@@ -14,6 +14,7 @@ import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.StoredFile;
+import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
@@ -122,6 +123,11 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 						mapStoredFile(change.getFile(), access.impersonatedUserEmail())))
 				.toList();
 			return new DriveChangePage(changes, response.getNextPageToken(), response.getNewStartPageToken());
+		} catch (GoogleJsonResponseException exception) {
+			if (exception.getStatusCode() == 410) {
+				throw new StaleDrivePageTokenException("Drive change page token has expired", exception);
+			}
+			throw new GoogleDriveException("Unable to list Drive changes", exception);
 		} catch (IOException | GeneralSecurityException exception) {
 			throw new GoogleDriveException("Unable to list Drive changes", exception);
 		}

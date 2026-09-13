@@ -95,4 +95,28 @@ class InitialDriveSyncServiceTest {
 		verify(contentService, never()).backup(ACCESS, folder);
 		verify(statePort).save(new SyncState("user@example.com", "start-token"));
 	}
+
+	@Test
+	void retainsExistingVersionWhenARecoveryInventoryFindsAnUnchangedFile() {
+		DriveFileListingPort listingPort = mock(DriveFileListingPort.class);
+		DriveChangePort changePort = mock(DriveChangePort.class);
+		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		FileContentBackupService contentService = mock(FileContentBackupService.class);
+		StoredFile current = new StoredFile("file-1", "user@example.com", "Report", "root", null,
+				"text/plain", false, "revision-1", null);
+		StoredFile existing = new StoredFile("file-1", "user@example.com", "Old report", "root", null,
+				"text/plain", false, "revision-1", 7L);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
+		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(current));
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(existing));
+		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("fresh-token");
+
+		new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort, contentService)
+				.synchronize(ACCESS, "user@example.com");
+
+		verify(contentService, never()).backup(ACCESS, current);
+		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
+				"text/plain", false, "revision-1", 7L));
+	}
 }

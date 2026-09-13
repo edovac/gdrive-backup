@@ -2,6 +2,7 @@ package org.nm.gdrive_backup.domain.service;
 
 import org.nm.gdrive_backup.domain.model.BackupResult;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
+import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
@@ -27,7 +28,13 @@ public class DriveBackupService implements DriveBackupUseCase {
 			var result = initialSyncUseCase.synchronize(access, scopeKey);
 			return new BackupResult(result.scopeKey(), result.fileCount(), true);
 		}
-		var result = changeSyncUseCase.synchronize(access, scopeKey);
-		return new BackupResult(result.scopeKey(), result.changeCount(), false);
+		try {
+			var result = changeSyncUseCase.synchronize(access, scopeKey);
+			return new BackupResult(result.scopeKey(), result.changeCount(), false);
+		} catch (StaleDrivePageTokenException exception) {
+			syncStatePort.deleteByScopeKey(scopeKey);
+			var result = initialSyncUseCase.synchronize(access, scopeKey);
+			return new BackupResult(result.scopeKey(), result.fileCount(), true);
+		}
 	}
 }

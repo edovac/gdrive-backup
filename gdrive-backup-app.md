@@ -14,7 +14,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-12
+Last reviewed: 2026-09-13
 
 ### Completed
 
@@ -35,7 +35,7 @@ Last reviewed: 2026-09-12
 
 ### Not started
 
-- [-] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync now backs up changed revisions and links them to the current file version. Stale-token recovery and richer progress reporting remain.
+- [-] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync backs up changed revisions and links them to the current file version. Expired page tokens now trigger a full re-inventory without duplicating unchanged versions; richer progress reporting remains.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.

@@ -47,4 +47,15 @@ public class SqliteSyncStateAdapter implements SyncStatePort {
 			throw new IllegalStateException("Unable to write SQLite sync state", exception);
 		}
 	}
+
+	@Override
+	public void deleteByScopeKey(String scopeKey) {
+		try (var connection = database.openConnection();
+			var statement = connection.prepareStatement("DELETE FROM sync_state WHERE scope_key = ?")) {
+			statement.setString(1, scopeKey);
+			statement.executeUpdate();
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Unable to delete SQLite sync state", exception);
+		}
+	}
 }
