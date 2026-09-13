@@ -34,6 +34,7 @@ import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
 import org.nm.gdrive_backup.domain.model.BackupResult;
+import org.nm.gdrive_backup.domain.model.BackupMode;
 import org.nm.gdrive_backup.domain.model.BackupLocations;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
@@ -188,11 +189,18 @@ public class JavaFxApplication extends Application {
 				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 			}
 		});
+		ComboBox<BackupMode> backupModeCombo = new ComboBox<>();
+		backupModeCombo.getItems().setAll(BackupMode.INCREMENTAL, BackupMode.FULL);
+		backupModeCombo.setValue(BackupMode.INCREMENTAL);
+		backupModeCombo.setCellFactory(view -> backupModeCell());
+		backupModeCombo.setButtonCell(backupModeCell());
+		backupModeCombo.setVisible(false);
+		backupModeCombo.setManaged(false);
 		Button syncNow = new Button("Sync selected user");
 		syncNow.getStyleClass().add("primary-button");
 		syncNow.setVisible(false);
 		syncNow.setManaged(false);
-		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, syncNow, driveStatus));
+		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, driveStatus));
 		locationsPanel = new LocationsPanel(syncNow);
 		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
 		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
@@ -217,7 +225,7 @@ public class JavaFxApplication extends Application {
 		signIn.setOnAction(event -> authenticate(signIn, signOut, connectionStatus, driveStatus,
 				drives, userPicker, driveItems, quotaStatus, quotaDetails, refreshQuota,
 				reportStatus, reportDetails, refreshReport, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota,
-				syncNow));
+				backupModeCombo, syncNow));
 		signOut.setOnAction(event -> {
 			GoogleLoginSession session = (GoogleLoginSession) signOut.getUserData();
 			loginUseCase.logout(session);
@@ -235,6 +243,9 @@ public class JavaFxApplication extends Application {
 			userPicker.setManaged(false);
 			syncNow.setVisible(false);
 			syncNow.setManaged(false);
+			backupModeCombo.setVisible(false);
+			backupModeCombo.setManaged(false);
+			backupModeCombo.setValue(BackupMode.INCREMENTAL);
 			driveItems.getItems().clear();
 			driveItems.setVisible(false);
 			driveItems.setManaged(false);
@@ -262,7 +273,8 @@ public class JavaFxApplication extends Application {
 			locationsPanel.hide();
 		});
 
-		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(), syncNow,
+		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(),
+				backupModeCombo, syncNow,
 				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
 				reportTitle, reportStatus, reportDetails, refreshReport, driveStatus, drives, driveItems);
 		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
@@ -290,7 +302,7 @@ public class JavaFxApplication extends Application {
 			ListView<DriveItem> driveItems, Label quotaStatus, ListView<String> quotaDetails,
 			Button refreshQuota, Label reportStatus, ListView<String> reportDetails, Button refreshReport,
 			Label cloudQuotaStatus, ListView<String> cloudQuotaDetails, Button refreshCloudQuota,
-			Button syncNow) {
+			ComboBox<BackupMode> backupModeCombo, Button syncNow) {
 		signIn.setDisable(true);
 		connectionStatus.setText("Waiting for Google sign-in...");
 		driveStatus.setText("");
@@ -310,14 +322,16 @@ public class JavaFxApplication extends Application {
 					locationsPanel.show();
 					loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
 					loadWorkspaceUsers(drives, userPicker, driveItems, driveStatus,
-							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport, syncNow);
+							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport,
+							backupModeCombo, syncNow);
 				}));
 	}
 
 	private void loadWorkspaceUsers(ListView<AvailableDrive> drives, ComboBox<WorkspaceUser> userPicker,
 			ListView<DriveItem> driveItems, Label status, Label quotaStatus,
 			ListView<String> quotaDetails, Button refreshQuota, Label reportStatus,
-			ListView<String> reportDetails, Button refreshReport, Button syncNow) {
+			ListView<String> reportDetails, Button refreshReport, ComboBox<BackupMode> backupModeCombo,
+			Button syncNow) {
 		if (serviceAccountUseCase == null || workspaceUserListingUseCase == null || previewUserEmail == null
 				|| previewUserEmail.isBlank()) {
 			userPicker.setVisible(false);
@@ -359,29 +373,36 @@ public class JavaFxApplication extends Application {
 			userPicker.setManaged(true);
 			syncNow.setVisible(driveBackupUseCase != null);
 			syncNow.setManaged(driveBackupUseCase != null);
+			backupModeCombo.setVisible(driveBackupUseCase != null);
+			backupModeCombo.setManaged(driveBackupUseCase != null);
 			loadDrives(drives, status, userPicker, driveItems);
 			loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
 			loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
 		}));
 	}
 
-	private void synchronizeSelectedUser(ComboBox<WorkspaceUser> userPicker, Button syncNow, Label status) {
+	private void synchronizeSelectedUser(ComboBox<WorkspaceUser> userPicker, ComboBox<BackupMode> backupModeCombo,
+			Button syncNow, Label status) {
 		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
 		if (driveBackupUseCase == null || serviceAccountUseCase == null
 				|| selectedUserEmail == null || selectedUserEmail.isBlank()) {
 			status.setText("Sync unavailable. Select a Workspace user and configure service-account access.");
 			return;
 		}
+		BackupMode mode = backupModeCombo.getValue();
 		syncNow.setDisable(true);
+		backupModeCombo.setDisable(true);
 		locationsPanel.setChangesDisabled(true);
 		String destination = backupLocationUseCase == null ? ""
 				: " into " + backupLocationUseCase.currentLocations().backupDestination();
-		status.setText("Synchronizing backup for " + selectedUserEmail + destination + "...");
+		status.setText("Synchronizing " + modeLabel(mode).toLowerCase() + " backup for " + selectedUserEmail
+				+ destination + "...");
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
-			return driveBackupUseCase.synchronize(access, selectedUserEmail);
+			return driveBackupUseCase.synchronize(access, selectedUserEmail, mode);
 		}).whenComplete((result, error) -> Platform.runLater(() -> {
 			syncNow.setDisable(false);
+			backupModeCombo.setDisable(false);
 			locationsPanel.setChangesDisabled(false);
 			if (error != null) {
 				status.setText("Synchronization failed: " + messageFor(error));
@@ -395,6 +416,20 @@ public class JavaFxApplication extends Application {
 		String activity = result.initialSync() ? "files inventoried" : "changes processed";
 		return "Synchronization complete for " + result.scopeKey() + ": "
 				+ result.processedItemCount() + " " + activity;
+	}
+
+	private static String modeLabel(BackupMode mode) {
+		return mode == BackupMode.FULL ? "Full" : "Incremental";
+	}
+
+	private static javafx.scene.control.ListCell<BackupMode> backupModeCell() {
+		return new javafx.scene.control.ListCell<>() {
+			@Override
+			protected void updateItem(BackupMode mode, boolean empty) {
+				super.updateItem(mode, empty);
+				setText(empty || mode == null ? null : modeLabel(mode) + " backup");
+			}
+		};
 	}
 
 	private void loadQuota(ComboBox<WorkspaceUser> userPicker, Label status,

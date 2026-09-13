@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,6 +16,8 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
+import org.nm.gdrive_backup.domain.model.BackupMode;
 import org.nm.gdrive_backup.domain.model.BackupResult;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
@@ -30,7 +34,27 @@ class DriveBackupServiceTest {
 			UUID.randomUUID(), "user@example.com", Instant.now().plusSeconds(3600), Set.of("drive.readonly"));
 
 	@Test
-	void usesInitialInventoryWhenNoBaselineExists() {
+	void runsFullInventoryAndClearsAnyExistingBaselineWhenModeIsFull() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		when(statePort.findByScopeKey("user@example.com"))
+				.thenReturn(Optional.of(new SyncState("user@example.com", "old-token")));
+		when(initialSync.synchronize(ACCESS, "user@example.com"))
+				.thenReturn(new InitialSyncResult("user@example.com", 4, "token"));
+
+		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
+				.synchronize(ACCESS, "user@example.com", BackupMode.FULL);
+
+		assertEquals(new BackupResult("user@example.com", 4, true), result);
+		InOrder order = inOrder(statePort, initialSync);
+		order.verify(statePort).deleteByScopeKey("user@example.com");
+		order.verify(initialSync).synchronize(ACCESS, "user@example.com");
+		verify(changeSync, never()).synchronize(ACCESS, "user@example.com");
+	}
+
+	@Test
+	void runsFullInventoryWhenModeIsIncrementalButNoBaselineExists() {
 		SyncStatePort statePort = mock(SyncStatePort.class);
 		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
 		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
@@ -39,14 +63,14 @@ class DriveBackupServiceTest {
 				.thenReturn(new InitialSyncResult("user@example.com", 4, "token"));
 
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, "user@example.com", BackupMode.INCREMENTAL);
 
 		assertEquals(new BackupResult("user@example.com", 4, true), result);
 		verify(initialSync).synchronize(ACCESS, "user@example.com");
 	}
 
 	@Test
-	void usesChangesFeedWhenBaselineExists() {
+	void usesChangesFeedWhenModeIsIncrementalAndBaselineExists() {
 		SyncStatePort statePort = mock(SyncStatePort.class);
 		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
 		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
@@ -56,7 +80,7 @@ class DriveBackupServiceTest {
 				.thenReturn(new SyncResult("user@example.com", 2, "new-token"));
 
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, "user@example.com", BackupMode.INCREMENTAL);
 
 		assertEquals(new BackupResult("user@example.com", 2, false), result);
 		verify(changeSync).synchronize(ACCESS, "user@example.com");
@@ -75,7 +99,7 @@ class DriveBackupServiceTest {
 				.thenReturn(new InitialSyncResult("user@example.com", 5, "fresh-token"));
 
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, "user@example.com", BackupMode.INCREMENTAL);
 
 		assertEquals(new BackupResult("user@example.com", 5, true), result);
 		verify(statePort).deleteByScopeKey("user@example.com");
@@ -94,7 +118,7 @@ class DriveBackupServiceTest {
 		});
 
 		new DriveBackupService(statePort, initialSync, mock(DriveChangeSyncUseCase.class), activity)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, "user@example.com", BackupMode.FULL);
 
 		assertFalse(activity.isActive());
 	}
@@ -110,7 +134,8 @@ class DriveBackupServiceTest {
 		DriveBackupService service = new DriveBackupService(statePort, initialSync,
 				mock(DriveChangeSyncUseCase.class), activity);
 
-		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, "user@example.com"));
+		assertThrows(IllegalStateException.class,
+				() -> service.synchronize(ACCESS, "user@example.com", BackupMode.FULL));
 		assertFalse(activity.isActive());
 	}
 }

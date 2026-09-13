@@ -40,7 +40,12 @@ Last reviewed: 2026-09-13
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes; full progress and partial-failure reporting remain.
-- [ ] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per completed backup.
+- [-] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per completed backup.
+  Full versus incremental mode selection is implemented: the admin picks the mode in the
+  UI before starting a sync, `INCREMENTAL` falls back to a full inventory when no
+  baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories
+  regardless of any saved cursor. All-versus-latest-revision selection and archive
+  packaging remain.
 - [x] Runtime location selection: let the admin choose and validate the backup
   destination and SQLite database location, applying the choices through
   configuration-backed ports rather than direct UI environment access.
@@ -63,8 +68,8 @@ requirements below as the source of truth for expected behavior.
 
 **P0 — required for a usable and safe v1**
 
-- Runtime backup-destination and database-location selection.
-- Full versus incremental backup selection.
+- [x] Runtime backup-destination and database-location selection.
+- [x] Full versus incremental backup selection.
 - Interruptible backups with defined database and archive recovery behavior.
 - Progress bar and concise current-operation status.
 

@@ -62,8 +62,8 @@ Backup locations are deliberately not configurable through the environment. Ever
 **Access flow.** Every Drive/Admin operation starts with `ServiceAccountAuthenticationUseCase.authenticateAs(userEmail)`, which returns an opaque `ServiceAccountAccess`. That value is passed into the use case or port, and the adapter turns it into delegated Google credentials. The admin OAuth session only unlocks the UI.
 
 **Backup/sync flow.**
-- `DriveBackupService` is the entry point: it runs `InitialDriveSyncService` when the scope has no `sync_state` row and `DriveChangeSyncService` otherwise.
-- `StaleDrivePageTokenException` makes it delete the scope's sync state and re-run the initial sync.
+- `DriveBackupService` is the entry point. The admin passes a `BackupMode` explicitly: `FULL` always deletes the scope's `sync_state` row and re-runs `InitialDriveSyncService`, regardless of any saved cursor; `INCREMENTAL` runs `DriveChangeSyncService` when a `sync_state` row exists and falls back to a full inventory when it doesn't.
+- `StaleDrivePageTokenException` (from an `INCREMENTAL` run) also falls back to a full inventory, the same as an explicit `FULL` request.
 - Both sync services use `FileContentBackupService`, which downloads or exports content (`DriveContentPort`), writes it to disk (`VersionStoragePort` → `LocalVersionStorageAdapter`), and records it (`FileVersionPort`).
 - `DriveExportLimitException` triggers the PDF export fallback.
 

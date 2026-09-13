@@ -1,5 +1,6 @@
 package org.nm.gdrive_backup.domain.service;
 
+import org.nm.gdrive_backup.domain.model.BackupMode;
 import org.nm.gdrive_backup.domain.model.BackupResult;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
@@ -25,22 +26,28 @@ public class DriveBackupService implements DriveBackupUseCase {
 	}
 
 	@Override
-	public BackupResult synchronize(ServiceAccountAccess access, String scopeKey) {
-		return backupActivity.duringBackup(() -> synchronizeScope(access, scopeKey));
+	public BackupResult synchronize(ServiceAccountAccess access, String scopeKey, BackupMode mode) {
+		return backupActivity.duringBackup(() -> synchronizeScope(access, scopeKey, mode));
 	}
 
-	private BackupResult synchronizeScope(ServiceAccountAccess access, String scopeKey) {
+	private BackupResult synchronizeScope(ServiceAccountAccess access, String scopeKey, BackupMode mode) {
+		if (mode == BackupMode.FULL) {
+			return runFullInventory(access, scopeKey);
+		}
 		if (syncStatePort.findByScopeKey(scopeKey).isEmpty()) {
-			var result = initialSyncUseCase.synchronize(access, scopeKey);
-			return new BackupResult(result.scopeKey(), result.fileCount(), true);
+			return runFullInventory(access, scopeKey);
 		}
 		try {
 			var result = changeSyncUseCase.synchronize(access, scopeKey);
 			return new BackupResult(result.scopeKey(), result.changeCount(), false);
 		} catch (StaleDrivePageTokenException exception) {
-			syncStatePort.deleteByScopeKey(scopeKey);
-			var result = initialSyncUseCase.synchronize(access, scopeKey);
-			return new BackupResult(result.scopeKey(), result.fileCount(), true);
+			return runFullInventory(access, scopeKey);
 		}
+	}
+
+	private BackupResult runFullInventory(ServiceAccountAccess access, String scopeKey) {
+		syncStatePort.deleteByScopeKey(scopeKey);
+		var result = initialSyncUseCase.synchronize(access, scopeKey);
+		return new BackupResult(result.scopeKey(), result.fileCount(), true);
 	}
 }
