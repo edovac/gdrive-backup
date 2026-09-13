@@ -44,6 +44,9 @@ Last reviewed: 2026-09-13
 - [ ] Runtime location selection: let the admin choose and validate the backup
   destination and SQLite database location, applying the choices through
   configuration-backed ports rather than direct UI environment access.
+- [ ] Interruptible backups and recovery policy: define cancellation points,
+  database transaction/checkpoint behavior, temporary archive naming and
+  cleanup/resume behavior, and how an interrupted backup is shown to the user.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -81,6 +84,9 @@ requirements below as the source of truth for expected behavior.
   and a concise status message describing the current operation (for example,
   enumerating files, downloading content, packaging the archive, or completing
   a scope).
+- **Interruptible backups**: the admin can cancel a running backup. Cancellation
+  must leave the database and archive output in a defined, recoverable state;
+  the interrupted result must never be presented as a completed backup.
 - **Admin UI**: lets the admin log in via OAuth (as an access gate) and browse
   both personal (My Drive) and Shared Drives, per org user, as a **preview**
   before running a backup. The UI does not need per-user self-service access —
