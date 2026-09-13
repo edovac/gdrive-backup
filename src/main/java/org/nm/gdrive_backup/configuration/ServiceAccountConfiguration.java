@@ -114,7 +114,7 @@ public class ServiceAccountConfiguration {
 
 	@Bean
 	DriveChangeSyncUseCase driveChangeSyncUseCase(
-			ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort,
+			@Qualifier("driveChangePort") ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort,
 			ObjectProvider<FileContentBackupService> contentBackupProvider) {
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
@@ -131,8 +131,9 @@ public class ServiceAccountConfiguration {
 
 	@Bean
 	InitialDriveSyncUseCase initialDriveSyncUseCase(
-			ObjectProvider<DriveFileListingPort> fileListingPortProvider,
-			ObjectProvider<DriveChangePort> changePortProvider, FileMetadataPort fileMetadataPort,
+			@Qualifier("driveFileListingPort") ObjectProvider<DriveFileListingPort> fileListingPortProvider,
+			@Qualifier("driveChangePort") ObjectProvider<DriveChangePort> changePortProvider,
+			FileMetadataPort fileMetadataPort,
 			SyncStatePort syncStatePort, ObjectProvider<FileContentBackupService> contentBackupProvider) {
 		DriveFileListingPort fileListingPort = fileListingPortProvider.getIfAvailable();
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
