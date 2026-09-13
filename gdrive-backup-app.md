@@ -56,6 +56,36 @@ This section is the working roadmap. Update the status markers and the
 `Last reviewed` date as each vertical slice is completed; keep the detailed
 requirements below as the source of truth for expected behavior.
 
+### Approved prioritization
+
+**P0 — required for a usable and safe v1**
+
+- Runtime backup-destination and database-location selection.
+- Full versus incremental backup selection.
+- Interruptible backups with defined database and archive recovery behavior.
+- Progress bar and concise current-operation status.
+
+**P1 — complete the backup product**
+
+- One self-contained archive output with a manifest.
+- All-revisions versus latest-only selection. Historical revision retrieval
+  needs separate Google API/design validation.
+- Partial-failure handling and a completion summary for organization-wide runs.
+
+**P2 — operational improvements**
+
+- History view.
+- Scheduled unattended backups.
+
+**P3 — delivery and UX refinements**
+
+- Authenticated-screen three-column layout redesign.
+- Windows installer and clean-machine verification.
+
+Implementation sequence: runtime location selection; backup-job options and
+state; progress/cancellation/recovery; archive packaging; partial-failure
+summary and history; scheduling; UI redesign and Windows packaging.
+
 ---
 
 ## Core requirements (confirmed)
