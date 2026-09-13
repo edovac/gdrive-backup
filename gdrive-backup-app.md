@@ -6,6 +6,13 @@ A Windows desktop application that backs up **Google Drive data (My Drive + Shar
 Drives) for every user in a non-profit Google Workspace organization**, with
 versioned local history and an admin-facing UI to preview and trigger backups.
 
+The organization runs this periodically against **external hard drives**, not a
+paid cloud-backup service — a non-profit budget constraint, not an arbitrary
+choice, and one with real consequences (a drive may be unplugged, swapped, or
+absent between runs; see Known limitations). **Restoring from a backup is out
+of scope for this phase**; it's planned as a later initiative once backup is
+solid.
+
 Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 **SQLite** (local state/history), packaged as a native Windows installer via
 `jpackage`.
@@ -40,12 +47,16 @@ Last reviewed: 2026-09-13
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes. The sync trigger now also backs up every Shared Drive the selected user can see, deduplicated by `drive_id` via the `drives` table; if any one scope fails the whole run stops. Full progress reporting, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
-- [-] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per completed backup.
+- [ ] Per-drive backup scope selection: let the admin choose which drive(s) — the
+  personal drive and/or one or more specific Shared Drives — to include in a
+  backup job, instead of today's behavior of automatically including every
+  Shared Drive the selected user can see.
+- [-] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per selected drive.
   Full versus incremental mode selection is implemented: the admin picks the mode in the
   UI before starting a sync, `INCREMENTAL` falls back to a full inventory when no
   baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories
-  regardless of any saved cursor. All-versus-latest-revision selection and archive
-  packaging remain.
+  regardless of any saved cursor. All-versus-latest-revision selection and
+  per-drive archive packaging remain.
 - [x] Runtime location selection: let the admin choose and validate the backup
   destination and SQLite database location, applying the choices through
   configuration-backed ports rather than direct UI environment access.
@@ -70,12 +81,14 @@ requirements below as the source of truth for expected behavior.
 
 - [x] Runtime backup-destination and database-location selection.
 - [x] Full versus incremental backup selection.
+- [ ] Per-drive backup scope selection (personal drive and/or specific Shared
+  Drives), replacing automatic inclusion of every visible Shared Drive.
 - Interruptible backups with defined database and archive recovery behavior.
 - Progress bar and concise current-operation status.
 
 **P1 — complete the backup product**
 
-- One self-contained archive output with a manifest.
+- One self-contained archive output per selected drive, each with its own manifest.
 - All-revisions versus latest-only selection. Historical revision retrieval
   needs separate Google API/design validation.
 - Partial-failure handling and a completion summary for organization-wide runs.
@@ -91,8 +104,9 @@ requirements below as the source of truth for expected behavior.
 - Windows installer and clean-machine verification.
 
 Implementation sequence: runtime location selection; backup-job options and
-state; progress/cancellation/recovery; archive packaging; partial-failure
-summary and history; scheduling; UI redesign and Windows packaging.
+state; drive scope selection; progress/cancellation/recovery; per-drive archive
+packaging; partial-failure summary and history; scheduling; UI redesign and
+Windows packaging.
 
 ---
 
@@ -100,9 +114,15 @@ summary and history; scheduling; UI redesign and Windows packaging.
 
 - **Scope**: back up Drive data for *every user in the organization*, not just one
   account — requires admin-level access.
+- **Drive selection**: the admin chooses which drive(s) a backup job covers —
+  the user's personal drive, one or more specific Shared Drives, or a
+  combination — rather than a job always covering every drive automatically.
+  The selection applies to the backup job and must be visible before it starts.
 - **Google-native files** (Docs/Sheets/Slides): exported to Office formats
   (`.docx` / `.xlsx` / `.pptx`), not kept in native Google format.
-- **Storage**: local disk only (no NAS/cloud target for v1).
+- **Storage**: local disk only — specifically **external hard drives** connected
+  to the admin's machine, not NAS or cloud, driven by the non-profit
+  organization's budget (no NAS/cloud target for v1).
 - **Backup location**: the admin can choose the local destination directory at
   runtime. The selected location is used for backup staging/archive output and
   is displayed before a backup starts.
@@ -112,9 +132,11 @@ summary and history; scheduling; UI redesign and Windows packaging.
 - **Versioning**: the admin chooses whether a backup keeps every available file
   revision or only the latest revision. The selection applies to the backup job
   and must be visible before it starts.
-- **Archive output**: each completed backup must be delivered as a
-  self-contained single archive file. The archive format and its manifest
-  layout need a design decision; ZIP is the initial candidate.
+- **Archive output**: each completed backup job must deliver one
+  self-contained archive **per selected drive** — a personal drive and each
+  Shared Drive get their own archive and manifest, never a single archive
+  combining several drives. The archive format and manifest layout need a
+  design decision; ZIP is the initial candidate.
 - **Backup mode**: the admin chooses a full backup or an incremental backup.
   A full backup inventories and archives the selected scope regardless of its
   change cursor; an incremental backup uses the saved `changes.list` cursor.
@@ -131,6 +153,8 @@ summary and history; scheduling; UI redesign and Windows packaging.
   admin-only.
 - Should also track **renames, moves, trashing, and deletion** of files over
   time, not just content changes.
+- **Restore**: explicitly out of scope for this phase. A later initiative once
+  backup itself is solid.
 
 ---
 
@@ -283,7 +307,8 @@ backupRoot/
 
 The directory layout above is the current internal staging/history layout. It
 must be revised so the user-facing result of each backup is one self-contained
-archive, with a manifest that identifies its scope, backup mode, revision mode,
+archive **per selected drive**, each with its own manifest that identifies its
+scope (personal drive or a specific Shared Drive), backup mode, revision mode,
 and captured files.
 
 ---
@@ -300,10 +325,11 @@ and captured files.
     `files.list(driveId=..., corpora="drive", includeItemsFromAllDrives=true,
     supportsAllDrives=true)`)
   - Both reuse the same impersonation-backed fetch code as the backend.
-- **Backup trigger**: run full/incremental sync, show per-user progress,
-  let the admin select backup and revision modes, package a self-contained
-  archive, and surface partial failures (suspended accounts, revoked access,
-  etc. are expected at org scale).
+- **Backup trigger**: let the admin select which drive(s) to back up (the
+  personal drive and/or specific Shared Drives), the backup and revision
+  modes, then run full/incremental sync, show per-user progress, package one
+  self-contained archive per selected drive, and surface partial failures
+  (suspended accounts, revoked access, etc. are expected at org scale).
 - **History view**: query `file_events` + `file_versions` for a selected file
   to show renames/moves/trashes/versions over time.
 - **Layout follow-up (low priority)**: analyse and redesign the authenticated
@@ -343,3 +369,7 @@ and captured files.
 - Domain-wide delegation setup is a manual, one-time Admin Console step and
   can't be automated from within the app — document it as a setup guide for
   the admin.
+- Backup destinations are external hard drives, which can be unplugged,
+  swapped, or simply absent when a run starts. The app doesn't yet detect
+  whether the drive currently mounted at a saved path is the same physical
+  drive used previously, or warn before writing to an unexpected one.
