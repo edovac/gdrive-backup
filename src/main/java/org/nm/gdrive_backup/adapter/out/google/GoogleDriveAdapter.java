@@ -120,7 +120,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 				.map(change -> new DriveChange(
 						change.getFileId(),
 						Boolean.TRUE.equals(change.getRemoved()),
-						mapStoredFile(change.getFile(), access.impersonatedUserEmail())))
+						mapStoredFile(change.getFile(), scopeKey)))
 				.toList();
 			return new DriveChangePage(changes, response.getNextPageToken(), response.getNewStartPageToken());
 		} catch (GoogleJsonResponseException exception) {
@@ -151,7 +151,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 				var response = request.execute();
 				if (response.getFiles() != null) {
 					files.addAll(response.getFiles().stream()
-							.map(file -> mapStoredFile(file, access.impersonatedUserEmail())).toList());
+							.map(file -> mapStoredFile(file, scopeKey)).toList());
 				}
 				pageToken = response.getNextPageToken();
 			} while (pageToken != null && !pageToken.isBlank());

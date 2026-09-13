@@ -196,11 +196,11 @@ public class JavaFxApplication extends Application {
 		backupModeCombo.setButtonCell(backupModeCell());
 		backupModeCombo.setVisible(false);
 		backupModeCombo.setManaged(false);
-		Button syncNow = new Button("Sync selected user");
+		Button syncNow = new Button("Sync user & shared drives");
 		syncNow.getStyleClass().add("primary-button");
 		syncNow.setVisible(false);
 		syncNow.setManaged(false);
-		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, driveStatus));
+		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, drives, driveStatus));
 		locationsPanel = new LocationsPanel(syncNow);
 		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
 		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
@@ -382,7 +382,7 @@ public class JavaFxApplication extends Application {
 	}
 
 	private void synchronizeSelectedUser(ComboBox<WorkspaceUser> userPicker, ComboBox<BackupMode> backupModeCombo,
-			Button syncNow, Label status) {
+			Button syncNow, ListView<AvailableDrive> drives, Label status) {
 		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
 		if (driveBackupUseCase == null || serviceAccountUseCase == null
 				|| selectedUserEmail == null || selectedUserEmail.isBlank()) {
@@ -397,10 +397,11 @@ public class JavaFxApplication extends Application {
 				: " into " + backupLocationUseCase.currentLocations().backupDestination();
 		status.setText("Synchronizing " + modeLabel(mode).toLowerCase() + " backup for " + selectedUserEmail
 				+ destination + "...");
+		List<AvailableDrive> knownDrives = List.copyOf(drives.getItems());
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
-			return driveBackupUseCase.synchronize(access, selectedUserEmail, mode);
-		}).whenComplete((result, error) -> Platform.runLater(() -> {
+			return driveBackupUseCase.synchronizeVisibleScopes(access, mode);
+		}).whenComplete((results, error) -> Platform.runLater(() -> {
 			syncNow.setDisable(false);
 			backupModeCombo.setDisable(false);
 			locationsPanel.setChangesDisabled(false);
@@ -408,14 +409,30 @@ public class JavaFxApplication extends Application {
 				status.setText("Synchronization failed: " + messageFor(error));
 				return;
 			}
-			status.setText(syncMessage(result));
+			status.setText(syncMessage(results, knownDrives));
 		}));
 	}
 
-	private static String syncMessage(BackupResult result) {
+	private static String syncMessage(List<BackupResult> results, List<AvailableDrive> knownDrives) {
+		return results.stream()
+				.map(result -> scopeLabel(result.scopeKey(), knownDrives) + ": " + itemSummary(result))
+				.collect(java.util.stream.Collectors.joining("; ", "Synchronization complete. ", ""));
+	}
+
+	private static String itemSummary(BackupResult result) {
 		String activity = result.initialSync() ? "files inventoried" : "changes processed";
-		return "Synchronization complete for " + result.scopeKey() + ": "
-				+ result.processedItemCount() + " " + activity;
+		return result.processedItemCount() + " " + activity;
+	}
+
+	private static String scopeLabel(String scopeKey, List<AvailableDrive> knownDrives) {
+		if (scopeKey.contains("@")) {
+			return "My Drive (" + scopeKey + ")";
+		}
+		return knownDrives.stream()
+				.filter(drive -> drive.id().equals(scopeKey))
+				.findFirst()
+				.map(drive -> "Shared: " + drive.name())
+				.orElse("Shared drive " + scopeKey);
 	}
 
 	private static String modeLabel(BackupMode mode) {

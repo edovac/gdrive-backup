@@ -8,6 +8,7 @@ import org.nm.gdrive_backup.adapter.out.google.GoogleDriveUsageQuotaAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleWorkspaceUsageReportAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleCloudQuotaLimitAdapter;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
+import org.nm.gdrive_backup.domain.port.out.DriveMetadataPort;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
@@ -152,9 +153,10 @@ public class ServiceAccountConfiguration {
 	@Bean
 	DriveBackupUseCase driveBackupUseCase(SyncStatePort syncStatePort,
 			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase,
-			BackupActivity backupActivity) {
+			BackupActivity backupActivity, @Qualifier("driveReadPort") ObjectProvider<DriveReadPort> driveReadPortProvider,
+			DriveMetadataPort driveMetadataPort) {
 		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase,
-				backupActivity);
+				backupActivity, driveReadPortProvider.getIfAvailable(), driveMetadataPort);
 	}
 
 	@Bean
