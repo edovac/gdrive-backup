@@ -24,20 +24,29 @@ public class DriveBackupService implements DriveBackupUseCase {
 	private final DriveChangeSyncUseCase changeSyncUseCase;
 	private final BackupActivity backupActivity;
 	private final DriveMetadataPort driveMetadataPort;
+	private final BackupProgressTracker progressTracker;
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity) {
-		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, null);
+		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, null, BackupProgressTracker.NO_OP);
 	}
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
 			DriveMetadataPort driveMetadataPort) {
+		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, driveMetadataPort,
+				BackupProgressTracker.NO_OP);
+	}
+
+	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
+			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
+			DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker) {
 		this.syncStatePort = syncStatePort;
 		this.initialSyncUseCase = initialSyncUseCase;
 		this.changeSyncUseCase = changeSyncUseCase;
 		this.backupActivity = backupActivity;
 		this.driveMetadataPort = driveMetadataPort;
+		this.progressTracker = progressTracker;
 	}
 
 	@Override
@@ -52,14 +61,18 @@ public class DriveBackupService implements DriveBackupUseCase {
 			throw new IllegalArgumentException("At least one drive must be selected");
 		}
 		return backupActivity.duringBackup(() -> {
+			progressTracker.jobStarted(selectedDrives);
 			List<BackupResult> results = new ArrayList<>();
 			for (AvailableDrive drive : selectedDrives) {
 				String scopeKey = drive.shared() ? drive.id() : access.impersonatedUserEmail();
+				progressTracker.driveStarted(drive);
 				results.add(synchronizeScope(access, scopeKey, mode));
+				progressTracker.driveCompleted();
 				if (drive.shared() && driveMetadataPort != null) {
 					driveMetadataPort.save(new StoredDrive(drive.id(), drive.name(), Instant.now()));
 				}
 			}
+			progressTracker.jobFinished();
 			return results;
 		});
 	}

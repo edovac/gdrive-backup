@@ -18,20 +18,29 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	private final FileMetadataPort fileMetadataPort;
 	private final SyncStatePort syncStatePort;
 	private final FileContentBackupService contentBackupService;
+	private final BackupProgressTracker progressTracker;
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort) {
-		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, null);
+		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, null, BackupProgressTracker.NO_OP);
 	}
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort,
 			FileContentBackupService contentBackupService) {
+		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, contentBackupService,
+				BackupProgressTracker.NO_OP);
+	}
+
+	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
+			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort,
+			FileContentBackupService contentBackupService, BackupProgressTracker progressTracker) {
 		this.fileListingPort = fileListingPort;
 		this.changePort = changePort;
 		this.fileMetadataPort = fileMetadataPort;
 		this.syncStatePort = syncStatePort;
 		this.contentBackupService = contentBackupService;
+		this.progressTracker = progressTracker;
 	}
 
 	@Override
@@ -39,7 +48,9 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		if (syncStatePort.findByScopeKey(scopeKey).isPresent()) {
 			throw new IllegalStateException("Drive scope already has a sync baseline: " + scopeKey);
 		}
+		progressTracker.enumerating();
 		var files = fileListingPort.listAllFiles(access, scopeKey);
+		progressTracker.enumerated(files.size());
 		files.forEach(file -> {
 			Optional<org.nm.gdrive_backup.domain.model.StoredFile> previous = fileMetadataPort.findByFileId(file.fileId());
 			org.nm.gdrive_backup.domain.model.StoredFile metadata = previous
@@ -51,6 +62,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 				var version = contentBackupService.backup(access, file);
 				fileMetadataPort.save(withCurrentVersion(file, version.id()));
 			}
+			progressTracker.itemProcessed(file.name());
 		});
 		String pageToken = changePort.getStartPageToken(access, scopeKey);
 		syncStatePort.save(new SyncState(scopeKey, pageToken));

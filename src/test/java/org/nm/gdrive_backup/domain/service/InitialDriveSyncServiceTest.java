@@ -119,4 +119,29 @@ class InitialDriveSyncServiceTest {
 		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
 				"text/plain", false, "revision-1", 7L));
 	}
+
+	@Test
+	void reportsEnumerationTotalThenPerFileProgress() {
+		DriveFileListingPort listingPort = mock(DriveFileListingPort.class);
+		DriveChangePort changePort = mock(DriveChangePort.class);
+		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
+		StoredFile first = new StoredFile("file-1", "user@example.com", "A", "root", null,
+				"text/plain", false, "revision-1", null);
+		StoredFile second = new StoredFile("file-2", "user@example.com", "B", "root", null,
+				"text/plain", false, "revision-2", null);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
+		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(first, second));
+		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("start-token");
+
+		new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort, null, progressTracker)
+				.synchronize(ACCESS, "user@example.com");
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).enumerating();
+		order.verify(progressTracker).enumerated(2);
+		order.verify(progressTracker).itemProcessed("A");
+		order.verify(progressTracker).itemProcessed("B");
+	}
 }

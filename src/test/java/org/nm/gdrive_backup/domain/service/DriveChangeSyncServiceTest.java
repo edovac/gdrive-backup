@@ -1,6 +1,7 @@
 package org.nm.gdrive_backup.domain.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -13,6 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.FileVersion;
@@ -119,5 +121,29 @@ class DriveChangeSyncServiceTest {
 		verify(contentBackup).backup(ACCESS, current);
 		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
 				"text/plain", false, "revision-2", 8L));
+	}
+
+	@Test
+	void reportsEachProcessedChangeWithoutEverKnowingATotal() {
+		DriveChangePort changePort = mock(DriveChangePort.class);
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
+		FileEventPort eventPort = mock(FileEventPort.class);
+		BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
+		StoredFile file = new StoredFile("file-2", "user@example.com", "Report", "root", null,
+				"text/plain", false, "revision-1", null);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
+				new SyncState("user@example.com", "old-token")));
+		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null),
+						new DriveChange("file-2", false, file)), null, "new-token"));
+
+		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, null, progressTracker)
+				.synchronize(ACCESS, "user@example.com");
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).itemProcessed("file-1");
+		order.verify(progressTracker).itemProcessed("Report");
+		verify(progressTracker, org.mockito.Mockito.never()).enumerated(org.mockito.ArgumentMatchers.anyInt());
 	}
 }

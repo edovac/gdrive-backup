@@ -242,4 +242,31 @@ class DriveBackupServiceTest {
 
 		assertEquals(List.of(new BackupResult("drive-1", 2, true)), results);
 	}
+
+	@Test
+	void reportsJobAndPerDriveProgressForASelection() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
+		when(statePort.findByScopeKey(anyString())).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, "user@example.com"))
+				.thenReturn(new InitialSyncResult("user@example.com", 4, "token"));
+		when(initialSync.synchronize(ACCESS, "drive-1"))
+				.thenReturn(new InitialSyncResult("drive-1", 2, "token-1"));
+		List<AvailableDrive> selection = List.of(
+				new AvailableDrive("root", "My Drive", false),
+				new AvailableDrive("drive-1", "Finance", true));
+
+		new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(), null, progressTracker)
+				.synchronizeSelectedDrives(ACCESS, selection, BackupMode.INCREMENTAL);
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).jobStarted(selection);
+		order.verify(progressTracker).driveStarted(selection.get(0));
+		order.verify(progressTracker).driveCompleted();
+		order.verify(progressTracker).driveStarted(selection.get(1));
+		order.verify(progressTracker).driveCompleted();
+		order.verify(progressTracker).jobFinished();
+	}
 }

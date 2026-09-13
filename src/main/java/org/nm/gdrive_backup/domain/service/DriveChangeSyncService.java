@@ -23,19 +23,29 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final FileMetadataPort fileMetadataPort;
 	private final FileEventPort fileEventPort;
 	private final FileContentBackupService contentBackupService;
+	private final BackupProgressTracker progressTracker;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort) {
-		this(changePort, syncStatePort, fileMetadataPort, fileEventPort, (FileContentBackupService) null);
+		this(changePort, syncStatePort, fileMetadataPort, fileEventPort, (FileContentBackupService) null,
+				BackupProgressTracker.NO_OP);
 	}
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileContentBackupService contentBackupService) {
+		this(changePort, syncStatePort, fileMetadataPort, fileEventPort, contentBackupService,
+				BackupProgressTracker.NO_OP);
+	}
+
+	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
+			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileContentBackupService contentBackupService,
+			BackupProgressTracker progressTracker) {
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
 		this.fileEventPort = fileEventPort;
 		this.contentBackupService = contentBackupService;
+		this.progressTracker = progressTracker;
 	}
 
 	@Override
@@ -48,7 +58,10 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		while (newStartPageToken == null) {
 			DriveChangePage page = changePort.listChanges(access, scopeKey, pageToken);
 			changeCount += page.changes().size();
-			page.changes().forEach(change -> applyChange(access, change));
+			page.changes().forEach(change -> {
+				applyChange(access, change);
+				progressTracker.itemProcessed(itemLabel(change));
+			});
 			newStartPageToken = page.newStartPageToken();
 			if (newStartPageToken == null) {
 				if (page.nextPageToken() == null || page.nextPageToken().isBlank()) {
@@ -59,6 +72,10 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		}
 		syncStatePort.save(new SyncState(scopeKey, newStartPageToken));
 		return new SyncResult(scopeKey, changeCount, newStartPageToken);
+	}
+
+	private static String itemLabel(DriveChange change) {
+		return change.file() != null ? change.file().name() : change.fileId();
 	}
 
 	private void applyChange(ServiceAccountAccess access, DriveChange change) {

@@ -42,11 +42,11 @@ Last reviewed: 2026-09-13
 
 ### Not started
 
-- [-] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync backs up changed revisions and links them to the current file version. Expired page tokens now trigger a full re-inventory without duplicating unchanged versions; richer progress reporting remains.
+- [x] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync backs up changed revisions and links them to the current file version. Expired page tokens trigger a full re-inventory without duplicating unchanged versions. Both flows now report per-item progress through `BackupProgressTracker`.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes, per selected drive. If any one scope fails the whole run stops. A progress bar with elapsed/estimated-remaining time, the ability to cancel a running job, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
+- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. If any one scope fails the whole run stops. The ability to cancel a running job, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
 - [x] Per-drive backup scope selection: let the admin choose which drive(s) — the
   personal drive and/or one or more specific Shared Drives — to include in a
   backup job. The drive list gets a checkbox per row (`CheckBoxListCell`); the
@@ -71,12 +71,17 @@ Last reviewed: 2026-09-13
   cleanup/resume behavior, and how an interrupted backup is shown to the user.
   For a multi-drive job, cancelling must ask the admin to choose stop
   immediately vs. stop after the current drive finishes.
-- [ ] Progress bar with elapsed and estimated-remaining time: show current
+- [x] Progress bar with elapsed and estimated-remaining time: shows current
   operation, elapsed time, and a guessed remaining time for the drive
   currently being synced, resetting as the job moves to the next one. For a
-  multi-drive job, also show which drive is current (by name), how many
+  multi-drive job, also shows which drive is current (by name), how many
   drives the job includes, how many have completed so far, and elapsed/
   estimated-remaining time for the whole job alongside the per-drive figures.
+  A `BackupProgressTracker` domain service folds sync events into snapshots
+  (indeterminate with a running count for incremental syncs, whose change
+  total isn't known until the run ends); the JavaFX layer polls the latest
+  snapshot on a timer. Cancellation is not part of this slice — see the
+  interruptible-backups item below.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -95,7 +100,7 @@ requirements below as the source of truth for expected behavior.
 - [x] Per-drive backup scope selection (personal drive and/or specific Shared
   Drives), replacing automatic inclusion of every visible Shared Drive.
 - [ ] Interruptible backups with defined database and archive recovery behavior.
-- [ ] Progress bar with concise current-operation status, elapsed time, and
+- [x] Progress bar with concise current-operation status, elapsed time, and
   estimated remaining time.
 
 **P1 — complete the backup product**

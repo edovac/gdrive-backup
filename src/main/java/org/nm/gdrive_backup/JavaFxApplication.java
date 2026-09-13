@@ -1,5 +1,8 @@
 package org.nm.gdrive_backup;
 
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
@@ -11,6 +14,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.cell.CheckBoxListCell;
 import javafx.scene.layout.BorderPane;
@@ -32,8 +36,11 @@ import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
+import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
+import org.nm.gdrive_backup.domain.model.BackupPhase;
+import org.nm.gdrive_backup.domain.model.BackupProgress;
 import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
@@ -71,8 +78,10 @@ public class JavaFxApplication extends Application {
 	private static DriveBackupUseCase driveBackupUseCase;
 	private static String previewUserEmail;
 	private static BackupLocationUseCase backupLocationUseCase;
+	private static BackupProgressPort backupProgressPort;
 
 	private LocationsPanel locationsPanel;
+	private ProgressPanel progressPanel;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
 		springContext = context;
@@ -84,6 +93,10 @@ public class JavaFxApplication extends Application {
 
 	static void setBackupLocationUseCase(BackupLocationUseCase useCase) {
 		backupLocationUseCase = useCase;
+	}
+
+	static void setBackupProgress(BackupProgressPort progressPort) {
+		backupProgressPort = progressPort;
 	}
 
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
@@ -220,6 +233,7 @@ public class JavaFxApplication extends Application {
 		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, drives,
 				driveSelections, driveStatus));
 		locationsPanel = new LocationsPanel(syncNow);
+		progressPanel = new ProgressPanel();
 		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
 		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
 		refreshCloudQuota.setOnAction(event -> loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota));
@@ -295,7 +309,7 @@ public class JavaFxApplication extends Application {
 		});
 
 		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(),
-				drivesLabel, drives, backupModeCombo, syncNow, driveStatus, driveItems,
+				drivesLabel, drives, backupModeCombo, syncNow, progressPanel.node(), driveStatus, driveItems,
 				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
 				reportTitle, reportStatus, reportDetails, refreshReport);
 		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
@@ -428,6 +442,7 @@ public class JavaFxApplication extends Application {
 				: " into " + backupLocationUseCase.currentLocations().backupDestination();
 		status.setText("Synchronizing " + modeLabel(mode).toLowerCase() + " backup for " + selectedUserEmail
 				+ destination + "...");
+		progressPanel.start();
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
 			return driveBackupUseCase.synchronizeSelectedDrives(access, selectedDrives, mode);
@@ -435,6 +450,7 @@ public class JavaFxApplication extends Application {
 			syncNow.setDisable(false);
 			backupModeCombo.setDisable(false);
 			locationsPanel.setChangesDisabled(false);
+			progressPanel.stop();
 			if (error != null) {
 				status.setText("Synchronization failed: " + messageFor(error));
 				return;
@@ -772,6 +788,109 @@ public class JavaFxApplication extends Application {
 			return kernelVersion.contains("Microsoft") || kernelVersion.contains("microsoft");
 		} catch (IOException exception) {
 			return false;
+		}
+	}
+
+	/** Shows live progress for a running backup job: current operation, drive position, and elapsed/remaining time. */
+	private final class ProgressPanel {
+
+		private final ProgressBar progressBar = new ProgressBar(0);
+		private final Label operationLabel = new Label();
+		private final Label driveJobLabel = new Label();
+		private final Label timeLabel = new Label();
+		private final VBox root;
+		private Timeline timeline;
+
+		ProgressPanel() {
+			progressBar.setMaxWidth(Double.MAX_VALUE);
+			operationLabel.getStyleClass().add("status");
+			operationLabel.setWrapText(true);
+			driveJobLabel.getStyleClass().add("scope");
+			timeLabel.getStyleClass().add("scope");
+			root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel);
+			root.setAlignment(Pos.CENTER);
+			hide();
+		}
+
+		Node node() {
+			return root;
+		}
+
+		void start() {
+			root.setVisible(true);
+			root.setManaged(true);
+			progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+			operationLabel.setText("Starting synchronization...");
+			driveJobLabel.setText("");
+			timeLabel.setText("");
+			timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(250), event -> refresh()));
+			timeline.setCycleCount(Animation.INDEFINITE);
+			timeline.play();
+		}
+
+		void stop() {
+			if (timeline != null) {
+				timeline.stop();
+				timeline = null;
+			}
+			hide();
+		}
+
+		private void hide() {
+			root.setVisible(false);
+			root.setManaged(false);
+		}
+
+		private void refresh() {
+			if (backupProgressPort == null) {
+				return;
+			}
+			backupProgressPort.latest().ifPresent(progress -> {
+				progressBar.setProgress(progress.totalItems() == null
+						? ProgressBar.INDETERMINATE_PROGRESS
+						: (double) progress.processedItems() / Math.max(1, progress.totalItems()));
+				operationLabel.setText(operationText(progress));
+				driveJobLabel.setText(progress.totalDrives() > 1 ? multiDriveText(progress) : "");
+				timeLabel.setText(timeText(progress));
+			});
+		}
+
+		private String operationText(BackupProgress progress) {
+			String item = progress.currentItem() == null ? "" : " — " + progress.currentItem();
+			if (progress.phase() == BackupPhase.ENUMERATING) {
+				return "Enumerating " + progress.driveName() + "...";
+			}
+			if (progress.phase() == BackupPhase.FINISHED) {
+				return "Finishing...";
+			}
+			return progress.totalItems() != null
+					? "Backing up " + progress.processedItems() + " of " + progress.totalItems() + item
+					: progress.processedItems() + " changes processed" + item;
+		}
+
+		private String multiDriveText(BackupProgress progress) {
+			return progress.driveName() + " — drive " + progress.driveNumber() + " of " + progress.totalDrives()
+					+ ", " + progress.completedDrives() + " completed.";
+		}
+
+		private String timeText(BackupProgress progress) {
+			java.time.Duration driveElapsed = java.time.Duration.between(progress.driveStartedAt(), java.time.Instant.now());
+			String driveText = "this drive: " + formatDuration(driveElapsed) + " elapsed"
+					+ (progress.driveRemaining() == null ? "" : ", ~" + formatDuration(progress.driveRemaining()) + " left");
+			if (progress.totalDrives() <= 1) {
+				return driveText;
+			}
+			java.time.Duration jobElapsed = java.time.Duration.between(progress.jobStartedAt(), java.time.Instant.now());
+			String jobText = "whole job: " + formatDuration(jobElapsed) + " elapsed"
+					+ (progress.jobRemaining() == null ? "" : ", ~" + formatDuration(progress.jobRemaining()) + " left");
+			return driveText + " — " + jobText;
+		}
+
+		private String formatDuration(java.time.Duration duration) {
+			long totalSeconds = Math.max(0, duration.getSeconds());
+			long minutes = totalSeconds / 60;
+			long seconds = totalSeconds % 60;
+			return minutes > 0 ? minutes + "m " + seconds + "s" : seconds + "s";
 		}
 	}
 
