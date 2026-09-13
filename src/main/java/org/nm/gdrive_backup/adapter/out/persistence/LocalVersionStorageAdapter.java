@@ -5,20 +5,27 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.nm.gdrive_backup.domain.port.out.VersionStoragePort;
 
 public class LocalVersionStorageAdapter implements VersionStoragePort {
 
-	private final Path backupRoot;
+	private final AtomicReference<Path> backupRoot;
 
 	public LocalVersionStorageAdapter(Path backupRoot) {
-		this.backupRoot = backupRoot;
-		try {
-			Files.createDirectories(backupRoot);
-		} catch (IOException exception) {
-			throw new IllegalStateException("Unable to create backup root directory", exception);
-		}
+		createDirectories(backupRoot);
+		this.backupRoot = new AtomicReference<>(backupRoot);
+	}
+
+	public Path root() {
+		return backupRoot.get();
+	}
+
+	/** Writes every later version under another backup root; versions already stored stay where they are. */
+	public void switchTo(Path newBackupRoot) {
+		createDirectories(newBackupRoot);
+		backupRoot.set(newBackupRoot);
 	}
 
 	@Override
@@ -27,7 +34,7 @@ public class LocalVersionStorageAdapter implements VersionStoragePort {
 		if (content == null) {
 			throw new IllegalArgumentException("content must not be null");
 		}
-		Path targetDirectory = backupRoot
+		Path targetDirectory = backupRoot.get()
 				.resolve(safePathPart(ownerScope, "owner scope"))
 				.resolve(safePathPart(fileId, "file id"))
 				.resolve(safePathPart(revisionId, "revision id"));
@@ -35,6 +42,14 @@ public class LocalVersionStorageAdapter implements VersionStoragePort {
 		Path target = targetDirectory.resolve(safeFileName(fileName));
 		Files.copy(content, target, StandardCopyOption.REPLACE_EXISTING);
 		return target;
+	}
+
+	private static void createDirectories(Path directory) {
+		try {
+			Files.createDirectories(directory);
+		} catch (IOException exception) {
+			throw new IllegalStateException("Unable to create backup root directory", exception);
+		}
 	}
 
 	private static String safePathPart(String value, String label) {

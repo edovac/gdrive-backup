@@ -67,7 +67,7 @@ Legend:
 
 | Task | Model | Rationale |
 |---|---|---|
-| **Runtime backup-destination and database-location selection** | 🧭 | Needs a new inbound port, a configuration-backed outbound port, validation, and UI copy that makes "different database = different history" clear. Plan the ports across layers, then the adapter and UI code are routine. A first attempt exists on `feature/backup` (commit `bf2c571`); review that before starting over. |
+| **Runtime backup-destination and database-location selection** | 🧭 | Needs a new inbound port, a configuration-backed outbound port, validation, and UI copy that makes "different database = different history" clear. Plan the ports across layers, then the adapter and UI code are routine. |
 | **Full vs. incremental backup selection** | 🧭 | Changes the `DriveBackupUseCase` contract and job state. Full mode must ignore the saved cursor without corrupting `sync_state`. |
 | **Interruptible backups and recovery policy** (design) | 🔵 at `xhigh` | The highest-stakes design on the roadmap. Cancellation points, SQLite transaction/checkpoint behavior, temporary archive naming and resume/cleanup must stay consistent. An interrupted run must never look complete. Follow the safeguards in §4. |
 | **Interruptible backups and recovery policy** (implementation) | 🔵 | Crosses `SqliteDatabase` (a new connection per operation), the storage adapter, both sync services and the FX thread. Too entangled to hand to Sonnet safely. |

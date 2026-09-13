@@ -23,6 +23,8 @@ public class GdriveBackupApplication {
 				.run(args);
 		JavaFxApplication.setSpringContext(springContext);
 		JavaFxApplication.setLoginUseCase(springContext.getBean(org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase.class));
+		JavaFxApplication.setBackupLocationUseCase(springContext
+				.getBeanProvider(org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase.class).getIfAvailable());
 		JavaFxApplication.setDriveServices(
 				springContext.getBeanProvider(ServiceAccountAuthenticationUseCase.class).getIfAvailable(),
 				driveReadPort(springContext),

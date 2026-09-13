@@ -14,16 +14,22 @@ public class DriveBackupService implements DriveBackupUseCase {
 	private final SyncStatePort syncStatePort;
 	private final InitialDriveSyncUseCase initialSyncUseCase;
 	private final DriveChangeSyncUseCase changeSyncUseCase;
+	private final BackupActivity backupActivity;
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
-			DriveChangeSyncUseCase changeSyncUseCase) {
+			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity) {
 		this.syncStatePort = syncStatePort;
 		this.initialSyncUseCase = initialSyncUseCase;
 		this.changeSyncUseCase = changeSyncUseCase;
+		this.backupActivity = backupActivity;
 	}
 
 	@Override
 	public BackupResult synchronize(ServiceAccountAccess access, String scopeKey) {
+		return backupActivity.duringBackup(() -> synchronizeScope(access, scopeKey));
+	}
+
+	private BackupResult synchronizeScope(ServiceAccountAccess access, String scopeKey) {
 		if (syncStatePort.findByScopeKey(scopeKey).isEmpty()) {
 			var result = initialSyncUseCase.synchronize(access, scopeKey);
 			return new BackupResult(result.scopeKey(), result.fileCount(), true);

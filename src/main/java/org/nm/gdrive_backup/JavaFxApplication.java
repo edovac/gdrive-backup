@@ -14,6 +14,8 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
@@ -32,13 +34,19 @@ import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
 import org.nm.gdrive_backup.domain.model.BackupResult;
+import org.nm.gdrive_backup.domain.model.BackupLocations;
+import org.nm.gdrive_backup.domain.model.LocationStatus;
+import org.nm.gdrive_backup.domain.model.LocationValidation;
+import org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase;
 
 import java.awt.Desktop;
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Function;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -55,6 +63,9 @@ public class JavaFxApplication extends Application {
 	private static DriveReadPort driveReadPort;
 	private static DriveBackupUseCase driveBackupUseCase;
 	private static String previewUserEmail;
+	private static BackupLocationUseCase backupLocationUseCase;
+
+	private LocationsPanel locationsPanel;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
 		springContext = context;
@@ -62,6 +73,10 @@ public class JavaFxApplication extends Application {
 
 	static void setLoginUseCase(GoogleLoginUseCase useCase) {
 		loginUseCase = useCase;
+	}
+
+	static void setBackupLocationUseCase(BackupLocationUseCase useCase) {
+		backupLocationUseCase = useCase;
 	}
 
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
@@ -178,6 +193,7 @@ public class JavaFxApplication extends Application {
 		syncNow.setVisible(false);
 		syncNow.setManaged(false);
 		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, syncNow, driveStatus));
+		locationsPanel = new LocationsPanel(syncNow);
 		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
 		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
 		refreshCloudQuota.setOnAction(event -> loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota));
@@ -243,9 +259,10 @@ public class JavaFxApplication extends Application {
 			drives.getItems().clear();
 			drives.setVisible(false);
 			drives.setManaged(false);
+			locationsPanel.hide();
 		});
 
-		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, syncNow,
+		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(), syncNow,
 				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
 				reportTitle, reportStatus, reportDetails, refreshReport, driveStatus, drives, driveItems);
 		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
@@ -290,6 +307,7 @@ public class JavaFxApplication extends Application {
 					signOut.setVisible(true);
 					signOut.setManaged(true);
 					connectionStatus.setText("Google connected");
+					locationsPanel.show();
 					loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
 					loadWorkspaceUsers(drives, userPicker, driveItems, driveStatus,
 							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport, syncNow);
@@ -355,12 +373,16 @@ public class JavaFxApplication extends Application {
 			return;
 		}
 		syncNow.setDisable(true);
-		status.setText("Synchronizing backup for " + selectedUserEmail + "...");
+		locationsPanel.setChangesDisabled(true);
+		String destination = backupLocationUseCase == null ? ""
+				: " into " + backupLocationUseCase.currentLocations().backupDestination();
+		status.setText("Synchronizing backup for " + selectedUserEmail + destination + "...");
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
 			return driveBackupUseCase.synchronize(access, selectedUserEmail);
 		}).whenComplete((result, error) -> Platform.runLater(() -> {
 			syncNow.setDisable(false);
+			locationsPanel.setChangesDisabled(false);
 			if (error != null) {
 				status.setText("Synchronization failed: " + messageFor(error));
 				return;
@@ -664,6 +686,204 @@ public class JavaFxApplication extends Application {
 			return kernelVersion.contains("Microsoft") || kernelVersion.contains("microsoft");
 		} catch (IOException exception) {
 			return false;
+		}
+	}
+
+	/** Shows the active backup locations and lets the admin change them for the current session. */
+	private final class LocationsPanel {
+
+		private final Button syncNow;
+		private final Label destinationValue = pathLabel();
+		private final Label databaseValue = pathLabel();
+		private final Label status = new Label();
+		private final Button changeDestination = new Button("Change destination...");
+		private final Button changeDatabase = new Button("Change database...");
+		private final VBox root;
+
+		LocationsPanel(Button syncNow) {
+			this.syncNow = syncNow;
+			Label title = new Label("Backup locations");
+			title.getStyleClass().add("subtitle");
+			Label destinationHeader = new Label("Backup destination");
+			Label databaseHeader = new Label("Backup history database");
+			Label sessionNote = new Label("Changes apply to this session only.");
+			sessionNote.getStyleClass().add("scope");
+			status.getStyleClass().add("status");
+			status.setWrapText(true);
+			status.setMaxWidth(540);
+			changeDestination.getStyleClass().add("secondary-button");
+			changeDatabase.getStyleClass().add("secondary-button");
+			changeDestination.setOnAction(event -> chooseBackupDestination());
+			changeDatabase.setOnAction(event -> chooseDatabaseFile());
+			root = new VBox(6, title, destinationHeader, destinationValue, changeDestination,
+					databaseHeader, databaseValue, changeDatabase, sessionNote, status);
+			root.setAlignment(Pos.CENTER);
+			hide();
+		}
+
+		Node node() {
+			return root;
+		}
+
+		void show() {
+			if (backupLocationUseCase == null) {
+				hide();
+				return;
+			}
+			refresh();
+			root.setVisible(true);
+			root.setManaged(true);
+		}
+
+		void hide() {
+			root.setVisible(false);
+			root.setManaged(false);
+			status.setText("");
+		}
+
+		void setChangesDisabled(boolean disabled) {
+			changeDestination.setDisable(disabled);
+			changeDatabase.setDisable(disabled);
+		}
+
+		private void refresh() {
+			BackupLocations locations = backupLocationUseCase.currentLocations();
+			destinationValue.setText(locations.backupDestination().toString());
+			databaseValue.setText(locations.databaseFile().toString());
+		}
+
+		private void chooseBackupDestination() {
+			BackupLocations current = backupLocationUseCase.currentLocations();
+			DirectoryChooser chooser = new DirectoryChooser();
+			chooser.setTitle("Choose backup destination");
+			chooser.setInitialDirectory(existingDirectory(current.backupDestination()));
+			File selected = chooser.showDialog(root.getScene().getWindow());
+			if (selected != null) {
+				validateAndChange(selected.toPath(), backupLocationUseCase::validateBackupDestination,
+						backupLocationUseCase::changeBackupDestination,
+						validation -> destinationPrompt(current, selected.toPath(), validation));
+			}
+		}
+
+		private void chooseDatabaseFile() {
+			BackupLocations current = backupLocationUseCase.currentLocations();
+			FileChooser chooser = new FileChooser();
+			chooser.setTitle("Choose backup history database");
+			chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("SQLite database (*.db)", "*.db"));
+			chooser.setInitialDirectory(existingDirectory(current.databaseFile().getParent()));
+			chooser.setInitialFileName(current.databaseFile().getFileName().toString());
+			File selected = chooser.showSaveDialog(root.getScene().getWindow());
+			if (selected != null) {
+				validateAndChange(selected.toPath(), backupLocationUseCase::validateDatabaseFile,
+						backupLocationUseCase::changeDatabaseFile,
+						validation -> databasePrompt(current, selected.toPath(), validation));
+			}
+		}
+
+		private void validateAndChange(Path selected, Function<Path, LocationValidation> validate,
+				Function<Path, BackupLocations> change, Function<LocationValidation, String> prompt) {
+			setBusy(true);
+			status.setText("Checking " + selected + "...");
+			CompletableFuture.supplyAsync(() -> validate.apply(selected))
+					.whenComplete((validation, error) -> Platform.runLater(() -> {
+						if (error != null) {
+							setBusy(false);
+							status.setText("Unable to check location: " + messageFor(error));
+							return;
+						}
+						switch (validation.status()) {
+							case UNCHANGED -> {
+								setBusy(false);
+								status.setText("That location is already in use.");
+							}
+							case INVALID -> {
+								setBusy(false);
+								status.setText("");
+								showError(validation.detail());
+							}
+							default -> {
+								if (confirm(prompt.apply(validation))) {
+									apply(selected, change);
+								} else {
+									setBusy(false);
+									status.setText("Location unchanged.");
+								}
+							}
+						}
+					}));
+		}
+
+		private void apply(Path selected, Function<Path, BackupLocations> change) {
+			status.setText("Switching to " + selected + "...");
+			CompletableFuture.supplyAsync(() -> change.apply(selected))
+					.whenComplete((locations, error) -> Platform.runLater(() -> {
+						setBusy(false);
+						if (error != null) {
+							status.setText("Location not changed: " + messageFor(error));
+							return;
+						}
+						refresh();
+						status.setText("Location changed.");
+					}));
+		}
+
+		private void setBusy(boolean busy) {
+			setChangesDisabled(busy);
+			syncNow.setDisable(busy);
+		}
+
+		private boolean confirm(String message) {
+			Alert prompt = new Alert(Alert.AlertType.CONFIRMATION);
+			prompt.setTitle("Backup locations");
+			prompt.setHeaderText("Change backup location?");
+			prompt.setContentText(message);
+			prompt.getDialogPane().setMinWidth(520);
+			return prompt.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK;
+		}
+
+		private void showError(String message) {
+			Alert alert = new Alert(Alert.AlertType.ERROR);
+			alert.setTitle("Backup locations");
+			alert.setHeaderText("This location can't be used");
+			alert.setContentText(message);
+			alert.getDialogPane().setMinWidth(520);
+			alert.showAndWait();
+		}
+
+		private static String destinationPrompt(BackupLocations current, Path selected,
+				LocationValidation validation) {
+			String existingFiles = validation.status() == LocationStatus.EXISTING
+					? "\n\nThe folder already contains files. They are kept, and new backup versions are added alongside them."
+					: "";
+			return "New backups will be written to:\n" + selected + existingFiles
+					+ "\n\nFiles already backed up stay in:\n" + current.backupDestination();
+		}
+
+		private static String databasePrompt(BackupLocations current, Path selected,
+				LocationValidation validation) {
+			if (validation.status() == LocationStatus.EXISTING) {
+				return "Switch to the backup history in:\n" + selected + "\n(" + validation.detail() + ")"
+						+ "\n\nThe current history in " + current.databaseFile() + " stays where it is.";
+			}
+			return "Start a new, empty backup history in:\n" + selected
+					+ "\n\nFiles recorded in " + current.databaseFile() + " won't be visible, "
+					+ "and the next backup of each user runs a full inventory.";
+		}
+
+		private static File existingDirectory(Path path) {
+			Path candidate = path;
+			while (candidate != null && !Files.isDirectory(candidate)) {
+				candidate = candidate.getParent();
+			}
+			return candidate == null ? null : candidate.toFile();
+		}
+
+		private static Label pathLabel() {
+			Label label = new Label();
+			label.setStyle("-fx-font-family: monospace; -fx-text-fill: #172033;");
+			label.setWrapText(true);
+			label.setMaxWidth(540);
+			return label;
 		}
 	}
 

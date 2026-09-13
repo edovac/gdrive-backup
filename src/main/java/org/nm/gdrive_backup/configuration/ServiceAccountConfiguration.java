@@ -30,6 +30,7 @@ import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
 import org.nm.gdrive_backup.domain.service.FileContentBackupService;
 import org.nm.gdrive_backup.domain.service.InitialDriveSyncService;
 import org.nm.gdrive_backup.domain.service.DriveBackupService;
+import org.nm.gdrive_backup.domain.service.BackupActivity;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
@@ -150,8 +151,10 @@ public class ServiceAccountConfiguration {
 
 	@Bean
 	DriveBackupUseCase driveBackupUseCase(SyncStatePort syncStatePort,
-			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase) {
-		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase);
+			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase,
+			BackupActivity backupActivity) {
+		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase,
+				backupActivity);
 	}
 
 	@Bean

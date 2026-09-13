@@ -50,8 +50,8 @@ Configuration comes from environment variables bound through Spring relaxed bind
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | `google.service-account.key` | All Google-backed beans are replaced by fallbacks (see below) |
 | `GOOGLE_IMPERSONATED_USER` | `google.drive.preview.user-email` | No user listing and no default preview user; this admin identity is impersonated for Admin SDK calls |
 | `GOOGLE_CLOUD_PROJECT_ID` | `google.service-account.project-id` | Cloud quota limits unavailable |
-| `GOOGLE_BACKUP_ROOT` | `google.backup.root` | `~/.gdrive-backup/backupRoot` |
-| `GDRIVE_BACKUP_DATABASE` | `gdrive.backup.database` | `~/.gdrive-backup/backup.db` |
+
+Backup locations are deliberately not configurable through the environment. Every launch starts with `~/.gdrive-backup/backupRoot` and `~/.gdrive-backup/backup.db`, and the admin changes them for the current session in the UI through `BackupLocationUseCase`.
 
 ## Architecture: how the pieces connect
 
@@ -69,6 +69,7 @@ Configuration comes from environment variables bound through Spring relaxed bind
 
 **Persistence.**
 - `SqliteDatabase` opens a new JDBC connection for each operation.
+- Backup locations switch at runtime without rebuilding beans: `LocalBackupLocationAdapter` calls `SqliteDatabase.switchTo` and `LocalVersionStorageAdapter.switchTo`, and every `Sqlite*Adapter` follows because they share the one `SqliteDatabase`. `BackupActivity` is a read-write lock: backups hold the read side through `DriveBackupService`, and a location change fails immediately if it can't take the write side.
 - The schema is `src/main/resources/db/schema.sql`, applied at startup by an `ApplicationRunner` in `DatabaseConfiguration`.
 - It only uses `CREATE TABLE/INDEX IF NOT EXISTS` and there is no migration tool, so changes to an existing table will not reach databases that already exist.
 

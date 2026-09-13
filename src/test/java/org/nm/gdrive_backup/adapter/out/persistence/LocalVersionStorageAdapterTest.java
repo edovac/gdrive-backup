@@ -45,4 +45,17 @@ class LocalVersionStorageAdapterTest {
 		assertThrows(IllegalArgumentException.class,
 				() -> adapter.store("user", "file", "revision", "file.txt", null));
 	}
+
+	@Test
+	void switchStoresLaterVersionsUnderTheNewRoot() throws Exception {
+		LocalVersionStorageAdapter adapter = new LocalVersionStorageAdapter(temporaryDirectory.resolve("first"));
+		Path secondRoot = temporaryDirectory.resolve("second");
+
+		adapter.switchTo(secondRoot);
+		Path stored = adapter.store("user@example.com", "file-1", "revision-1", "Report.pdf",
+				new ByteArrayInputStream(new byte[] { 1 }));
+
+		assertEquals(secondRoot, adapter.root());
+		assertEquals(secondRoot.resolve("user@example.com/file-1/revision-1/Report.pdf"), stored);
+	}
 }

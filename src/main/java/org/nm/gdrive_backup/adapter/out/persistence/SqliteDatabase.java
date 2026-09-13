@@ -9,23 +9,49 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class SqliteDatabase {
 
 	private static final String SCHEMA_RESOURCE = "/db/schema.sql";
 
-	private final String jdbcUrl;
+	private final AtomicReference<Path> databasePath;
 
 	public SqliteDatabase(Path databasePath) {
-		this.jdbcUrl = "jdbc:sqlite:" + databasePath;
+		this.databasePath = new AtomicReference<>(databasePath);
+	}
+
+	public Path path() {
+		return databasePath.get();
 	}
 
 	Connection openConnection() throws SQLException {
-		return DriverManager.getConnection(jdbcUrl);
+		return DriverManager.getConnection(jdbcUrl(databasePath.get()));
 	}
 
 	public void initialize() {
-		try (Connection connection = openConnection();
+		initialize(databasePath.get());
+	}
+
+	/**
+	 * Initializes the schema in another database file, then routes every later connection
+	 * to it. The current database stays active if the new one cannot be initialized.
+	 */
+	public void switchTo(Path newDatabasePath) {
+		try {
+			Path parent = newDatabasePath.toAbsolutePath().getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+		} catch (IOException exception) {
+			throw new IllegalStateException("Unable to create SQLite database directory", exception);
+		}
+		initialize(newDatabasePath);
+		databasePath.set(newDatabasePath);
+	}
+
+	private static void initialize(Path path) {
+		try (Connection connection = DriverManager.getConnection(jdbcUrl(path));
 			Statement statement = connection.createStatement()) {
 			statement.execute("PRAGMA foreign_keys = ON");
 			for (String schemaStatement : readSchema().split(";")) {
@@ -36,6 +62,10 @@ public class SqliteDatabase {
 		} catch (SQLException | IOException exception) {
 			throw new IllegalStateException("Unable to initialize SQLite database", exception);
 		}
+	}
+
+	private static String jdbcUrl(Path path) {
+		return "jdbc:sqlite:" + path;
 	}
 
 	private static String readSchema() throws IOException {

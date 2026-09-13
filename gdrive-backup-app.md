@@ -41,9 +41,12 @@ Last reviewed: 2026-09-13
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes; full progress and partial-failure reporting remain.
 - [ ] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per completed backup.
-- [ ] Runtime location selection: let the admin choose and validate the backup
+- [x] Runtime location selection: let the admin choose and validate the backup
   destination and SQLite database location, applying the choices through
   configuration-backed ports rather than direct UI environment access.
+  Locations are chosen only in the UI and last for the current session; every
+  launch starts from `~/.gdrive-backup/backupRoot` and
+  `~/.gdrive-backup/backup.db`. Changes are refused while a backup runs.
 - [ ] Interruptible backups and recovery policy: define cancellation points,
   database transaction/checkpoint behavior, temporary archive naming and
   cleanup/resume behavior, and how an interrupted backup is shown to the user.
