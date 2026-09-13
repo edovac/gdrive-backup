@@ -40,9 +40,11 @@ Last reviewed: 2026-09-13
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes; full progress and partial-failure reporting remain.
+- [ ] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per completed backup.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
+- [ ] Low-priority authenticated-screen UX analysis and a three-column layout for user, Drive, and quota/report information.
 
 This section is the working roadmap. Update the status markers and the
 `Last reviewed` date as each vertical slice is completed; keep the detailed
@@ -57,8 +59,19 @@ requirements below as the source of truth for expected behavior.
 - **Google-native files** (Docs/Sheets/Slides): exported to Office formats
   (`.docx` / `.xlsx` / `.pptx`), not kept in native Google format.
 - **Storage**: local disk only (no NAS/cloud target for v1).
-- **Versioning**: keep full dated version history per file, not just the latest
-  snapshot.
+- **Versioning**: the admin chooses whether a backup keeps every available file
+  revision or only the latest revision. The selection applies to the backup job
+  and must be visible before it starts.
+- **Archive output**: each completed backup must be delivered as a
+  self-contained single archive file. The archive format and its manifest
+  layout need a design decision; ZIP is the initial candidate.
+- **Backup mode**: the admin chooses a full backup or an incremental backup.
+  A full backup inventories and archives the selected scope regardless of its
+  change cursor; an incremental backup uses the saved `changes.list` cursor.
+- **Progress feedback**: while a backup is running, the UI shows a progress bar
+  and a concise status message describing the current operation (for example,
+  enumerating files, downloading content, packaging the archive, or completing
+  a scope).
 - **Admin UI**: lets the admin log in via OAuth (as an access gate) and browse
   both personal (My Drive) and Shared Drives, per org user, as a **preview**
   before running a backup. The UI does not need per-user self-service access —
@@ -215,6 +228,11 @@ backupRoot/
   supports adding "keep last N versions" or "keep for N days" later without a
   redesign.
 
+The directory layout above is the current internal staging/history layout. It
+must be revised so the user-facing result of each backup is one self-contained
+archive, with a manifest that identifies its scope, backup mode, revision mode,
+and captured files.
+
 ---
 
 ## UI (JavaFX)
@@ -230,10 +248,15 @@ backupRoot/
     supportsAllDrives=true)`)
   - Both reuse the same impersonation-backed fetch code as the backend.
 - **Backup trigger**: run full/incremental sync, show per-user progress,
-  surface partial failures (suspended accounts, revoked access, etc. are
-  expected at org scale).
+  let the admin select backup and revision modes, package a self-contained
+  archive, and surface partial failures (suspended accounts, revoked access,
+  etc. are expected at org scale).
 - **History view**: query `file_events` + `file_versions` for a selected file
   to show renames/moves/trashes/versions over time.
+- **Layout follow-up (low priority)**: analyse and redesign the authenticated
+  screen as three distinct columns/panels: user information and selection,
+  Drive browsing/details, and quota/report details. Keep this separate from
+  the backup-progress area so the primary task remains legible.
 
 ---
 
@@ -247,9 +270,11 @@ backupRoot/
 4. Admin SDK user enumeration.
 5. JavaFX shell: login gate, user picker, Drive/Shared-Drive browser (reusing
    step 1's fetch code).
-6. Backup trigger + progress UI + history view.
+6. Backup options (full/incremental and all/latest revisions), progress UI,
+   archive packaging, and history view.
 7. `@Scheduled` job for unattended runs.
-8. `jpackage` → Windows installer; test on a clean machine without a
+8. Low-priority JavaFX layout analysis and three-panel redesign.
+9. `jpackage` → Windows installer; test on a clean machine without a
    preinstalled JDK.
 
 ---
