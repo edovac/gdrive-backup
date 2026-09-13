@@ -18,6 +18,10 @@ AGENTS.md is the canonical source for architecture rules, build conventions, and
 
 [google-admin-console-setup.md](google-admin-console-setup.md) documents the manual domain-wide delegation setup.
 
+## Model selection
+
+[claude-models.md](claude-models.md) maps each roadmap task to a Claude model. The user is on Claude Pro and uses **only models included in the plan**: Sonnet 5, Opus 5 (standard context) and Haiku 4.5. Never use or suggest options that need usage credits: Fable 5.1, fast mode, or Opus with 1M context. When spawning subagents, pick the model that document assigns to the task; use Haiku for search and reading.
+
 ## Commands
 
 ```bash
