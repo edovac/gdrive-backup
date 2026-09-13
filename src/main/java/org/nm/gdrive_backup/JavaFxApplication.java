@@ -295,9 +295,9 @@ public class JavaFxApplication extends Application {
 		});
 
 		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(),
-				drivesLabel, drives, backupModeCombo, syncNow,
+				drivesLabel, drives, backupModeCombo, syncNow, driveStatus, driveItems,
 				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
-				reportTitle, reportStatus, reportDetails, refreshReport, driveStatus, driveItems);
+				reportTitle, reportStatus, reportDetails, refreshReport);
 		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
 		content.setAlignment(Pos.CENTER);
 		content.setMaxWidth(560);
