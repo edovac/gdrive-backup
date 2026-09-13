@@ -46,7 +46,7 @@ Last reviewed: 2026-09-13
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes, per selected drive. If any one scope fails the whole run stops. Full progress reporting, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
+- [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes, per selected drive. If any one scope fails the whole run stops. A progress bar with elapsed/estimated-remaining time, the ability to cancel a running job, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
 - [x] Per-drive backup scope selection: let the admin choose which drive(s) — the
   personal drive and/or one or more specific Shared Drives — to include in a
   backup job. The drive list gets a checkbox per row (`CheckBoxListCell`); the
@@ -69,6 +69,14 @@ Last reviewed: 2026-09-13
 - [ ] Interruptible backups and recovery policy: define cancellation points,
   database transaction/checkpoint behavior, temporary archive naming and
   cleanup/resume behavior, and how an interrupted backup is shown to the user.
+  For a multi-drive job, cancelling must ask the admin to choose stop
+  immediately vs. stop after the current drive finishes.
+- [ ] Progress bar with elapsed and estimated-remaining time: show current
+  operation, elapsed time, and a guessed remaining time for the drive
+  currently being synced, resetting as the job moves to the next one. For a
+  multi-drive job, also show which drive is current (by name), how many
+  drives the job includes, how many have completed so far, and elapsed/
+  estimated-remaining time for the whole job alongside the per-drive figures.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -86,8 +94,9 @@ requirements below as the source of truth for expected behavior.
 - [x] Full versus incremental backup selection.
 - [x] Per-drive backup scope selection (personal drive and/or specific Shared
   Drives), replacing automatic inclusion of every visible Shared Drive.
-- Interruptible backups with defined database and archive recovery behavior.
-- Progress bar and concise current-operation status.
+- [ ] Interruptible backups with defined database and archive recovery behavior.
+- [ ] Progress bar with concise current-operation status, elapsed time, and
+  estimated remaining time.
 
 **P1 — complete the backup product**
 
@@ -146,10 +155,40 @@ Windows packaging.
 - **Progress feedback**: while a backup is running, the UI shows a progress bar
   and a concise status message describing the current operation (for example,
   enumerating files, downloading content, packaging the archive, or completing
-  a scope).
-- **Interruptible backups**: the admin can cancel a running backup. Cancellation
-  must leave the database and archive output in a defined, recoverable state;
-  the interrupted result must never be presented as a completed backup.
+  a scope), scoped to the **drive currently being synced** — the fraction shown
+  reflects that drive's own progress, not a blended figure across every
+  selected drive. Progress resets as the job moves to the next drive.
+- **Multi-drive job status**: when a job covers more than one selected drive,
+  the UI shows, distinct from the per-drive progress bar above:
+  - **which drive is current**, identified by name (e.g. "Shared: Finance" or
+    "My Drive"), not just a position in the list;
+  - **how many drives this job includes** in total;
+  - **how many of them have completed** so far.
+  For example: "Shared: Finance — drive 2 of 3, 1 completed."
+- **Elapsed and remaining time**: alongside the progress bar, the UI shows
+  elapsed time and an estimated time remaining at **both levels**: for the
+  drive currently being synced, and for the job as a whole (all selected
+  drives combined). For a single-drive job the two coincide and only need
+  showing once; for a multi-drive job both are shown together, e.g. "this
+  drive: 1m elapsed, ~2m left — whole job: 4m elapsed, ~7m left." How each
+  estimate is computed needs a design decision — the per-drive one might
+  extrapolate from files or bytes processed so far against the totals known
+  from enumeration; the job-level one additionally has to account for
+  already-completed drives and however many remain (e.g. an average
+  per-drive duration once at least one has finished). Both will necessarily
+  be rough guesses, especially early in a drive's sync, right after
+  switching from enumeration to download, or before any drive in the job
+  has completed yet.
+- **Interruptible backups**: the admin can cancel a running backup, visible
+  and reachable from the same progress display.
+  - For a single-drive job, cancelling stops that drive's sync; the
+    interrupted result must never be presented as a completed backup.
+  - For a job with **multiple selected drives**, cancelling asks the admin to
+    choose between stopping immediately (abandoning the drive in progress
+    too) or stopping after the current drive finishes (letting it complete
+    normally, then not starting the next selected drive).
+  - Either way, cancellation must leave the database and archive output in a
+    defined, recoverable state.
 - **Admin UI**: lets the admin log in via OAuth (as an access gate) and browse
   both personal (My Drive) and Shared Drives, per org user, as a **preview**
   before running a backup. The UI does not need per-user self-service access —
