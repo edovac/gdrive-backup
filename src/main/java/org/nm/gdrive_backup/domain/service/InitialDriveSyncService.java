@@ -41,7 +41,8 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		files.forEach(file -> {
 			fileMetadataPort.save(file);
 			if (contentBackupService != null && !isFolder(file)) {
-				contentBackupService.backup(access, file);
+				var version = contentBackupService.backup(access, file);
+				fileMetadataPort.save(withCurrentVersion(file, version.id()));
 			}
 		});
 		String pageToken = changePort.getStartPageToken(access, scopeKey);
@@ -51,5 +52,11 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 
 	private static boolean isFolder(org.nm.gdrive_backup.domain.model.StoredFile file) {
 		return "application/vnd.google-apps.folder".equals(file.mimeType());
+	}
+
+	private static org.nm.gdrive_backup.domain.model.StoredFile withCurrentVersion(
+			org.nm.gdrive_backup.domain.model.StoredFile file, Long versionId) {
+		return new org.nm.gdrive_backup.domain.model.StoredFile(file.fileId(), file.ownerScope(), file.name(),
+				file.parents(), file.driveId(), file.mimeType(), file.trashed(), file.headRevisionId(), versionId);
 	}
 }

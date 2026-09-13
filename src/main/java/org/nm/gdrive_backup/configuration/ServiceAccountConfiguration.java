@@ -29,8 +29,10 @@ import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
 import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
 import org.nm.gdrive_backup.domain.service.FileContentBackupService;
 import org.nm.gdrive_backup.domain.service.InitialDriveSyncService;
+import org.nm.gdrive_backup.domain.service.DriveBackupService;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
+import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 import org.nm.gdrive_backup.domain.port.out.FileEventPort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
@@ -113,7 +115,8 @@ public class ServiceAccountConfiguration {
 	@Bean
 	DriveChangeSyncUseCase driveChangeSyncUseCase(
 			ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort,
-			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileVersionPort fileVersionPort) {
+			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort,
+			ObjectProvider<FileContentBackupService> contentBackupProvider) {
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
 		if (changePort == null) {
 			return (access, scopeKey) -> {
@@ -122,7 +125,8 @@ public class ServiceAccountConfiguration {
 								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
 			};
 		}
-		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, fileEventPort, fileVersionPort);
+		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, fileEventPort,
+				contentBackupProvider.getIfAvailable());
 	}
 
 	@Bean
@@ -141,6 +145,12 @@ public class ServiceAccountConfiguration {
 		}
 		return new InitialDriveSyncService(fileListingPort, changePort, fileMetadataPort, syncStatePort,
 				contentBackupProvider.getIfAvailable());
+	}
+
+	@Bean
+	DriveBackupUseCase driveBackupUseCase(SyncStatePort syncStatePort,
+			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase) {
+		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase);
 	}
 
 	@Bean

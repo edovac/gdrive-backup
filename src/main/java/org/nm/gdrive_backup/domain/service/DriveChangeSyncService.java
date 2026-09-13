@@ -11,7 +11,6 @@ import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.FileEventPort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
-import org.nm.gdrive_backup.domain.port.out.FileVersionPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 
 import java.time.Instant;
@@ -23,15 +22,20 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final SyncStatePort syncStatePort;
 	private final FileMetadataPort fileMetadataPort;
 	private final FileEventPort fileEventPort;
-	private final FileVersionPort fileVersionPort;
+	private final FileContentBackupService contentBackupService;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
-			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileVersionPort fileVersionPort) {
+			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort) {
+		this(changePort, syncStatePort, fileMetadataPort, fileEventPort, (FileContentBackupService) null);
+	}
+
+	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
+			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileContentBackupService contentBackupService) {
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
 		this.fileEventPort = fileEventPort;
-		this.fileVersionPort = fileVersionPort;
+		this.contentBackupService = contentBackupService;
 	}
 
 	@Override
@@ -44,7 +48,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		while (newStartPageToken == null) {
 			DriveChangePage page = changePort.listChanges(access, scopeKey, pageToken);
 			changeCount += page.changes().size();
-			page.changes().forEach(this::applyChange);
+			page.changes().forEach(change -> applyChange(access, change));
 			newStartPageToken = page.newStartPageToken();
 			if (newStartPageToken == null) {
 				if (page.nextPageToken() == null || page.nextPageToken().isBlank()) {
@@ -57,7 +61,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		return new SyncResult(scopeKey, changeCount, newStartPageToken);
 	}
 
-	private void applyChange(DriveChange change) {
+	private void applyChange(ServiceAccountAccess access, DriveChange change) {
 		if (change.removed()) {
 			fileEventPort.save(new FileEvent(null, change.fileId(), "delete", null, null, Instant.now()));
 			return;
@@ -69,6 +73,26 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		Optional<StoredFile> previous = fileMetadataPort.findByFileId(current.fileId());
 		previous.ifPresent(old -> recordDifferences(old, current));
 		fileMetadataPort.save(current);
+		if (shouldBackUpContent(previous, current)) {
+			var version = contentBackupService.backup(access, current);
+			fileMetadataPort.save(withCurrentVersion(current, version.id()));
+		}
+	}
+
+	private boolean shouldBackUpContent(Optional<StoredFile> previous, StoredFile current) {
+		return contentBackupService != null && !isFolder(current) && current.headRevisionId() != null
+				&& !current.headRevisionId().isBlank()
+				&& previous.map(file -> !java.util.Objects.equals(file.headRevisionId(), current.headRevisionId())
+						|| file.currentVersionId() == null).orElse(true);
+	}
+
+	private static boolean isFolder(StoredFile file) {
+		return "application/vnd.google-apps.folder".equals(file.mimeType());
+	}
+
+	private static StoredFile withCurrentVersion(StoredFile file, Long versionId) {
+		return new StoredFile(file.fileId(), file.ownerScope(), file.name(), file.parents(), file.driveId(),
+				file.mimeType(), file.trashed(), file.headRevisionId(), versionId);
 	}
 
 	private void recordDifferences(StoredFile previous, StoredFile current) {

@@ -17,6 +17,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
+import org.nm.gdrive_backup.domain.model.FileVersion;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.model.SyncState;
@@ -82,11 +83,15 @@ class InitialDriveSyncServiceTest {
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
 		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(file, folder));
 		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("start-token");
+		when(contentService.backup(ACCESS, file)).thenReturn(new FileVersion(7L, "file-1", "revision-1",
+				Instant.now(), "backup/report", 12));
 
 		new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort, contentService)
 				.synchronize(ACCESS, "user@example.com");
 
 		verify(contentService).backup(ACCESS, file);
+		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
+				"text/plain", false, "revision-1", 7L));
 		verify(contentService, never()).backup(ACCESS, folder);
 		verify(statePort).save(new SyncState("user@example.com", "start-token"));
 	}

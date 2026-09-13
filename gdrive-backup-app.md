@@ -35,11 +35,11 @@ Last reviewed: 2026-09-12
 
 ### Not started
 
-- [-] Headless initial and incremental sync using `changes.list`. Initial listing now persists metadata and downloads versions for non-folder files before saving the start token; incremental content backup and richer progress reporting remain.
+- [-] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync now backs up changed revisions and links them to the current file version. Stale-token recovery and richer progress reporting remain.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI can now trigger change synchronization for the selected user and report the processed-change count; full backup progress remains.
+- [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes; full progress and partial-failure reporting remain.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
