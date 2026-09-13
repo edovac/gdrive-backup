@@ -41,6 +41,9 @@ Last reviewed: 2026-09-13
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI now selects initial or incremental synchronization for the selected user and reports the number of inventoried files or processed changes; full progress and partial-failure reporting remain.
 - [ ] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per completed backup.
+- [ ] Runtime location selection: let the admin choose and validate the backup
+  destination and SQLite database location, applying the choices through
+  configuration-backed ports rather than direct UI environment access.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -59,6 +62,12 @@ requirements below as the source of truth for expected behavior.
 - **Google-native files** (Docs/Sheets/Slides): exported to Office formats
   (`.docx` / `.xlsx` / `.pptx`), not kept in native Google format.
 - **Storage**: local disk only (no NAS/cloud target for v1).
+- **Backup location**: the admin can choose the local destination directory at
+  runtime. The selected location is used for backup staging/archive output and
+  is displayed before a backup starts.
+- **Database location**: the admin can choose the SQLite database file location
+  at runtime. The application must validate that the location is writable and
+  make clear when a location change selects a different backup history.
 - **Versioning**: the admin chooses whether a backup keeps every available file
   revision or only the latest revision. The selection applies to the backup job
   and must be visible before it starts.
