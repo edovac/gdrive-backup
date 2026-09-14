@@ -21,7 +21,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-14
 
 ### Completed
 
@@ -33,20 +33,11 @@ Last reviewed: 2026-09-13
 - [x] My Drive and Shared Drive listing through the impersonation-backed Drive adapter.
 - [x] JavaFX user picker and Drive preview browsing, including folder navigation.
 - [x] Focused unit tests and opt-in real-account integration tests for the implemented Google adapters and services.
-
-### In progress
-
 - [x] Make the user-selection and impersonated Drive-preview flow discoverable and usable in the JavaFX layout.
-- [-] Continue exposing the remaining backend capabilities through the UI.
-- [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
-
-### Not started
-
 - [x] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync backs up changed revisions and links them to the current file version. Expired page tokens trigger a full re-inventory without duplicating unchanged versions. Both flows now report per-item progress through `BackupProgressTracker`.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item below). If any one scope fails the whole run stops. An org-wide sweep across every Workspace user and partial-failure handling with a completion summary remain.
 - [x] Per-drive backup scope selection: let the admin choose which drive(s) — the
   personal drive and/or one or more specific Shared Drives — to include in a
   backup job. The drive list gets a checkbox per row (`CheckBoxListCell`); the
@@ -54,12 +45,6 @@ Last reviewed: 2026-09-13
   Shared Drives synced this way are still deduplicated by `drive_id` via the
   `drives` table. This replaces the previous behavior of automatically
   including every Shared Drive the selected user could see.
-- [-] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per selected drive.
-  Full versus incremental mode selection is implemented: the admin picks the mode in the
-  UI before starting a sync, `INCREMENTAL` falls back to a full inventory when no
-  baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories
-  regardless of any saved cursor. All-versus-latest-revision selection and
-  per-drive archive packaging remain.
 - [x] Runtime location selection: let the admin choose and validate the backup
   destination and SQLite database location, applying the choices through
   configuration-backed ports rather than direct UI environment access.
@@ -93,6 +78,21 @@ Last reviewed: 2026-09-13
   (indeterminate with a running count for incremental syncs, whose change
   total isn't known until the run ends); the JavaFX layer polls the latest
   snapshot on a timer.
+
+### In progress
+
+- [-] Continue exposing the remaining backend capabilities through the UI.
+- [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
+- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If any one scope fails the whole run stops. An org-wide sweep across every Workspace user and partial-failure handling with a completion summary remain.
+- [-] Backup options and archive packaging: let the admin choose full versus incremental mode and all versus latest revisions, then produce one self-contained archive per selected drive.
+  Full versus incremental mode selection is implemented: the admin picks the mode in the
+  UI before starting a sync, `INCREMENTAL` falls back to a full inventory when no
+  baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories
+  regardless of any saved cursor. All-versus-latest-revision selection and
+  per-drive archive packaging remain.
+
+### Not started
+
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
