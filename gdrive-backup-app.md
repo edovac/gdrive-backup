@@ -88,7 +88,7 @@ Last reviewed: 2026-09-14
 - [-] Continue exposing the remaining backend capabilities through the UI.
 - [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If any one scope fails the whole run stops. An org-wide sweep across every Workspace user and partial-failure handling with a completion summary remain.
-- [-] Backup options and archive packaging: let the admin choose full versus incremental mode, then produce the per-drive archive output described under **Archive output** (a flat, uploadable tree for a full run, an id-keyed delta for an incremental one, none when an incremental run finds no changes). Per-file revision retention has been dropped; history lives in the archive chain instead.
+- [-] Backup options and archive packaging: let the admin choose full versus incremental mode, then produce the per-drive archive output described under **Archive output** (a flat, uploadable tree for a full run, an id-keyed delta for an incremental one, none when an incremental run finds no changes). Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies.
   Full versus incremental mode selection is implemented: the admin picks the mode in the
   UI before starting a sync, `INCREMENTAL` falls back to a full inventory when no
   baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories
@@ -97,14 +97,17 @@ Last reviewed: 2026-09-14
 
 ### Not started
 
-- [ ] Drop revision retention from the store and schema: remove the `revision`
-  path segment so a file has one current copy, replace `file_versions` with
-  `file_captures` (adding `archive_id`), and add the `archives` table. There is
-  no migration tool, so an existing `backup.db` has to be recreated.
+- [ ] Rework the store and schema for the chain model: remove the `revision`
+  path segment so a file has one current copy under `LATEST_ONLY`, replace
+  `file_versions` with `file_captures` (adding `archive_id`), add `archive_id`
+  to `file_events`, and add the `archives` table (`sequence_number`,
+  `base_archive_id`, `mode`, `revision_mode`, `cancelled`, cursor range). There
+  is no migration tool, so an existing `backup.db` has to be recreated.
 - [ ] Carry the scope type (personal vs Shared Drive) explicitly instead of
   inferring it from whether the key contains `@`.
-- [ ] Archive operations: squash consecutive deltas, collapse a chain into a
-  flat uploadable tree, and warn on chain gaps.
+- [ ] Archive operations: squash consecutive deltas into a merged delta,
+  collapse a chain into a flat uploadable tree, warn on chain gaps, and start a
+  new chain when a full backup runs on a scope that already has one.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -132,12 +135,17 @@ requirements below as the source of truth for expected behavior.
 
 - Per-drive archive output, each with its own manifest: a flat, directly
   uploadable tree for a full run, an id-keyed delta for an incremental one,
-  none when an incremental run finds no changes. The archive chain is tracked
-  in SQLite and mirrored in each manifest. Still open: what a cancelled run
-  should write.
-- Archive operations: squash consecutive deltas into one delta, and collapse a
-  full archive plus its deltas into a single flat tree. Both refuse to run on a
-  chain with a missing link.
+  none when an incremental run finds no changes. Archives are organized into
+  per-scope chains rooted in one full backup; starting a new full backup on a
+  scope with an existing chain begins a new chain, leaving the old one intact.
+  The chain is tracked in SQLite and mirrored in each manifest, with a
+  `sequence_number` used for archive naming. Still open: what a cancelled run
+  should write, and the full naming convention beyond the sequence number.
+- Archive operations: squash consecutive deltas into one `MERGED_INCREMENTAL`
+  delta, and collapse a full archive plus its deltas into a single flat
+  `MERGED_FULL` tree that becomes the chain's new base. Both refuse to run on a
+  chain with a missing link, and both keep the superseded archives by default,
+  offering the admin the option to delete them afterward.
 - Chain-gap detection and warnings, since deleting an archive now permanently
   destroys the history it held.
 - Partial-failure handling and a completion summary for organization-wide runs.
@@ -178,14 +186,25 @@ Windows packaging.
 - **Database location**: the admin can choose the SQLite database file location
   at runtime. The application must validate that the location is writable and
   make clear when a location change selects a different backup history.
-- **No per-file revision retention**: the application does not keep multiple
-  revisions of a file. It never calls Drive's `revisions.list`, and the local
-  store holds exactly one current copy per file, replaced when the content
-  changes. File history is the **archive chain** — a full baseline plus the
-  deltas that follow it — not a stack of copies inside the store. There is no
-  admin-facing "with/without revisions" choice; `head_revision_id` survives
-  only as a change detector, to decide whether a file's content needs
-  re-downloading.
+- **Revision mode is fixed per chain, and only one mode is built.** Every scope
+  (a personal drive or a Shared Drive) has its own **backup chain**: an ordered
+  sequence of archives rooted in one full backup, followed by zero or more
+  incremental backups and any merged archives produced later. A chain's
+  revision mode — `LATEST_ONLY` or a future `ALL_REVISIONS` — is chosen once,
+  when the chain's full backup runs, and fixed for every archive added to that
+  chain afterward. **`LATEST_ONLY` is the only mode implemented**: it never
+  calls Drive's `revisions.list`, and the local store holds exactly one current
+  copy per file, replaced when the content changes. There is no admin-facing
+  revision-mode picker yet — `revision_mode` already exists on the `archives`
+  row so `ALL_REVISIONS` can be added later without reshaping the schema or
+  restarting chains, but building it needs separate Google API/design
+  validation (see Known limitations). `head_revision_id` is the change
+  detector either way, deciding whether a file's content needs re-downloading.
+  Starting a **new** full backup on a scope that already has a chain begins a
+  **new chain** — the old one is left in place, untouched, just no longer
+  extended; this is also the only way a scope would ever move to a different
+  revision mode. File history under `LATEST_ONLY` lives entirely in the
+  **archive chain**, not in a stack of copies inside the local store.
 - **Archive output**: each completed backup job delivers archive output **per
   selected drive** — a personal drive and each Shared Drive get their own
   archive and manifest, never a single archive combining several drives. What
@@ -213,8 +232,11 @@ Windows packaging.
   full archive it descends from and every delta in between, so the chain is
   tracked in SQLite (`archives`) as the source of truth and mirrored in each
   archive's own manifest, letting an archive be checked and trusted without the
-  database. The archive format and manifest layout need a design decision; ZIP
-  is the initial candidate.
+  database. Each archive records its `sequence_number` within its chain, and
+  archive filenames include it so related archives are identifiable at a
+  glance — the full naming convention beyond that is still to be worked out.
+  The archive format and manifest layout need a design decision; ZIP is the
+  initial candidate.
 - **Flat-tree rules**: because a full archive is meant to be re-uploaded, it
   follows filesystem rules rather than Drive's:
   - **Live files only.** Trashed-but-undeleted files are recorded in the
@@ -233,16 +255,20 @@ Windows packaging.
   work, while the database locates the chain, confirms no link is missing, and
   records the result. This keeps merges correct even when the scope has been
   re-synced since those archives were written.
-  - **Squash**: merge several consecutive deltas into one delta covering the
-    combined cursor range, still incremental. Events collapse to their net
-    effect — a file renamed A→B then B→C appears once as A→C, and a file
-    created then deleted inside the range drops out entirely.
+  - **Squash**: merge several consecutive deltas into one `MERGED_INCREMENTAL`
+    archive covering the combined cursor range, still incremental. Events
+    collapse to their net effect — a file renamed A→B then B→C appears once as
+    A→C, and a file created then deleted inside the range drops out entirely.
   - **Collapse**: merge a full archive and the deltas that follow it into a
-    single flat, directly-uploadable tree, applying each delta's events in
-    order. This replaces what would otherwise be a separate "convert versioned
-    to non-versioned" step.
+    single flat, directly-uploadable `MERGED_FULL` archive, applying each
+    delta's events in order. This becomes the chain's new base, and replaces
+    what would otherwise be a separate "convert versioned to non-versioned"
+    step.
   - Both refuse to run on a chain with a missing link, and report which archive
     is absent.
+  - Either operation keeps the archives it superseded by default; the admin is
+    offered the option to delete them afterward once the merge result is
+    confirmed good.
 - **Backup mode**: the admin chooses a full backup or an incremental backup.
   A full backup inventories the selected scope regardless of its change cursor
   and archives it in full; an incremental backup uses the saved `changes.list`
@@ -292,8 +318,10 @@ Windows packaging.
 - Should also track **renames, moves, trashing, and deletion** of files over
   time, not just content changes.
 - **Restore**: programmatic restore is explicitly out of scope for this phase;
-  re-uploading a flat full archive is the supported manual path. A later
-  initiative once backup itself is solid.
+  re-uploading a flat full archive is the supported manual path under
+  `LATEST_ONLY`. A later initiative once backup itself is solid — including how
+  a future `ALL_REVISIONS` archive (full or incremental) would get turned back
+  into usable files, which is undesigned for now.
 
 ---
 
@@ -385,6 +413,7 @@ file_events                -- rename / move / trash / delete / content
   old_value
   new_value
   timestamp
+  archive_id                -- FK -> archives; which archive's run recorded this event
 
 sync_state
   scope_key (PK)            -- user email or drive_id
@@ -393,12 +422,15 @@ sync_state
 archives                   -- one row per archive written; the chain's source of truth
   id (PK)
   scope_key                -- user email or drive_id
-  mode                     -- 'full' | 'incremental'
+  sequence_number          -- ordinal within the chain, for naming/display
+  base_archive_id          -- FK -> archives; null for a chain's root full archive
+  mode                     -- 'FULL' | 'INCREMENTAL' | 'MERGED_INCREMENTAL' | 'MERGED_FULL'
+  revision_mode            -- 'LATEST_ONLY' | 'ALL_REVISIONS' (future); fixed for the whole chain
   created_at
   archive_path             -- where the archive was written
-  base_archive_id          -- FK -> archives; null for a full archive
   from_page_token          -- cursor range this delta covers; null for a full archive
   to_page_token
+  cancelled                -- true if the run that produced this archive was interrupted
 ```
 
 Each archive's manifest mirrors its `archives` row so the chain can be checked
@@ -406,10 +438,14 @@ and trusted from the archive alone — the database and the archives can end up
 on different volumes (see Known limitations).
 
 `file_captures` replaces the earlier `file_versions` table. It is a log of what
-was captured and where it went, not a set of retained copies: only the row
-pointed at by `files.current_version_id` has content in the local store, and
-`archive_id` is what lets the database say which archive holds a file's content
-from a given run without opening every archive on the drive.
+was captured and where it went, not a set of retained copies: under
+`LATEST_ONLY`, only the row pointed at by `files.current_version_id` has
+content in the local store; a future `ALL_REVISIONS` chain would retain more
+than one capture per file. `archive_id` on both `file_captures` and
+`file_events` is what lets the database locate which archive holds a file's
+content or a given event without opening every archive on the drive — this is
+a verification aid for the merge operations, not a substitute for reading the
+archives themselves (see **Archive operations**: merges are archive-authoritative).
 
 `owner_scope` and `scope_key` both hold either a user's email or a Shared
 Drive's `drive_id`. Which of the two it is must be carried explicitly alongside
@@ -460,8 +496,9 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
 
 ## Local storage layout
 
-The store is **id-keyed and holds current state only** — one copy per file,
-replaced when the content changes:
+Under `LATEST_ONLY` — the only revision mode built — the store is **id-keyed
+and holds current state only**, one copy per file, replaced when the content
+changes:
 
 ```
 backupRoot/<ownerScope>/<fileId>/<filename>
@@ -470,8 +507,9 @@ backupRoot/<ownerScope>/<fileId>/<filename>
 - `ownerScope` is a user email or a Shared Drive's `drive_id`; which kind it is
   travels alongside the key rather than being inferred from the string.
 - There is no revision segment: the store never holds two copies of a file.
-  The `<revisionId>` level that used to sit here is gone along with revision
-  retention.
+  The `<revisionId>` level that used to sit here is gone under `LATEST_ONLY`.
+  A future `ALL_REVISIONS` chain would need its own layout, still a
+  placeholder (see Known limitations).
 - Renames and moves are database updates, not file moves on disk. Nothing in
   the store's path depends on a file's name or its place in the Drive tree.
 - Retention applies to **archives**, not to this store. The store is
@@ -570,8 +608,19 @@ archive chain.
   database defaults to `~/.gdrive-backup/` while archives are written to the
   chosen external drive, so a lost, swapped, or relocated database leaves the
   archives to be understood from their manifests alone.
-- **Open**: what a cancelled run should write is undecided. A partial delta is
-  worse than a partial full archive — the next delta starts *after* the
-  changes the cancelled one dropped, so the chain silently loses them for
-  good. Decide this with the P1 archive-packaging work, alongside the
-  temp-file/cleanup behavior already deferred there.
+- **Open**: what a cancelled run should write is undecided. The `archives`
+  table has a `cancelled` flag to record that a run was interrupted, but not
+  yet what (if anything) gets written for it — a partial delta is worse than a
+  partial full archive, since the next delta starts *after* the changes the
+  cancelled one dropped, silently losing them for good. Decide this with the
+  P1 archive-packaging work, alongside the temp-file/cleanup behavior already
+  deferred there.
+- Restore for a future `ALL_REVISIONS` archive (full or incremental) is
+  undesigned, deferred along with restore generally.
+- The internal layout for multiple revisions of one file inside an
+  `ALL_REVISIONS` archive — how they're organized and named so a future
+  restore can tell them apart — is a placeholder until that mode and restore
+  are designed.
+- The archive filename convention beyond "includes the chain's
+  `sequence_number`" is deferred and needs a human-understandable naming
+  scheme.
