@@ -25,6 +25,7 @@ import org.mockito.InOrder;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.BackupMode;
 import org.nm.gdrive_backup.domain.model.BackupResult;
+import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredDrive;
@@ -54,7 +55,7 @@ class DriveBackupServiceTest {
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
 				.synchronize(ACCESS, "user@example.com", BackupMode.FULL);
 
-		assertEquals(new BackupResult("user@example.com", 4, true), result);
+		assertEquals(new BackupResult("user@example.com", 4, true, false), result);
 		InOrder order = inOrder(statePort, initialSync);
 		order.verify(statePort).deleteByScopeKey("user@example.com");
 		order.verify(initialSync).synchronize(ACCESS, "user@example.com");
@@ -73,7 +74,7 @@ class DriveBackupServiceTest {
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
 				.synchronize(ACCESS, "user@example.com", BackupMode.INCREMENTAL);
 
-		assertEquals(new BackupResult("user@example.com", 4, true), result);
+		assertEquals(new BackupResult("user@example.com", 4, true, false), result);
 		verify(initialSync).synchronize(ACCESS, "user@example.com");
 	}
 
@@ -90,7 +91,7 @@ class DriveBackupServiceTest {
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
 				.synchronize(ACCESS, "user@example.com", BackupMode.INCREMENTAL);
 
-		assertEquals(new BackupResult("user@example.com", 2, false), result);
+		assertEquals(new BackupResult("user@example.com", 2, false, false), result);
 		verify(changeSync).synchronize(ACCESS, "user@example.com");
 	}
 
@@ -109,7 +110,7 @@ class DriveBackupServiceTest {
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
 				.synchronize(ACCESS, "user@example.com", BackupMode.INCREMENTAL);
 
-		assertEquals(new BackupResult("user@example.com", 5, true), result);
+		assertEquals(new BackupResult("user@example.com", 5, true, false), result);
 		verify(statePort).deleteByScopeKey("user@example.com");
 		verify(initialSync).synchronize(ACCESS, "user@example.com");
 	}
@@ -167,8 +168,8 @@ class DriveBackupServiceTest {
 				.synchronizeSelectedDrives(ACCESS, selection, BackupMode.INCREMENTAL);
 
 		assertEquals(List.of(
-				new BackupResult("user@example.com", 4, true),
-				new BackupResult("drive-1", 2, true)), results);
+				new BackupResult("user@example.com", 4, true, false),
+				new BackupResult("drive-1", 2, true, false)), results);
 		verify(driveMetadataPort).save(argThat(drive ->
 				drive.driveId().equals("drive-1") && drive.name().equals("Finance")));
 		verify(driveMetadataPort, times(1)).save(any());
@@ -189,7 +190,7 @@ class DriveBackupServiceTest {
 				.synchronizeSelectedDrives(ACCESS, List.of(new AvailableDrive("drive-1", "Finance", true)),
 						BackupMode.INCREMENTAL);
 
-		assertEquals(List.of(new BackupResult("drive-1", 2, true)), results);
+		assertEquals(List.of(new BackupResult("drive-1", 2, true, false)), results);
 		verify(initialSync, never()).synchronize(ACCESS, "user@example.com");
 		verify(changeSync, never()).synchronize(ACCESS, "user@example.com");
 	}
@@ -240,7 +241,7 @@ class DriveBackupServiceTest {
 				.synchronizeSelectedDrives(ACCESS, List.of(new AvailableDrive("drive-1", "Finance", true)),
 						BackupMode.INCREMENTAL);
 
-		assertEquals(List.of(new BackupResult("drive-1", 2, true)), results);
+		assertEquals(List.of(new BackupResult("drive-1", 2, true, false)), results);
 	}
 
 	@Test
@@ -268,5 +269,51 @@ class DriveBackupServiceTest {
 		order.verify(progressTracker).driveStarted(selection.get(1));
 		order.verify(progressTracker).driveCompleted();
 		order.verify(progressTracker).jobFinished();
+	}
+
+	@Test
+	void stopsBeforeTheNextDriveWhenImmediateStopIsRequestedDuringTheFirst() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		BackupCancellation cancellation = new BackupCancellation();
+		when(statePort.findByScopeKey(anyString())).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, "user@example.com")).thenAnswer(invocation -> {
+			cancellation.requestStop(BackupStopMode.IMMEDIATE);
+			return new InitialSyncResult("user@example.com", 4, "token");
+		});
+		List<AvailableDrive> selection = List.of(
+				new AvailableDrive("root", "My Drive", false),
+				new AvailableDrive("drive-1", "Finance", true));
+
+		List<BackupResult> results = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(),
+				null, BackupProgressTracker.NO_OP, cancellation)
+				.synchronizeSelectedDrives(ACCESS, selection, BackupMode.INCREMENTAL);
+
+		assertEquals(List.of(new BackupResult("user@example.com", 4, true, true)), results);
+		verify(initialSync, never()).synchronize(ACCESS, "drive-1");
+	}
+
+	@Test
+	void stopsBeforeTheNextDriveWhenAfterCurrentDriveStopIsRequestedButLeavesTheCurrentDriveUncancelled() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		BackupCancellation cancellation = new BackupCancellation();
+		when(statePort.findByScopeKey(anyString())).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, "user@example.com")).thenAnswer(invocation -> {
+			cancellation.requestStop(BackupStopMode.AFTER_CURRENT_DRIVE);
+			return new InitialSyncResult("user@example.com", 4, "token");
+		});
+		List<AvailableDrive> selection = List.of(
+				new AvailableDrive("root", "My Drive", false),
+				new AvailableDrive("drive-1", "Finance", true));
+
+		List<BackupResult> results = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(),
+				null, BackupProgressTracker.NO_OP, cancellation)
+				.synchronizeSelectedDrives(ACCESS, selection, BackupMode.INCREMENTAL);
+
+		assertEquals(List.of(new BackupResult("user@example.com", 4, true, false)), results);
+		verify(initialSync, never()).synchronize(ACCESS, "drive-1");
 	}
 }

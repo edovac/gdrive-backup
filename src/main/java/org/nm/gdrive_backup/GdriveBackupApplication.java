@@ -11,6 +11,7 @@ import org.nm.gdrive_backup.domain.port.in.WorkspaceUsageReportUseCase;
 import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
+import org.nm.gdrive_backup.domain.port.in.BackupCancellationUseCase;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 
@@ -27,6 +28,8 @@ public class GdriveBackupApplication {
 		JavaFxApplication.setBackupLocationUseCase(springContext
 				.getBeanProvider(org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase.class).getIfAvailable());
 		JavaFxApplication.setBackupProgress(springContext.getBeanProvider(BackupProgressPort.class).getIfAvailable());
+		JavaFxApplication.setBackupCancellation(
+				springContext.getBeanProvider(BackupCancellationUseCase.class).getIfAvailable());
 		JavaFxApplication.setDriveServices(
 				springContext.getBeanProvider(ServiceAccountAuthenticationUseCase.class).getIfAvailable(),
 				driveReadPort(springContext),

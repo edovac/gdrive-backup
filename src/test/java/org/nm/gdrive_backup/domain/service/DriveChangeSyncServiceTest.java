@@ -1,8 +1,11 @@
 package org.nm.gdrive_backup.domain.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +18,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.FileVersion;
@@ -145,5 +149,54 @@ class DriveChangeSyncServiceTest {
 		order.verify(progressTracker).itemProcessed("file-1");
 		order.verify(progressTracker).itemProcessed("Report");
 		verify(progressTracker, org.mockito.Mockito.never()).enumerated(org.mockito.ArgumentMatchers.anyInt());
+	}
+
+	@Test
+	void checkpointsSyncStateAfterEachPageNotJustTheLast() {
+		DriveChangePort changePort = mock(DriveChangePort.class);
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
+		FileEventPort eventPort = mock(FileEventPort.class);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
+				new SyncState("user@example.com", "old-token")));
+		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, null)), "next-token", null));
+		when(changePort.listChanges(ACCESS, "user@example.com", "next-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-2", true, null)), null, "new-token"));
+
+		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort)
+				.synchronize(ACCESS, "user@example.com");
+
+		// Checkpointed after page one (the intermediate token), not just at the end: on a
+		// crash or a cancelled-and-resumed run, this is what stops a retry from replaying
+		// page one and re-inserting duplicate file_events.
+		verify(statePort).save(new SyncState("user@example.com", "next-token"));
+		verify(statePort).save(new SyncState("user@example.com", "new-token"));
+	}
+
+	@Test
+	void stopsBeforeTheNextPageWhenImmediateStopIsRequestedAndKeepsTheLastCheckpoint() {
+		DriveChangePort changePort = mock(DriveChangePort.class);
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
+		FileEventPort eventPort = mock(FileEventPort.class);
+		BackupCancellation cancellation = new BackupCancellation();
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
+				new SyncState("user@example.com", "old-token")));
+		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null)), "next-token", null));
+		when(changePort.listChanges(ACCESS, "user@example.com", "next-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-2", true, null)), null, "new-token"));
+		doAnswer(invocation -> {
+			cancellation.requestStop(BackupStopMode.IMMEDIATE);
+			return null;
+		}).when(eventPort).save(argThat(event -> "file-1".equals(event.fileId())));
+
+		SyncResult result = new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, null,
+				BackupProgressTracker.NO_OP, cancellation).synchronize(ACCESS, "user@example.com");
+
+		assertEquals(new SyncResult("user@example.com", 1, "next-token"), result);
+		verify(changePort, never()).listChanges(ACCESS, "user@example.com", "next-token");
+		verify(statePort).save(new SyncState("user@example.com", "next-token"));
 	}
 }

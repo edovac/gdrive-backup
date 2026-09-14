@@ -2,6 +2,8 @@ package org.nm.gdrive_backup.domain.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -16,6 +18,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.FileVersion;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
@@ -143,5 +146,33 @@ class InitialDriveSyncServiceTest {
 		order.verify(progressTracker).enumerated(2);
 		order.verify(progressTracker).itemProcessed("A");
 		order.verify(progressTracker).itemProcessed("B");
+	}
+
+	@Test
+	void stopsProcessingRemainingFilesWhenImmediateStopIsRequestedAndNeverEstablishesABaseline() {
+		DriveFileListingPort listingPort = mock(DriveFileListingPort.class);
+		DriveChangePort changePort = mock(DriveChangePort.class);
+		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		BackupCancellation cancellation = new BackupCancellation();
+		StoredFile first = new StoredFile("file-1", "user@example.com", "A", "root", null,
+				"text/plain", false, "revision-1", null);
+		StoredFile second = new StoredFile("file-2", "user@example.com", "B", "root", null,
+				"text/plain", false, "revision-2", null);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
+		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(first, second));
+		doAnswer(invocation -> {
+			cancellation.requestStop(BackupStopMode.IMMEDIATE);
+			return null;
+		}).when(metadataPort).save(first);
+
+		InitialSyncResult result = new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort,
+				null, BackupProgressTracker.NO_OP, cancellation).synchronize(ACCESS, "user@example.com");
+
+		assertEquals(new InitialSyncResult("user@example.com", 1, null), result);
+		verify(metadataPort).save(first);
+		verify(metadataPort, never()).save(second);
+		verify(statePort, never()).save(any());
+		verify(changePort, never()).getStartPageToken(any(), any());
 	}
 }

@@ -24,28 +24,37 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final FileEventPort fileEventPort;
 	private final FileContentBackupService contentBackupService;
 	private final BackupProgressTracker progressTracker;
+	private final BackupCancellation cancellation;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort) {
 		this(changePort, syncStatePort, fileMetadataPort, fileEventPort, (FileContentBackupService) null,
-				BackupProgressTracker.NO_OP);
+				BackupProgressTracker.NO_OP, new BackupCancellation());
 	}
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileContentBackupService contentBackupService) {
 		this(changePort, syncStatePort, fileMetadataPort, fileEventPort, contentBackupService,
-				BackupProgressTracker.NO_OP);
+				BackupProgressTracker.NO_OP, new BackupCancellation());
 	}
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileContentBackupService contentBackupService,
 			BackupProgressTracker progressTracker) {
+		this(changePort, syncStatePort, fileMetadataPort, fileEventPort, contentBackupService, progressTracker,
+				new BackupCancellation());
+	}
+
+	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
+			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort, FileContentBackupService contentBackupService,
+			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
 		this.fileEventPort = fileEventPort;
 		this.contentBackupService = contentBackupService;
 		this.progressTracker = progressTracker;
+		this.cancellation = cancellation;
 	}
 
 	@Override
@@ -56,6 +65,9 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		int changeCount = 0;
 		String newStartPageToken = null;
 		while (newStartPageToken == null) {
+			if (cancellation.isImmediateStopRequested()) {
+				break;
+			}
 			DriveChangePage page = changePort.listChanges(access, scopeKey, pageToken);
 			changeCount += page.changes().size();
 			page.changes().forEach(change -> {
@@ -63,15 +75,16 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 				progressTracker.itemProcessed(itemLabel(change));
 			});
 			newStartPageToken = page.newStartPageToken();
-			if (newStartPageToken == null) {
-				if (page.nextPageToken() == null || page.nextPageToken().isBlank()) {
-					throw new IllegalStateException("Drive change page has neither next nor new start token");
-				}
-				pageToken = page.nextPageToken();
+			if (newStartPageToken == null && (page.nextPageToken() == null || page.nextPageToken().isBlank())) {
+				throw new IllegalStateException("Drive change page has neither next nor new start token");
 			}
+			// Checkpoint after every page, not just the last one: on a crash or a
+			// cancelled-and-resumed run, this is what stops the next run from replaying
+			// already-applied pages and re-inserting duplicate file_events.
+			pageToken = newStartPageToken != null ? newStartPageToken : page.nextPageToken();
+			syncStatePort.save(new SyncState(scopeKey, pageToken));
 		}
-		syncStatePort.save(new SyncState(scopeKey, newStartPageToken));
-		return new SyncResult(scopeKey, changeCount, newStartPageToken);
+		return new SyncResult(scopeKey, changeCount, pageToken);
 	}
 
 	private static String itemLabel(DriveChange change) {

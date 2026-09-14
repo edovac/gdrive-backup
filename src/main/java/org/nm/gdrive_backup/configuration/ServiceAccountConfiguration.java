@@ -33,6 +33,7 @@ import org.nm.gdrive_backup.domain.service.InitialDriveSyncService;
 import org.nm.gdrive_backup.domain.service.DriveBackupService;
 import org.nm.gdrive_backup.domain.service.BackupActivity;
 import org.nm.gdrive_backup.domain.service.BackupProgressTracker;
+import org.nm.gdrive_backup.domain.service.BackupCancellation;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
@@ -59,6 +60,11 @@ public class ServiceAccountConfiguration {
 	@Bean
 	BackupProgressTracker backupProgressTracker(BackupProgressPort backupProgressPort) {
 		return new BackupProgressTracker(backupProgressPort, Clock.systemUTC());
+	}
+
+	@Bean
+	BackupCancellation backupCancellation() {
+		return new BackupCancellation();
 	}
 
 	@Bean
@@ -126,7 +132,8 @@ public class ServiceAccountConfiguration {
 	DriveChangeSyncUseCase driveChangeSyncUseCase(
 			@Qualifier("driveChangePort") ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort,
-			ObjectProvider<FileContentBackupService> contentBackupProvider, BackupProgressTracker progressTracker) {
+			ObjectProvider<FileContentBackupService> contentBackupProvider, BackupProgressTracker progressTracker,
+			BackupCancellation cancellation) {
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
 		if (changePort == null) {
 			return (access, scopeKey) -> {
@@ -136,7 +143,7 @@ public class ServiceAccountConfiguration {
 			};
 		}
 		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, fileEventPort,
-				contentBackupProvider.getIfAvailable(), progressTracker);
+				contentBackupProvider.getIfAvailable(), progressTracker, cancellation);
 	}
 
 	@Bean
@@ -145,7 +152,7 @@ public class ServiceAccountConfiguration {
 			@Qualifier("driveChangePort") ObjectProvider<DriveChangePort> changePortProvider,
 			FileMetadataPort fileMetadataPort,
 			SyncStatePort syncStatePort, ObjectProvider<FileContentBackupService> contentBackupProvider,
-			BackupProgressTracker progressTracker) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
 		DriveFileListingPort fileListingPort = fileListingPortProvider.getIfAvailable();
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
 		if (fileListingPort == null || changePort == null) {
@@ -156,15 +163,16 @@ public class ServiceAccountConfiguration {
 			};
 		}
 		return new InitialDriveSyncService(fileListingPort, changePort, fileMetadataPort, syncStatePort,
-				contentBackupProvider.getIfAvailable(), progressTracker);
+				contentBackupProvider.getIfAvailable(), progressTracker, cancellation);
 	}
 
 	@Bean
 	DriveBackupUseCase driveBackupUseCase(SyncStatePort syncStatePort,
 			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase,
-			BackupActivity backupActivity, DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker) {
+			BackupActivity backupActivity, DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
+			BackupCancellation cancellation) {
 		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase,
-				backupActivity, driveMetadataPort, progressTracker);
+				backupActivity, driveMetadataPort, progressTracker, cancellation);
 	}
 
 	@Bean

@@ -25,33 +25,47 @@ public class DriveBackupService implements DriveBackupUseCase {
 	private final BackupActivity backupActivity;
 	private final DriveMetadataPort driveMetadataPort;
 	private final BackupProgressTracker progressTracker;
+	private final BackupCancellation cancellation;
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity) {
-		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, null, BackupProgressTracker.NO_OP);
+		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, null, BackupProgressTracker.NO_OP,
+				new BackupCancellation());
 	}
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
 			DriveMetadataPort driveMetadataPort) {
 		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, driveMetadataPort,
-				BackupProgressTracker.NO_OP);
+				BackupProgressTracker.NO_OP, new BackupCancellation());
 	}
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
 			DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker) {
+		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, driveMetadataPort, progressTracker,
+				new BackupCancellation());
+	}
+
+	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
+			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
+			DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
+			BackupCancellation cancellation) {
 		this.syncStatePort = syncStatePort;
 		this.initialSyncUseCase = initialSyncUseCase;
 		this.changeSyncUseCase = changeSyncUseCase;
 		this.backupActivity = backupActivity;
 		this.driveMetadataPort = driveMetadataPort;
 		this.progressTracker = progressTracker;
+		this.cancellation = cancellation;
 	}
 
 	@Override
 	public BackupResult synchronize(ServiceAccountAccess access, String scopeKey, BackupMode mode) {
-		return backupActivity.duringBackup(() -> synchronizeScope(access, scopeKey, mode));
+		return backupActivity.duringBackup(() -> {
+			cancellation.begin();
+			return synchronizeScope(access, scopeKey, mode);
+		});
 	}
 
 	@Override
@@ -62,8 +76,12 @@ public class DriveBackupService implements DriveBackupUseCase {
 		}
 		return backupActivity.duringBackup(() -> {
 			progressTracker.jobStarted(selectedDrives);
+			cancellation.begin();
 			List<BackupResult> results = new ArrayList<>();
 			for (AvailableDrive drive : selectedDrives) {
+				if (cancellation.isStopRequested()) {
+					break;
+				}
 				String scopeKey = drive.shared() ? drive.id() : access.impersonatedUserEmail();
 				progressTracker.driveStarted(drive);
 				results.add(synchronizeScope(access, scopeKey, mode));
@@ -86,7 +104,7 @@ public class DriveBackupService implements DriveBackupUseCase {
 		}
 		try {
 			var result = changeSyncUseCase.synchronize(access, scopeKey);
-			return new BackupResult(result.scopeKey(), result.changeCount(), false);
+			return new BackupResult(result.scopeKey(), result.changeCount(), false, cancellation.isImmediateStopRequested());
 		} catch (StaleDrivePageTokenException exception) {
 			return runFullInventory(access, scopeKey);
 		}
@@ -95,6 +113,6 @@ public class DriveBackupService implements DriveBackupUseCase {
 	private BackupResult runFullInventory(ServiceAccountAccess access, String scopeKey) {
 		syncStatePort.deleteByScopeKey(scopeKey);
 		var result = initialSyncUseCase.synchronize(access, scopeKey);
-		return new BackupResult(result.scopeKey(), result.fileCount(), true);
+		return new BackupResult(result.scopeKey(), result.fileCount(), true, cancellation.isImmediateStopRequested());
 	}
 }

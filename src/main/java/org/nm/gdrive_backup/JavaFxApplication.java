@@ -36,11 +36,13 @@ import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
+import org.nm.gdrive_backup.domain.port.in.BackupCancellationUseCase;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.BackupPhase;
 import org.nm.gdrive_backup.domain.model.BackupProgress;
+import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
@@ -79,6 +81,7 @@ public class JavaFxApplication extends Application {
 	private static String previewUserEmail;
 	private static BackupLocationUseCase backupLocationUseCase;
 	private static BackupProgressPort backupProgressPort;
+	private static BackupCancellationUseCase backupCancellationUseCase;
 
 	private LocationsPanel locationsPanel;
 	private ProgressPanel progressPanel;
@@ -97,6 +100,10 @@ public class JavaFxApplication extends Application {
 
 	static void setBackupProgress(BackupProgressPort progressPort) {
 		backupProgressPort = progressPort;
+	}
+
+	static void setBackupCancellation(BackupCancellationUseCase cancellationUseCase) {
+		backupCancellationUseCase = cancellationUseCase;
 	}
 
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
@@ -455,19 +462,24 @@ public class JavaFxApplication extends Application {
 				status.setText("Synchronization failed: " + messageFor(error));
 				return;
 			}
-			status.setText(syncMessage(results, selectedDrives));
+			boolean cancelled = results.size() < selectedDrives.size()
+					|| results.stream().anyMatch(BackupResult::cancelled);
+			status.setText(syncMessage(results, selectedDrives, cancelled));
 		}));
 	}
 
-	private static String syncMessage(List<BackupResult> results, List<AvailableDrive> knownDrives) {
+	private static String syncMessage(List<BackupResult> results, List<AvailableDrive> knownDrives,
+			boolean cancelled) {
+		String prefix = cancelled ? "Synchronization cancelled. " : "Synchronization complete. ";
 		return results.stream()
 				.map(result -> scopeLabel(result.scopeKey(), knownDrives) + ": " + itemSummary(result))
-				.collect(java.util.stream.Collectors.joining("; ", "Synchronization complete. ", ""));
+				.collect(java.util.stream.Collectors.joining("; ", prefix, ""));
 	}
 
 	private static String itemSummary(BackupResult result) {
 		String activity = result.initialSync() ? "files inventoried" : "changes processed";
-		return result.processedItemCount() + " " + activity;
+		String suffix = result.cancelled() ? " (cancelled)" : "";
+		return result.processedItemCount() + " " + activity + suffix;
 	}
 
 	private static String scopeLabel(String scopeKey, List<AvailableDrive> knownDrives) {
@@ -798,6 +810,7 @@ public class JavaFxApplication extends Application {
 		private final Label operationLabel = new Label();
 		private final Label driveJobLabel = new Label();
 		private final Label timeLabel = new Label();
+		private final Button cancelButton = new Button("Cancel");
 		private final VBox root;
 		private Timeline timeline;
 
@@ -807,7 +820,9 @@ public class JavaFxApplication extends Application {
 			operationLabel.setWrapText(true);
 			driveJobLabel.getStyleClass().add("scope");
 			timeLabel.getStyleClass().add("scope");
-			root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel);
+			cancelButton.getStyleClass().add("secondary-button");
+			cancelButton.setOnAction(event -> handleCancelClick());
+			root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel, cancelButton);
 			root.setAlignment(Pos.CENTER);
 			hide();
 		}
@@ -823,6 +838,7 @@ public class JavaFxApplication extends Application {
 			operationLabel.setText("Starting synchronization...");
 			driveJobLabel.setText("");
 			timeLabel.setText("");
+			cancelButton.setDisable(backupCancellationUseCase == null);
 			timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(250), event -> refresh()));
 			timeline.setCycleCount(Animation.INDEFINITE);
 			timeline.play();
@@ -834,6 +850,39 @@ public class JavaFxApplication extends Application {
 				timeline = null;
 			}
 			hide();
+		}
+
+		private void handleCancelClick() {
+			if (backupCancellationUseCase == null) {
+				return;
+			}
+			int totalDrives = backupProgressPort == null ? 1
+					: backupProgressPort.latest().map(BackupProgress::totalDrives).orElse(1);
+			if (totalDrives <= 1) {
+				requestStop(BackupStopMode.IMMEDIATE);
+				return;
+			}
+			Alert prompt = new Alert(Alert.AlertType.CONFIRMATION);
+			prompt.setTitle("Cancel synchronization");
+			prompt.setHeaderText("Stop the running backup?");
+			prompt.setContentText("This job covers multiple drives. You can stop right away, "
+					+ "or let the drive currently syncing finish first.");
+			ButtonType stopNow = new ButtonType("Stop now");
+			ButtonType finishCurrent = new ButtonType("Finish current drive, then stop");
+			ButtonType keepGoing = new ButtonType("Keep going", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
+			prompt.getButtonTypes().setAll(stopNow, finishCurrent, keepGoing);
+			prompt.getDialogPane().setMinWidth(520);
+			ButtonType choice = prompt.showAndWait().orElse(keepGoing);
+			if (choice == stopNow) {
+				requestStop(BackupStopMode.IMMEDIATE);
+			} else if (choice == finishCurrent) {
+				requestStop(BackupStopMode.AFTER_CURRENT_DRIVE);
+			}
+		}
+
+		private void requestStop(BackupStopMode mode) {
+			backupCancellationUseCase.requestStop(mode);
+			cancelButton.setDisable(true);
 		}
 
 		private void hide() {

@@ -19,28 +19,39 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	private final SyncStatePort syncStatePort;
 	private final FileContentBackupService contentBackupService;
 	private final BackupProgressTracker progressTracker;
+	private final BackupCancellation cancellation;
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort) {
-		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, null, BackupProgressTracker.NO_OP);
+		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, null, BackupProgressTracker.NO_OP,
+				new BackupCancellation());
 	}
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort,
 			FileContentBackupService contentBackupService) {
 		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, contentBackupService,
-				BackupProgressTracker.NO_OP);
+				BackupProgressTracker.NO_OP, new BackupCancellation());
 	}
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort,
 			FileContentBackupService contentBackupService, BackupProgressTracker progressTracker) {
+		this(fileListingPort, changePort, fileMetadataPort, syncStatePort, contentBackupService, progressTracker,
+				new BackupCancellation());
+	}
+
+	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
+			FileMetadataPort fileMetadataPort, SyncStatePort syncStatePort,
+			FileContentBackupService contentBackupService, BackupProgressTracker progressTracker,
+			BackupCancellation cancellation) {
 		this.fileListingPort = fileListingPort;
 		this.changePort = changePort;
 		this.fileMetadataPort = fileMetadataPort;
 		this.syncStatePort = syncStatePort;
 		this.contentBackupService = contentBackupService;
 		this.progressTracker = progressTracker;
+		this.cancellation = cancellation;
 	}
 
 	@Override
@@ -51,7 +62,11 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		progressTracker.enumerating();
 		var files = fileListingPort.listAllFiles(access, scopeKey);
 		progressTracker.enumerated(files.size());
-		files.forEach(file -> {
+		int processedCount = 0;
+		for (org.nm.gdrive_backup.domain.model.StoredFile file : files) {
+			if (cancellation.isImmediateStopRequested()) {
+				break;
+			}
 			Optional<org.nm.gdrive_backup.domain.model.StoredFile> previous = fileMetadataPort.findByFileId(file.fileId());
 			org.nm.gdrive_backup.domain.model.StoredFile metadata = previous
 					.filter(existing -> java.util.Objects.equals(existing.headRevisionId(), file.headRevisionId()))
@@ -63,7 +78,13 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 				fileMetadataPort.save(withCurrentVersion(file, version.id()));
 			}
 			progressTracker.itemProcessed(file.name());
-		});
+			processedCount++;
+		}
+		if (processedCount < files.size()) {
+			// A stopped-early run must never establish a baseline: doing so would make a
+			// later incremental sync silently skip every file this run never reached.
+			return new InitialSyncResult(scopeKey, processedCount, null);
+		}
 		String pageToken = changePort.getStartPageToken(access, scopeKey);
 		syncStatePort.save(new SyncState(scopeKey, pageToken));
 		return new InitialSyncResult(scopeKey, files.size(), pageToken);

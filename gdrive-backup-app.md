@@ -46,7 +46,7 @@ Last reviewed: 2026-09-13
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
 - [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names.
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. If any one scope fails the whole run stops. The ability to cancel a running job, an org-wide sweep across every Workspace user, and partial-failure handling with a completion summary remain.
+- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item below). If any one scope fails the whole run stops. An org-wide sweep across every Workspace user and partial-failure handling with a completion summary remain.
 - [x] Per-drive backup scope selection: let the admin choose which drive(s) — the
   personal drive and/or one or more specific Shared Drives — to include in a
   backup job. The drive list gets a checkbox per row (`CheckBoxListCell`); the
@@ -66,11 +66,23 @@ Last reviewed: 2026-09-13
   Locations are chosen only in the UI and last for the current session; every
   launch starts from `~/.gdrive-backup/backupRoot` and
   `~/.gdrive-backup/backup.db`. Changes are refused while a backup runs.
-- [ ] Interruptible backups and recovery policy: define cancellation points,
-  database transaction/checkpoint behavior, temporary archive naming and
-  cleanup/resume behavior, and how an interrupted backup is shown to the user.
-  For a multi-drive job, cancelling must ask the admin to choose stop
-  immediately vs. stop after the current drive finishes.
+- [x] Interruptible backups and recovery policy: the admin can cancel a
+  running backup from the progress panel. For a single-drive job, Cancel
+  stops immediately; for a multi-drive job, it asks the admin to choose
+  stop immediately vs. finish the current drive then stop, via a
+  `BackupCancellationUseCase` checked cooperatively between files/pages/
+  drives (never mid-download, so an in-flight file always finishes). An
+  interrupted result is never shown as complete — `BackupResult.cancelled`
+  and a "Synchronization cancelled." status replace the completed message.
+  Recovery is defined for what exists today (SQLite + the local versioned
+  file store; archive packaging doesn't exist yet, so its temp-file/cleanup
+  behavior is deferred to that P1 item): a stopped-early full inventory
+  never establishes a `sync_state` baseline, so a later run — cancelled and
+  retried or not — safely re-lists everything and only re-downloads what
+  wasn't already recorded; incremental sync now checkpoints `sync_state`
+  after every page of changes, not just the last one, which is also what
+  fixes a latent crash-recovery bug where a mid-run crash would replay
+  already-applied pages and duplicate `file_events` on retry.
 - [x] Progress bar with elapsed and estimated-remaining time: shows current
   operation, elapsed time, and a guessed remaining time for the drive
   currently being synced, resetting as the job moves to the next one. For a
@@ -80,8 +92,7 @@ Last reviewed: 2026-09-13
   A `BackupProgressTracker` domain service folds sync events into snapshots
   (indeterminate with a running count for incremental syncs, whose change
   total isn't known until the run ends); the JavaFX layer polls the latest
-  snapshot on a timer. Cancellation is not part of this slice — see the
-  interruptible-backups item below.
+  snapshot on a timer.
 - [ ] History view for file events and versions.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -99,7 +110,9 @@ requirements below as the source of truth for expected behavior.
 - [x] Full versus incremental backup selection.
 - [x] Per-drive backup scope selection (personal drive and/or specific Shared
   Drives), replacing automatic inclusion of every visible Shared Drive.
-- [ ] Interruptible backups with defined database and archive recovery behavior.
+- [x] Interruptible backups with defined database and archive recovery behavior
+  (archive recovery deferred to the P1 archive-packaging item, since no
+  archive writer exists yet).
 - [x] Progress bar with concise current-operation status, elapsed time, and
   estimated remaining time.
 
