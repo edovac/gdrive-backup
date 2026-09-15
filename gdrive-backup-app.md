@@ -49,12 +49,17 @@ Last reviewed: 2026-09-15
   Shared Drives synced this way are still deduplicated by `drive_id` via the
   `drives` table. This replaces the previous behavior of automatically
   including every Shared Drive the selected user could see.
-- [x] Runtime location selection: let the admin choose and validate the backup
-  destination and SQLite database location, applying the choices through
-  configuration-backed ports rather than direct UI environment access.
-  Locations are chosen only in the UI and last for the current session; every
-  launch starts from `~/.gdrive-backup/backupRoot` and
-  `~/.gdrive-backup/backup.db`. Changes are refused while a backup runs.
+- [x] Runtime location selection (superseded — see **Not started**): let the
+  admin choose and validate the backup destination and SQLite database
+  location *independently*, applying the choices through configuration-backed
+  ports rather than direct UI environment access. Locations are chosen only in
+  the UI and last for the current session; every launch starts from
+  `~/.gdrive-backup/backupRoot` and `~/.gdrive-backup/backup.db`. Changes are
+  refused while a backup runs. This conflicts with the now-decided **Backup
+  root location** requirement (single root for the database and the
+  archives): the two-picker implementation still works but needs to be
+  collapsed into one root picker before archive packaging ships, so the
+  database can never point somewhere other than the archives it describes.
 - [x] Interruptible backups and recovery policy: the admin can cancel a
   running backup from the progress panel. For a single-drive job, Cancel
   stops immediately; for a multi-drive job, it asks the admin to choose
@@ -117,6 +122,14 @@ Last reviewed: 2026-09-15
 
 ### Not started
 
+- [ ] Collapse the backup-destination and database-location pickers into one
+  `backupRoot` picker (see **Backup root location**): remove the independent
+  database-location UI/port, derive `backup.db`'s path from the chosen root
+  instead of letting it be set separately, and switch `file_captures.local_path`
+  (and the upcoming `archives.archive_path`) from absolute paths to paths
+  stored relative to `backupRoot`, resolved against `backupRoot` at read time.
+  No migration tool exists, so this also means any existing local `backup.db`
+  has to be recreated.
 - [ ] Archive operations: squash consecutive deltas into a merged delta,
   collapse a chain into a flat uploadable tree, warn on chain gaps, and start a
   new chain when a full backup runs on a scope that already has one.
@@ -194,12 +207,21 @@ Windows packaging.
 - **Storage**: local disk only — specifically **external hard drives** connected
   to the admin's machine, not NAS or cloud, driven by the non-profit
   organization's budget (no NAS/cloud target for v1).
-- **Backup location**: the admin can choose the local destination directory at
-  runtime. The selected location is used for backup staging/archive output and
-  is displayed before a backup starts.
-- **Database location**: the admin can choose the SQLite database file location
-  at runtime. The application must validate that the location is writable and
-  make clear when a location change selects a different backup history.
+- **Backup root location**: the admin chooses **one** local destination folder
+  at runtime — `backupRoot` — that is the root for everything the app writes:
+  the SQLite database (`backupRoot/backup.db`), the archive output
+  (`backupRoot/archives/...`), and the internal capture store
+  (`backupRoot/<ownerScope>/...`). There is no separate database-location
+  picker; the database always lives inside the chosen root, so the chain
+  metadata and the archives it describes can never be pointed at different
+  places by the UI. The application validates that the root is writable and
+  makes clear when switching roots selects a different backup history.
+  Keeping the root intact as a single unit — e.g. when copying or moving it to
+  a different folder or drive — **is the administrator's responsibility**: the
+  app does not detect or warn if the database and the archives it references
+  are later pulled apart (for example, by moving only part of the tree), and
+  paths recorded in the database are stored **relative to `backupRoot`**
+  precisely so that moving the whole root elsewhere needs no database changes.
 - **Revision mode is fixed per chain, and only one mode is built.** Every scope
   (a personal drive or a Shared Drive) has its own **backup chain**: an ordered
   sequence of archives rooted in one full backup, followed by zero or more
@@ -418,8 +440,9 @@ file_captures              -- append-only log of content captures, one per downl
   file_id (FK)
   revision_id              -- the head revision this copy was taken from
   timestamp
-  local_path               -- meaningful only for the current copy; superseded rows
-                           -- describe content that now lives only in an archive
+  local_path               -- relative to backupRoot; meaningful only for the current
+                           -- copy — superseded rows describe content that now lives
+                           -- only in an archive
   size_bytes
   archive_id               -- FK -> archives; which archive carried this capture
 
@@ -444,15 +467,19 @@ archives                   -- one row per archive written; the chain's source of
   mode                     -- 'FULL' | 'INCREMENTAL' | 'MERGED_INCREMENTAL' | 'MERGED_FULL'
   revision_mode            -- 'LATEST_ONLY' | 'ALL_REVISIONS' (future); fixed for the whole chain
   created_at
-  archive_path             -- where the archive was written
+  archive_path             -- relative to backupRoot; where the archive was written
   from_page_token          -- cursor range this delta covers; null for a full archive
   to_page_token
   cancelled                -- true if the run that produced this archive was interrupted
 ```
 
 Each archive's manifest mirrors its `archives` row so the chain can be checked
-and trusted from the archive alone — the database and the archives can end up
-on different volumes (see Known limitations).
+and trusted from the archive alone. The database now lives inside the same
+`backupRoot` as the archives (see **Backup root location**), and every stored
+path is relative to that root rather than absolute, so relocating the whole
+root to a new folder or drive needs no database changes; keeping the root
+intact as a unit when doing so is the administrator's responsibility (see
+Known limitations).
 
 `file_captures` replaces the earlier `file_versions` table. It is a log of what
 was captured and where it went, not a set of retained copies: under
@@ -547,9 +574,13 @@ archive chain.
 
 Archives live in their own subtree, separate from the id-keyed store above,
 so the human-facing deliverable the admin browses and uploads never mixes
-with the disposable internal staging area:
+with the disposable internal staging area. `backupRoot` is also where
+`backup.db` lives (see **Backup root location**), so the whole tree — the
+database, the archives, and the internal store — is one folder the admin can
+move as a single unit:
 
 ```
+backupRoot/backup.db
 backupRoot/archives/<scopeFolder>/archive-<sequenceNumber>-<mode>.zip
 ```
 
@@ -659,10 +690,14 @@ backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
   loses: files that shared a name in a folder (renamed with a ` (2)` suffix),
   any file that had multiple parents, and Google-native fidelity — an exported
   Doc returns as a `.docx`, not a Doc, unless converted on upload.
-- The chain-tracking database and the archives can be separated. The SQLite
-  database defaults to `~/.gdrive-backup/` while archives are written to the
-  chosen external drive, so a lost, swapped, or relocated database leaves the
-  archives to be understood from their manifests alone.
+- **Decided**: the database and the archives no longer have independent
+  locations — `backup.db` lives inside the same `backupRoot` as the archives
+  it describes (see **Backup root location**), so they move together whenever
+  the admin relocates that one folder. This is a structural guarantee, not an
+  enforced one: nothing stops an admin from manually copying `backup.db` out
+  on its own or deleting part of the tree, and the app does not detect that
+  after the fact — each archive's embedded manifest remains the fallback for
+  understanding it without the database, same as before.
 - **Decided**: a cancelled run (full or incremental) writes no archive and no
   `archives` row — the run leaves the chain exactly as it was before it
   started. For an incremental run this matters most: a partial delta would be
