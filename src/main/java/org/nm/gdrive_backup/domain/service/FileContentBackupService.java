@@ -2,8 +2,6 @@ package org.nm.gdrive_backup.domain.service;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -11,6 +9,7 @@ import java.util.Optional;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
+import org.nm.gdrive_backup.domain.model.StoredCapture;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.FileCapturePort;
@@ -67,9 +66,9 @@ public class FileContentBackupService {
 		try (InputStream content = exportFormat == null
 				? contentPort.download(access, file.fileId())
 				: contentPort.export(access, file.fileId(), exportFormat.mimeType())) {
-			Path localPath = storagePort.store(file.ownerScope(), file.fileId(), fileName, content);
+			StoredCapture stored = storagePort.store(file.ownerScope(), file.fileId(), fileName, content);
 			FileCapture capture = new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(),
-					localPath.toString(), Files.size(localPath), null);
+					stored.relativePath().toString(), stored.sizeBytes(), null);
 			return capturePort.save(capture);
 		} catch (DriveExportLimitException exception) {
 			if (fallback) {

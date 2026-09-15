@@ -49,17 +49,21 @@ Last reviewed: 2026-09-15
   Shared Drives synced this way are still deduplicated by `drive_id` via the
   `drives` table. This replaces the previous behavior of automatically
   including every Shared Drive the selected user could see.
-- [x] Runtime location selection (superseded — see **Not started**): let the
-  admin choose and validate the backup destination and SQLite database
-  location *independently*, applying the choices through configuration-backed
-  ports rather than direct UI environment access. Locations are chosen only in
-  the UI and last for the current session; every launch starts from
-  `~/.gdrive-backup/backupRoot` and `~/.gdrive-backup/backup.db`. Changes are
-  refused while a backup runs. This conflicts with the now-decided **Backup
-  root location** requirement (single root for the database and the
-  archives): the two-picker implementation still works but needs to be
-  collapsed into one root picker before archive packaging ships, so the
-  database can never point somewhere other than the archives it describes.
+- [x] Runtime location selection: let the admin choose and validate **one**
+  backup root folder at runtime, applying the choice through
+  configuration-backed ports rather than direct UI environment access. The
+  backup history database (`backup.db`) always lives inside that root
+  alongside the archive output and the internal capture store — there is no
+  separate database-location picker, so the database can never point
+  somewhere other than the archives it describes (see **Backup root
+  location**). The location is chosen only in the UI and lasts for the
+  current session; every launch starts from `~/.gdrive-backup`. Changes are
+  refused while a backup runs. `file_captures.local_path` is stored relative
+  to the root (`CaptureStoragePort.store` returns a `StoredCapture` with a
+  relative path and size, computed by the adapter so the domain layer never
+  handles path resolution), so relocating the whole root needs no database
+  changes. This supersedes the earlier two-picker (destination + database)
+  implementation.
 - [x] Interruptible backups and recovery policy: the admin can cancel a
   running backup from the progress panel. For a single-drive job, Cancel
   stops immediately; for a multi-drive job, it asks the admin to choose
@@ -122,14 +126,6 @@ Last reviewed: 2026-09-15
 
 ### Not started
 
-- [ ] Collapse the backup-destination and database-location pickers into one
-  `backupRoot` picker (see **Backup root location**): remove the independent
-  database-location UI/port, derive `backup.db`'s path from the chosen root
-  instead of letting it be set separately, and switch `file_captures.local_path`
-  (and the upcoming `archives.archive_path`) from absolute paths to paths
-  stored relative to `backupRoot`, resolved against `backupRoot` at read time.
-  No migration tool exists, so this also means any existing local `backup.db`
-  has to be recreated.
 - [ ] Archive operations: squash consecutive deltas into a merged delta,
   collapse a chain into a flat uploadable tree, warn on chain gaps, and start a
   new chain when a full backup runs on a scope that already has one.
@@ -146,7 +142,7 @@ requirements below as the source of truth for expected behavior.
 
 **P0 — required for a usable and safe v1**
 
-- [x] Runtime backup-destination and database-location selection.
+- [x] Runtime backup root location selection (database and archives share one root).
 - [x] Full versus incremental backup selection.
 - [x] Per-drive backup scope selection (personal drive and/or specific Shared
   Drives), replacing automatic inclusion of every visible Shared Drive.

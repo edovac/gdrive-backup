@@ -15,15 +15,16 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.stream.Stream;
 
-import org.nm.gdrive_backup.domain.model.BackupLocations;
+import org.nm.gdrive_backup.domain.model.BackupLocation;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
 import org.nm.gdrive_backup.domain.port.out.BackupLocationPort;
 import org.sqlite.SQLiteConfig;
 
-/** Checks and switches the local backup destination and the SQLite backup history database. */
+/** Checks and switches the single local root folder for the backup history database and the capture store. */
 public class LocalBackupLocationAdapter implements BackupLocationPort {
 
+	private static final String DATABASE_FILE_NAME = "backup.db";
 	private static final byte[] SQLITE_HEADER = "SQLite format 3\0".getBytes(StandardCharsets.US_ASCII);
 	private static final Set<String> HISTORY_TABLES = Set.of("users", "files");
 
@@ -36,15 +37,15 @@ public class LocalBackupLocationAdapter implements BackupLocationPort {
 	}
 
 	@Override
-	public BackupLocations activeLocations() {
-		return new BackupLocations(normalize(storage.root()), normalize(database.path()));
+	public BackupLocation activeLocation() {
+		return new BackupLocation(normalize(storage.root()));
 	}
 
 	@Override
-	public LocationValidation checkBackupDestination(Path destination) {
-		Path target = normalize(destination);
+	public LocationValidation checkRoot(Path root) {
+		Path target = normalize(root);
 		if (!Files.exists(target)) {
-			return checkCreatable(target, "The directory will be created");
+			return checkCreatable(target, "The directory and a new backup history will be created");
 		}
 		if (!Files.isDirectory(target)) {
 			return invalid("Not a directory: " + target);
@@ -52,49 +53,42 @@ public class LocalBackupLocationAdapter implements BackupLocationPort {
 		if (!canCreateFileIn(target)) {
 			return invalid("Directory is not writable: " + target);
 		}
+		Path databaseFile = target.resolve(DATABASE_FILE_NAME);
+		if (Files.exists(databaseFile)) {
+			return describeDatabaseFile(databaseFile);
+		}
 		try (Stream<Path> entries = Files.list(target)) {
 			return entries.findAny().isPresent()
-					? new LocationValidation(LocationStatus.EXISTING, "The directory already contains files")
-					: new LocationValidation(LocationStatus.NEW, "Empty directory");
+					? new LocationValidation(LocationStatus.EXISTING,
+							"The directory already contains files; a new backup history will be created")
+					: new LocationValidation(LocationStatus.NEW, "Empty directory; a new backup history will be created");
 		} catch (IOException exception) {
 			return invalid("Unable to read directory " + target + ": " + exception.getMessage());
 		}
 	}
 
 	@Override
-	public LocationValidation checkDatabaseFile(Path databaseFile) {
-		Path target = normalize(databaseFile);
-		if (Files.isDirectory(target)) {
-			return invalid("Path is a directory: " + target);
-		}
-		if (!Files.exists(target)) {
-			return checkCreatable(target.getParent(), "A new, empty backup history will be created");
-		}
-		// SQLite writes journal files next to the database, so its directory must be writable.
-		if (!canCreateFileIn(target.getParent())) {
-			return invalid("Directory is not writable: " + target.getParent());
+	public void applyRoot(Path root) {
+		Path target = normalize(root);
+		storage.switchTo(target);
+		database.switchTo(target.resolve(DATABASE_FILE_NAME));
+	}
+
+	private static LocationValidation describeDatabaseFile(Path databaseFile) {
+		if (!Files.isRegularFile(databaseFile)) {
+			return invalid("Not a file: " + databaseFile);
 		}
 		try {
-			if (Files.size(target) == 0) {
-				return new LocationValidation(LocationStatus.NEW, "Empty file; a new backup history will be created");
+			if (Files.size(databaseFile) == 0) {
+				return new LocationValidation(LocationStatus.NEW, "Empty backup history; the backup tables will be created");
 			}
-			if (!hasSqliteHeader(target)) {
-				return invalid("Not an SQLite database: " + target);
+			if (!hasSqliteHeader(databaseFile)) {
+				return invalid("Not an SQLite database: " + databaseFile);
 			}
 		} catch (IOException exception) {
-			return invalid("Unable to read " + target + ": " + exception.getMessage());
+			return invalid("Unable to read " + databaseFile + ": " + exception.getMessage());
 		}
-		return describeHistory(target);
-	}
-
-	@Override
-	public void applyBackupDestination(Path destination) {
-		storage.switchTo(normalize(destination));
-	}
-
-	@Override
-	public void applyDatabaseFile(Path databaseFile) {
-		database.switchTo(normalize(databaseFile));
+		return describeHistory(databaseFile);
 	}
 
 	private static LocationValidation checkCreatable(Path path, String detail) {

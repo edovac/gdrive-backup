@@ -1,6 +1,6 @@
 package org.nm.gdrive_backup.domain.model;
 
-/** The outcome of checking a candidate backup destination or history database. */
+/** The outcome of checking a candidate backup root folder. */
 public enum LocationStatus {
 
 	/** The location is already the active one. */

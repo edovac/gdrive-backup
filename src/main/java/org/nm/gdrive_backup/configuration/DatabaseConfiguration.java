@@ -1,7 +1,5 @@
 package org.nm.gdrive_backup.configuration;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.nm.gdrive_backup.adapter.out.persistence.LocalBackupLocationAdapter;
@@ -19,19 +17,13 @@ import org.springframework.context.annotation.Configuration;
 public class DatabaseConfiguration {
 
 	@Bean
-	SqliteDatabase sqliteDatabase() {
-		Path databasePath = defaultDirectory().resolve("backup.db");
-		try {
-			Files.createDirectories(databasePath.getParent());
-		} catch (IOException exception) {
-			throw new IllegalStateException("Unable to create SQLite database directory", exception);
-		}
-		return new SqliteDatabase(databasePath);
+	LocalCaptureStorageAdapter captureStorage() {
+		return new LocalCaptureStorageAdapter(defaultDirectory());
 	}
 
 	@Bean
-	LocalCaptureStorageAdapter captureStorage() {
-		return new LocalCaptureStorageAdapter(defaultDirectory().resolve("backupRoot"));
+	SqliteDatabase sqliteDatabase(LocalCaptureStorageAdapter captureStorage) {
+		return new SqliteDatabase(captureStorage.root().resolve("backup.db"));
 	}
 
 	@Bean
@@ -54,7 +46,7 @@ public class DatabaseConfiguration {
 		return args -> database.initialize();
 	}
 
-	/** Every launch starts here; the admin changes the locations for the session in the UI. */
+	/** Every launch starts here; the admin changes the location for the session in the UI. */
 	private static Path defaultDirectory() {
 		return Path.of(System.getProperty("user.home"), ".gdrive-backup");
 	}

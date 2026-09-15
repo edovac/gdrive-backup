@@ -12,69 +12,68 @@ import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 
 import org.junit.jupiter.api.Test;
-import org.nm.gdrive_backup.domain.model.BackupLocations;
+import org.nm.gdrive_backup.domain.model.BackupLocation;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
 import org.nm.gdrive_backup.domain.port.out.BackupLocationPort;
 
 class BackupLocationServiceTest {
 
-	private static final Path DESTINATION = Path.of("backups", "current").toAbsolutePath().normalize();
-	private static final Path DATABASE = Path.of("backups", "current.db").toAbsolutePath().normalize();
-	private static final BackupLocations CURRENT = new BackupLocations(DESTINATION, DATABASE);
+	private static final Path ROOT = Path.of("backups", "current").toAbsolutePath().normalize();
+	private static final BackupLocation CURRENT = new BackupLocation(ROOT);
 
 	@Test
-	void reportsActiveDestinationAsUnchangedWithoutCheckingIt() {
+	void reportsActiveRootAsUnchangedWithoutCheckingIt() {
 		BackupLocationPort port = mock(BackupLocationPort.class);
-		when(port.activeLocations()).thenReturn(CURRENT);
+		when(port.activeLocation()).thenReturn(CURRENT);
 
 		LocationValidation validation = new BackupLocationService(port, new BackupActivity())
-				.validateBackupDestination(DESTINATION);
+				.validateRoot(ROOT);
 
 		assertEquals(LocationStatus.UNCHANGED, validation.status());
-		verify(port, never()).checkBackupDestination(any());
+		verify(port, never()).checkRoot(any());
 	}
 
 	@Test
-	void changingToTheActiveDatabaseAppliesNothing() {
+	void changingToTheActiveRootAppliesNothing() {
 		BackupLocationPort port = mock(BackupLocationPort.class);
-		when(port.activeLocations()).thenReturn(CURRENT);
+		when(port.activeLocation()).thenReturn(CURRENT);
 
-		BackupLocations result = new BackupLocationService(port, new BackupActivity())
-				.changeDatabaseFile(Path.of("backups", "..", "backups", "current.db"));
+		BackupLocation result = new BackupLocationService(port, new BackupActivity())
+				.changeRoot(Path.of("backups", "..", "backups", "current"));
 
 		assertEquals(CURRENT, result);
-		verify(port, never()).applyDatabaseFile(any());
+		verify(port, never()).applyRoot(any());
 	}
 
 	@Test
-	void rejectsInvalidDestinationWithoutApplyingIt() {
+	void rejectsInvalidRootWithoutApplyingIt() {
 		BackupLocationPort port = mock(BackupLocationPort.class);
-		Path destination = DESTINATION.resolveSibling("read-only");
-		when(port.activeLocations()).thenReturn(CURRENT);
-		when(port.checkBackupDestination(destination))
+		Path candidate = ROOT.resolveSibling("read-only");
+		when(port.activeLocation()).thenReturn(CURRENT);
+		when(port.checkRoot(candidate))
 				.thenReturn(new LocationValidation(LocationStatus.INVALID, "Directory is not writable"));
 
 		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-				() -> new BackupLocationService(port, new BackupActivity()).changeBackupDestination(destination));
+				() -> new BackupLocationService(port, new BackupActivity()).changeRoot(candidate));
 
 		assertEquals("Directory is not writable", error.getMessage());
-		verify(port, never()).applyBackupDestination(any());
+		verify(port, never()).applyRoot(any());
 	}
 
 	@Test
-	void appliesValidDatabaseFileAndReturnsTheNewLocations() {
+	void appliesValidRootAndReturnsTheNewLocation() {
 		BackupLocationPort port = mock(BackupLocationPort.class);
-		Path databaseFile = DATABASE.resolveSibling("archive.db");
-		BackupLocations updated = new BackupLocations(DESTINATION, databaseFile);
-		when(port.activeLocations()).thenReturn(CURRENT, updated);
-		when(port.checkDatabaseFile(databaseFile))
-				.thenReturn(new LocationValidation(LocationStatus.NEW, "A new, empty backup history will be created"));
+		Path candidate = ROOT.resolveSibling("archive");
+		BackupLocation updated = new BackupLocation(candidate);
+		when(port.activeLocation()).thenReturn(CURRENT, updated);
+		when(port.checkRoot(candidate))
+				.thenReturn(new LocationValidation(LocationStatus.NEW, "The directory and a new backup history will be created"));
 
-		BackupLocations result = new BackupLocationService(port, new BackupActivity()).changeDatabaseFile(databaseFile);
+		BackupLocation result = new BackupLocationService(port, new BackupActivity()).changeRoot(candidate);
 
 		assertEquals(updated, result);
-		verify(port).applyDatabaseFile(databaseFile);
+		verify(port).applyRoot(candidate);
 	}
 
 	@Test
@@ -93,8 +92,8 @@ class BackupLocationServiceTest {
 
 		try {
 			assertThrows(IllegalStateException.class, () -> new BackupLocationService(port, activity)
-					.changeDatabaseFile(DATABASE.resolveSibling("archive.db")));
-			verify(port, never()).applyDatabaseFile(any());
+					.changeRoot(ROOT.resolveSibling("archive")));
+			verify(port, never()).applyRoot(any());
 		} finally {
 			finishBackup.countDown();
 			backup.join();

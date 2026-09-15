@@ -2,9 +2,11 @@ package org.nm.gdrive_backup.domain.port.out;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Path;
+
+import org.nm.gdrive_backup.domain.model.StoredCapture;
 
 public interface CaptureStoragePort {
 
-	Path store(String ownerScope, String fileId, String fileName, InputStream content) throws IOException;
+	/** Stores content and returns where it landed, relative to the store's root, and its size. */
+	StoredCapture store(String ownerScope, String fileId, String fileName, InputStream content) throws IOException;
 }

@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.nm.gdrive_backup.domain.model.StoredCapture;
 import org.nm.gdrive_backup.domain.port.out.CaptureStoragePort;
 
 public class LocalCaptureStorageAdapter implements CaptureStoragePort {
@@ -29,17 +30,19 @@ public class LocalCaptureStorageAdapter implements CaptureStoragePort {
 	}
 
 	@Override
-	public Path store(String ownerScope, String fileId, String fileName, InputStream content) throws IOException {
+	public StoredCapture store(String ownerScope, String fileId, String fileName, InputStream content)
+			throws IOException {
 		if (content == null) {
 			throw new IllegalArgumentException("content must not be null");
 		}
-		Path targetDirectory = backupRoot.get()
+		Path root = backupRoot.get();
+		Path targetDirectory = root
 				.resolve(safePathPart(ownerScope, "owner scope"))
 				.resolve(safePathPart(fileId, "file id"));
 		Files.createDirectories(targetDirectory);
 		Path target = targetDirectory.resolve(safeFileName(fileName));
 		Files.copy(content, target, StandardCopyOption.REPLACE_EXISTING);
-		return target;
+		return new StoredCapture(root.relativize(target), Files.size(target));
 	}
 
 	private static void createDirectories(Path directory) {

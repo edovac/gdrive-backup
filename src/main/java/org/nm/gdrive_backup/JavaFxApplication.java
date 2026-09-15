@@ -20,7 +20,6 @@ import javafx.scene.control.cell.CheckBoxListCell;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
-import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -50,7 +49,7 @@ import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
 import org.nm.gdrive_backup.domain.model.BackupResult;
 import org.nm.gdrive_backup.domain.model.BackupMode;
-import org.nm.gdrive_backup.domain.model.BackupLocations;
+import org.nm.gdrive_backup.domain.model.BackupLocation;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
 import org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase;
@@ -448,7 +447,7 @@ public class JavaFxApplication extends Application {
 		backupModeCombo.setDisable(true);
 		locationsPanel.setChangesDisabled(true);
 		String destination = backupLocationUseCase == null ? ""
-				: " into " + backupLocationUseCase.currentLocations().backupDestination();
+				: " into " + backupLocationUseCase.currentLocation().root();
 		status.setText("Synchronizing " + modeLabel(mode).toLowerCase() + " backup for " + selectedUserEmail
 				+ destination + "...");
 		progressPanel.start();
@@ -949,30 +948,24 @@ public class JavaFxApplication extends Application {
 	private final class LocationsPanel {
 
 		private final Button syncNow;
-		private final Label destinationValue = pathLabel();
-		private final Label databaseValue = pathLabel();
+		private final Label locationValue = pathLabel();
 		private final Label status = new Label();
-		private final Button changeDestination = new Button("Change destination...");
-		private final Button changeDatabase = new Button("Change database...");
+		private final Button changeLocation = new Button("Change location...");
 		private final VBox root;
 
 		LocationsPanel(Button syncNow) {
 			this.syncNow = syncNow;
-			Label title = new Label("Backup locations");
+			Label title = new Label("Backup location");
 			title.getStyleClass().add("subtitle");
-			Label destinationHeader = new Label("Backup destination");
-			Label databaseHeader = new Label("Backup history database");
+			Label locationHeader = new Label("Backup root (history database and archives)");
 			Label sessionNote = new Label("Changes apply to this session only.");
 			sessionNote.getStyleClass().add("scope");
 			status.getStyleClass().add("status");
 			status.setWrapText(true);
 			status.setMaxWidth(540);
-			changeDestination.getStyleClass().add("secondary-button");
-			changeDatabase.getStyleClass().add("secondary-button");
-			changeDestination.setOnAction(event -> chooseBackupDestination());
-			changeDatabase.setOnAction(event -> chooseDatabaseFile());
-			root = new VBox(6, title, destinationHeader, destinationValue, changeDestination,
-					databaseHeader, databaseValue, changeDatabase, sessionNote, status);
+			changeLocation.getStyleClass().add("secondary-button");
+			changeLocation.setOnAction(event -> chooseBackupLocation());
+			root = new VBox(6, title, locationHeader, locationValue, changeLocation, sessionNote, status);
 			root.setAlignment(Pos.CENTER);
 			hide();
 		}
@@ -998,46 +991,29 @@ public class JavaFxApplication extends Application {
 		}
 
 		void setChangesDisabled(boolean disabled) {
-			changeDestination.setDisable(disabled);
-			changeDatabase.setDisable(disabled);
+			changeLocation.setDisable(disabled);
 		}
 
 		private void refresh() {
-			BackupLocations locations = backupLocationUseCase.currentLocations();
-			destinationValue.setText(locations.backupDestination().toString());
-			databaseValue.setText(locations.databaseFile().toString());
+			BackupLocation location = backupLocationUseCase.currentLocation();
+			locationValue.setText(location.root().toString());
 		}
 
-		private void chooseBackupDestination() {
-			BackupLocations current = backupLocationUseCase.currentLocations();
+		private void chooseBackupLocation() {
+			BackupLocation current = backupLocationUseCase.currentLocation();
 			DirectoryChooser chooser = new DirectoryChooser();
-			chooser.setTitle("Choose backup destination");
-			chooser.setInitialDirectory(existingDirectory(current.backupDestination()));
+			chooser.setTitle("Choose backup location");
+			chooser.setInitialDirectory(existingDirectory(current.root()));
 			File selected = chooser.showDialog(root.getScene().getWindow());
 			if (selected != null) {
-				validateAndChange(selected.toPath(), backupLocationUseCase::validateBackupDestination,
-						backupLocationUseCase::changeBackupDestination,
-						validation -> destinationPrompt(current, selected.toPath(), validation));
-			}
-		}
-
-		private void chooseDatabaseFile() {
-			BackupLocations current = backupLocationUseCase.currentLocations();
-			FileChooser chooser = new FileChooser();
-			chooser.setTitle("Choose backup history database");
-			chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("SQLite database (*.db)", "*.db"));
-			chooser.setInitialDirectory(existingDirectory(current.databaseFile().getParent()));
-			chooser.setInitialFileName(current.databaseFile().getFileName().toString());
-			File selected = chooser.showSaveDialog(root.getScene().getWindow());
-			if (selected != null) {
-				validateAndChange(selected.toPath(), backupLocationUseCase::validateDatabaseFile,
-						backupLocationUseCase::changeDatabaseFile,
-						validation -> databasePrompt(current, selected.toPath(), validation));
+				validateAndChange(selected.toPath(), backupLocationUseCase::validateRoot,
+						backupLocationUseCase::changeRoot,
+						validation -> locationPrompt(current, selected.toPath(), validation));
 			}
 		}
 
 		private void validateAndChange(Path selected, Function<Path, LocationValidation> validate,
-				Function<Path, BackupLocations> change, Function<LocationValidation, String> prompt) {
+				Function<Path, BackupLocation> change, Function<LocationValidation, String> prompt) {
 			setBusy(true);
 			status.setText("Checking " + selected + "...");
 			CompletableFuture.supplyAsync(() -> validate.apply(selected))
@@ -1069,10 +1045,10 @@ public class JavaFxApplication extends Application {
 					}));
 		}
 
-		private void apply(Path selected, Function<Path, BackupLocations> change) {
+		private void apply(Path selected, Function<Path, BackupLocation> change) {
 			status.setText("Switching to " + selected + "...");
 			CompletableFuture.supplyAsync(() -> change.apply(selected))
-					.whenComplete((locations, error) -> Platform.runLater(() -> {
+					.whenComplete((location, error) -> Platform.runLater(() -> {
 						setBusy(false);
 						if (error != null) {
 							status.setText("Location not changed: " + messageFor(error));
@@ -1090,7 +1066,7 @@ public class JavaFxApplication extends Application {
 
 		private boolean confirm(String message) {
 			Alert prompt = new Alert(Alert.AlertType.CONFIRMATION);
-			prompt.setTitle("Backup locations");
+			prompt.setTitle("Backup location");
 			prompt.setHeaderText("Change backup location?");
 			prompt.setContentText(message);
 			prompt.getDialogPane().setMinWidth(520);
@@ -1099,31 +1075,19 @@ public class JavaFxApplication extends Application {
 
 		private void showError(String message) {
 			Alert alert = new Alert(Alert.AlertType.ERROR);
-			alert.setTitle("Backup locations");
+			alert.setTitle("Backup location");
 			alert.setHeaderText("This location can't be used");
 			alert.setContentText(message);
 			alert.getDialogPane().setMinWidth(520);
 			alert.showAndWait();
 		}
 
-		private static String destinationPrompt(BackupLocations current, Path selected,
-				LocationValidation validation) {
-			String existingFiles = validation.status() == LocationStatus.EXISTING
-					? "\n\nThe folder already contains files. They are kept, and new backup versions are added alongside them."
+		private static String locationPrompt(BackupLocation current, Path selected, LocationValidation validation) {
+			String existingNote = validation.status() == LocationStatus.EXISTING
+					? "\n\n" + validation.detail() + " Existing history and files are kept."
 					: "";
-			return "New backups will be written to:\n" + selected + existingFiles
-					+ "\n\nFiles already backed up stay in:\n" + current.backupDestination();
-		}
-
-		private static String databasePrompt(BackupLocations current, Path selected,
-				LocationValidation validation) {
-			if (validation.status() == LocationStatus.EXISTING) {
-				return "Switch to the backup history in:\n" + selected + "\n(" + validation.detail() + ")"
-						+ "\n\nThe current history in " + current.databaseFile() + " stays where it is.";
-			}
-			return "Start a new, empty backup history in:\n" + selected
-					+ "\n\nFiles recorded in " + current.databaseFile() + " won't be visible, "
-					+ "and the next backup of each user runs a full inventory.";
+			return "The backup history database and archives will be written to:\n" + selected + existingNote
+					+ "\n\nThe current backup location stays where it is:\n" + current.root();
 		}
 
 		private static File existingDirectory(Path path) {

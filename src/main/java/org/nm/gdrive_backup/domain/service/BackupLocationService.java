@@ -2,13 +2,13 @@ package org.nm.gdrive_backup.domain.service;
 
 import java.nio.file.Path;
 
-import org.nm.gdrive_backup.domain.model.BackupLocations;
+import org.nm.gdrive_backup.domain.model.BackupLocation;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
 import org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase;
 import org.nm.gdrive_backup.domain.port.out.BackupLocationPort;
 
-/** Validates and applies session-scoped changes to the backup destination and history database. */
+/** Validates and applies session-scoped changes to the single backup root folder. */
 public class BackupLocationService implements BackupLocationUseCase {
 
 	private final BackupLocationPort locationPort;
@@ -20,48 +20,28 @@ public class BackupLocationService implements BackupLocationUseCase {
 	}
 
 	@Override
-	public BackupLocations currentLocations() {
-		return locationPort.activeLocations();
+	public BackupLocation currentLocation() {
+		return locationPort.activeLocation();
 	}
 
 	@Override
-	public LocationValidation validateBackupDestination(Path destination) {
-		Path target = normalize(destination);
-		if (target.equals(normalize(currentLocations().backupDestination()))) {
-			return new LocationValidation(LocationStatus.UNCHANGED, "This is already the backup destination");
+	public LocationValidation validateRoot(Path root) {
+		Path target = normalize(root);
+		if (target.equals(normalize(currentLocation().root()))) {
+			return new LocationValidation(LocationStatus.UNCHANGED, "This is already the backup location");
 		}
-		return locationPort.checkBackupDestination(target);
+		return locationPort.checkRoot(target);
 	}
 
 	@Override
-	public LocationValidation validateDatabaseFile(Path databaseFile) {
-		Path target = normalize(databaseFile);
-		if (target.equals(normalize(currentLocations().databaseFile()))) {
-			return new LocationValidation(LocationStatus.UNCHANGED, "This is already the backup history database");
-		}
-		return locationPort.checkDatabaseFile(target);
-	}
-
-	@Override
-	public BackupLocations changeBackupDestination(Path destination) {
-		Path target = normalize(destination);
+	public BackupLocation changeRoot(Path root) {
+		Path target = normalize(root);
 		backupActivity.changeLocations(() -> {
-			if (requiresChange(validateBackupDestination(target))) {
-				locationPort.applyBackupDestination(target);
+			if (requiresChange(validateRoot(target))) {
+				locationPort.applyRoot(target);
 			}
 		});
-		return currentLocations();
-	}
-
-	@Override
-	public BackupLocations changeDatabaseFile(Path databaseFile) {
-		Path target = normalize(databaseFile);
-		backupActivity.changeLocations(() -> {
-			if (requiresChange(validateDatabaseFile(target))) {
-				locationPort.applyDatabaseFile(target);
-			}
-		});
-		return currentLocations();
+		return currentLocation();
 	}
 
 	private static boolean requiresChange(LocationValidation validation) {

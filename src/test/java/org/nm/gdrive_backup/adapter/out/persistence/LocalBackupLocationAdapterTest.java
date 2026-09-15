@@ -19,9 +19,10 @@ import java.sql.ResultSet;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.nm.gdrive_backup.domain.model.BackupLocations;
+import org.nm.gdrive_backup.domain.model.BackupLocation;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
+import org.nm.gdrive_backup.domain.model.StoredCapture;
 import org.nm.gdrive_backup.domain.model.SyncState;
 
 class LocalBackupLocationAdapterTest {
@@ -38,71 +39,63 @@ class LocalBackupLocationAdapterTest {
 		Path activeDirectory = Files.createDirectories(temporaryDirectory.resolve("active"));
 		database = new SqliteDatabase(activeDirectory.resolve("backup.db"));
 		database.initialize();
-		storage = new LocalCaptureStorageAdapter(activeDirectory.resolve("backupRoot"));
+		storage = new LocalCaptureStorageAdapter(activeDirectory);
 		adapter = new LocalBackupLocationAdapter(database, storage);
 	}
 
 	@Test
-	void reportsActiveLocations() {
-		assertEquals(new BackupLocations(
-				temporaryDirectory.resolve("active/backupRoot").toAbsolutePath().normalize(),
-				temporaryDirectory.resolve("active/backup.db").toAbsolutePath().normalize()),
-				adapter.activeLocations());
+	void reportsActiveLocation() {
+		assertEquals(new BackupLocation(temporaryDirectory.resolve("active").toAbsolutePath().normalize()),
+				adapter.activeLocation());
 	}
 
 	@Test
-	void missingDestinationIsNewAndIsNotCreatedByTheCheck() {
+	void missingRootIsNewAndIsNotCreatedByTheCheck() {
 		assertEquals(LocationStatus.NEW,
-				adapter.checkBackupDestination(temporaryDirectory.resolve("backups/nested")).status());
+				adapter.checkRoot(temporaryDirectory.resolve("backups/nested")).status());
 		assertFalse(Files.exists(temporaryDirectory.resolve("backups")));
 	}
 
 	@Test
-	void emptyDestinationIsNew() throws IOException {
-		Path destination = Files.createDirectory(temporaryDirectory.resolve("empty"));
+	void emptyRootIsNew() throws IOException {
+		Path root = Files.createDirectory(temporaryDirectory.resolve("empty"));
 
-		assertEquals(LocationStatus.NEW, adapter.checkBackupDestination(destination).status());
+		assertEquals(LocationStatus.NEW, adapter.checkRoot(root).status());
 	}
 
 	@Test
-	void destinationWithFilesIsExisting() throws IOException {
-		Path destination = Files.createDirectory(temporaryDirectory.resolve("used"));
-		Files.writeString(destination.resolve("previous.txt"), "backup");
+	void rootWithOtherFilesButNoDatabaseIsExisting() throws IOException {
+		Path root = Files.createDirectory(temporaryDirectory.resolve("used"));
+		Files.writeString(root.resolve("previous.txt"), "backup");
 
-		assertEquals(LocationStatus.EXISTING, adapter.checkBackupDestination(destination).status());
+		assertEquals(LocationStatus.EXISTING, adapter.checkRoot(root).status());
 	}
 
 	@Test
-	void regularFileIsNotAValidDestination() throws IOException {
+	void regularFileIsNotAValidRoot() throws IOException {
 		Path file = Files.writeString(temporaryDirectory.resolve("file.txt"), "not a directory");
 
-		assertEquals(LocationStatus.INVALID, adapter.checkBackupDestination(file).status());
+		assertEquals(LocationStatus.INVALID, adapter.checkRoot(file).status());
 	}
 
 	@Test
-	void readOnlyDestinationIsInvalid() throws IOException {
+	void readOnlyRootIsInvalid() throws IOException {
 		assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
-		Path destination = Files.createDirectory(temporaryDirectory.resolve("read-only"));
-		Files.setPosixFilePermissions(destination, PosixFilePermissions.fromString("r-xr-xr-x"));
+		Path root = Files.createDirectory(temporaryDirectory.resolve("read-only"));
+		Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("r-xr-xr-x"));
 		try {
-			assumeFalse(Files.isWritable(destination), "file permissions are not enforced for this user");
+			assumeFalse(Files.isWritable(root), "file permissions are not enforced for this user");
 
-			assertEquals(LocationStatus.INVALID, adapter.checkBackupDestination(destination).status());
+			assertEquals(LocationStatus.INVALID, adapter.checkRoot(root).status());
 		} finally {
-			Files.setPosixFilePermissions(destination, PosixFilePermissions.fromString("rwxr-xr-x"));
+			Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwxr-xr-x"));
 		}
 	}
 
 	@Test
-	void missingDatabaseIsNewAndIsNotCreatedByTheCheck() {
-		assertEquals(LocationStatus.NEW,
-				adapter.checkDatabaseFile(temporaryDirectory.resolve("other/history.db")).status());
-		assertFalse(Files.exists(temporaryDirectory.resolve("other")));
-	}
-
-	@Test
-	void databaseWithBackupHistoryIsExistingWithCounts() throws Exception {
-		Path databaseFile = temporaryDirectory.resolve("history.db");
+	void rootWithBackupHistoryIsExistingWithCounts() throws Exception {
+		Path root = Files.createDirectory(temporaryDirectory.resolve("history"));
+		Path databaseFile = root.resolve("backup.db");
 		new SqliteDatabase(databaseFile).initialize();
 		try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databaseFile);
 			var statement = connection.createStatement()) {
@@ -112,49 +105,47 @@ class LocalBackupLocationAdapterTest {
 					+ "VALUES ('file-1', 'a@example.com', 'Report', '[]', 'application/pdf')");
 		}
 
-		LocationValidation validation = adapter.checkDatabaseFile(databaseFile);
+		LocationValidation validation = adapter.checkRoot(root);
 
 		assertEquals(LocationStatus.EXISTING, validation.status());
 		assertEquals("2 users, 1 file", validation.detail());
 	}
 
 	@Test
-	void fileThatIsNotSqliteIsInvalid() throws IOException {
-		Path file = Files.writeString(temporaryDirectory.resolve("notes.db"), "plain text");
+	void rootWithEmptyDatabaseFileIsNew() throws IOException {
+		Path root = Files.createDirectory(temporaryDirectory.resolve("fresh"));
+		Files.createFile(root.resolve("backup.db"));
 
-		assertEquals(LocationStatus.INVALID, adapter.checkDatabaseFile(file).status());
+		assertEquals(LocationStatus.NEW, adapter.checkRoot(root).status());
 	}
 
 	@Test
-	void directoryIsNotAValidDatabaseFile() {
-		assertEquals(LocationStatus.INVALID, adapter.checkDatabaseFile(temporaryDirectory).status());
+	void rootWithNonSqliteDatabaseFileIsInvalid() throws IOException {
+		Path root = Files.createDirectory(temporaryDirectory.resolve("notes"));
+		Files.writeString(root.resolve("backup.db"), "plain text");
+
+		assertEquals(LocationStatus.INVALID, adapter.checkRoot(root).status());
 	}
 
 	@Test
-	void applyingDatabaseFileRedirectsPersistence() throws Exception {
-		Path databaseFile = temporaryDirectory.resolve("other/history.db");
+	void applyingRootRedirectsPersistenceAndCaptures() throws Exception {
+		Path root = temporaryDirectory.resolve("other");
 
-		adapter.applyDatabaseFile(databaseFile);
+		adapter.applyRoot(root);
 		new SqliteSyncStateAdapter(database).save(new SyncState("user@example.com", "token-1"));
+		StoredCapture stored = storage.store("user@example.com", "file-1", "Report.pdf",
+				new ByteArrayInputStream(new byte[] { 1 }));
 
-		assertEquals(databaseFile.toAbsolutePath().normalize(), adapter.activeLocations().databaseFile());
-		try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databaseFile);
+		Path normalizedRoot = root.toAbsolutePath().normalize();
+		assertEquals(normalizedRoot, adapter.activeLocation().root());
+		assertTrue(Files.exists(normalizedRoot.resolve("backup.db")));
+		assertTrue(Files.exists(normalizedRoot.resolve(stored.relativePath())));
+		try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalizedRoot.resolve("backup.db"));
 			var statement = connection.createStatement();
 			ResultSet result = statement.executeQuery(
 					"SELECT page_token FROM sync_state WHERE scope_key = 'user@example.com'")) {
 			assertTrue(result.next());
 			assertEquals("token-1", result.getString(1));
 		}
-	}
-
-	@Test
-	void applyingBackupDestinationRedirectsStoredCaptures() throws Exception {
-		Path destination = temporaryDirectory.resolve("other-backups");
-
-		adapter.applyBackupDestination(destination);
-		Path stored = storage.store("user@example.com", "file-1", "Report.pdf",
-				new ByteArrayInputStream(new byte[] { 1 }));
-
-		assertTrue(stored.startsWith(destination.toAbsolutePath().normalize()));
 	}
 }
