@@ -22,7 +22,7 @@ class SqliteDatabaseTest {
 		Path databasePath = temporaryDirectory.resolve("backup.db");
 		new SqliteDatabase(databasePath).initialize();
 
-		assertEquals(6, backupTableCount(databasePath));
+		assertEquals(7, backupTableCount(databasePath));
 	}
 
 	@Test
@@ -34,7 +34,7 @@ class SqliteDatabaseTest {
 		database.switchTo(secondPath);
 
 		assertEquals(secondPath, database.path());
-		assertEquals(6, backupTableCount(secondPath));
+		assertEquals(7, backupTableCount(secondPath));
 		try (Connection connection = database.openConnection();
 			var statement = connection.createStatement()) {
 			statement.executeUpdate("INSERT INTO sync_state(scope_key, page_token) VALUES ('scope', 'token')");
@@ -63,7 +63,7 @@ class SqliteDatabaseTest {
 			var statement = connection.createStatement();
 			ResultSet tables = statement.executeQuery(
 					"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN "
-							+ "('users', 'drives', 'files', 'file_versions', 'file_events', 'sync_state')")) {
+							+ "('users', 'drives', 'files', 'archives', 'file_captures', 'file_events', 'sync_state')")) {
 			return tables.getInt(1);
 		}
 	}

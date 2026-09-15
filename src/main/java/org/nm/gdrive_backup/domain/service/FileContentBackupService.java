@@ -8,13 +8,13 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 
-import org.nm.gdrive_backup.domain.model.FileVersion;
+import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
-import org.nm.gdrive_backup.domain.port.out.FileVersionPort;
-import org.nm.gdrive_backup.domain.port.out.VersionStoragePort;
+import org.nm.gdrive_backup.domain.port.out.FileCapturePort;
+import org.nm.gdrive_backup.domain.port.out.CaptureStoragePort;
 
 public class FileContentBackupService {
 
@@ -27,17 +27,17 @@ public class FileContentBackupService {
 				new ExportFormat("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"));
 
 	private final DriveContentPort contentPort;
-	private final VersionStoragePort storagePort;
-	private final FileVersionPort versionPort;
+	private final CaptureStoragePort storagePort;
+	private final FileCapturePort capturePort;
 
-	public FileContentBackupService(DriveContentPort contentPort, VersionStoragePort storagePort,
-			FileVersionPort versionPort) {
+	public FileContentBackupService(DriveContentPort contentPort, CaptureStoragePort storagePort,
+			FileCapturePort capturePort) {
 		this.contentPort = contentPort;
 		this.storagePort = storagePort;
-		this.versionPort = versionPort;
+		this.capturePort = capturePort;
 	}
 
-	public FileVersion backup(ServiceAccountAccess access, StoredFile file) {
+	public FileCapture backup(ServiceAccountAccess access, StoredFile file) {
 		if (file == null || file.fileId() == null || file.fileId().isBlank()) {
 			throw new IllegalArgumentException("file with an id is required");
 		}
@@ -61,16 +61,16 @@ public class FileContentBackupService {
 		}
 	}
 
-	private FileVersion backupContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
+	private FileCapture backupContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
 			boolean fallback) throws IOException {
 		String fileName = exportFormat == null ? file.name() : withExtension(file.name(), exportFormat.extension());
 		try (InputStream content = exportFormat == null
 				? contentPort.download(access, file.fileId())
 				: contentPort.export(access, file.fileId(), exportFormat.mimeType())) {
-			Path localPath = storagePort.store(file.ownerScope(), file.fileId(), file.headRevisionId(), fileName, content);
-			FileVersion version = new FileVersion(null, file.fileId(), file.headRevisionId(), Instant.now(),
-					localPath.toString(), Files.size(localPath));
-			return versionPort.save(version);
+			Path localPath = storagePort.store(file.ownerScope(), file.fileId(), fileName, content);
+			FileCapture capture = new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(),
+					localPath.toString(), Files.size(localPath), null);
+			return capturePort.save(capture);
 		} catch (DriveExportLimitException exception) {
 			if (fallback) {
 				throw new IllegalStateException("Google PDF fallback also exceeded the export limit", exception);

@@ -7,13 +7,13 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.nm.gdrive_backup.domain.port.out.VersionStoragePort;
+import org.nm.gdrive_backup.domain.port.out.CaptureStoragePort;
 
-public class LocalVersionStorageAdapter implements VersionStoragePort {
+public class LocalCaptureStorageAdapter implements CaptureStoragePort {
 
 	private final AtomicReference<Path> backupRoot;
 
-	public LocalVersionStorageAdapter(Path backupRoot) {
+	public LocalCaptureStorageAdapter(Path backupRoot) {
 		createDirectories(backupRoot);
 		this.backupRoot = new AtomicReference<>(backupRoot);
 	}
@@ -22,22 +22,20 @@ public class LocalVersionStorageAdapter implements VersionStoragePort {
 		return backupRoot.get();
 	}
 
-	/** Writes every later version under another backup root; versions already stored stay where they are. */
+	/** Writes every later capture under another backup root; captures already stored stay where they are. */
 	public void switchTo(Path newBackupRoot) {
 		createDirectories(newBackupRoot);
 		backupRoot.set(newBackupRoot);
 	}
 
 	@Override
-	public Path store(String ownerScope, String fileId, String revisionId, String fileName,
-			InputStream content) throws IOException {
+	public Path store(String ownerScope, String fileId, String fileName, InputStream content) throws IOException {
 		if (content == null) {
 			throw new IllegalArgumentException("content must not be null");
 		}
 		Path targetDirectory = backupRoot.get()
 				.resolve(safePathPart(ownerScope, "owner scope"))
-				.resolve(safePathPart(fileId, "file id"))
-				.resolve(safePathPart(revisionId, "revision id"));
+				.resolve(safePathPart(fileId, "file id"));
 		Files.createDirectories(targetDirectory);
 		Path target = targetDirectory.resolve(safeFileName(fileName));
 		Files.copy(content, target, StandardCopyOption.REPLACE_EXISTING);

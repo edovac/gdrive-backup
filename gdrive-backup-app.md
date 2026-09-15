@@ -25,7 +25,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-14
+Last reviewed: 2026-09-15
 
 ### Completed
 
@@ -82,11 +82,21 @@ Last reviewed: 2026-09-14
   (indeterminate with a running count for incremental syncs, whose change
   total isn't known until the run ends); the JavaFX layer polls the latest
   snapshot on a timer.
+- [x] Store and schema rework for the chain model: local storage under
+  `LATEST_ONLY` no longer has a `revision` path segment (`backupRoot/<ownerScope>/<fileId>/<filename>`,
+  replaced in place); `file_versions` is replaced by `file_captures` (adding
+  a nullable `archive_id`); `file_events` gained a nullable `archive_id`; and
+  an `archives` table (`sequence_number`, `base_archive_id`, `mode`,
+  `revision_mode`, `cancelled`, cursor range) now exists for the upcoming
+  archive writer to populate. `FileVersion`/`FileVersionPort`/`VersionStoragePort`
+  were renamed to `FileCapture`/`FileCapturePort`/`CaptureStoragePort`
+  throughout. No migration tool exists, so any existing local `backup.db` has
+  to be deleted and recreated on next launch.
 
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
-- [-] SQLite schema and persistence for users, drives, files, versions, events, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
+- [-] SQLite schema and persistence for users, drives, files, captures, events, archives, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If any one scope fails the whole run stops. An org-wide sweep across every Workspace user and partial-failure handling with a completion summary remain.
 - [-] Backup options and archive packaging: let the admin choose full versus incremental mode, then produce the per-drive archive output described under **Archive output** (a flat, uploadable tree for a full run, an id-keyed delta for an incremental one, none when an incremental run finds no changes). Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies.
   Full versus incremental mode selection is implemented: the admin picks the mode in the
@@ -97,12 +107,6 @@ Last reviewed: 2026-09-14
 
 ### Not started
 
-- [ ] Rework the store and schema for the chain model: remove the `revision`
-  path segment so a file has one current copy under `LATEST_ONLY`, replace
-  `file_versions` with `file_captures` (adding `archive_id`), add `archive_id`
-  to `file_events`, and add the `archives` table (`sequence_number`,
-  `base_archive_id`, `mode`, `revision_mode`, `cancelled`, cursor range). There
-  is no migration tool, so an existing `backup.db` has to be recreated.
 - [ ] Carry the scope type (personal vs Shared Drive) explicitly instead of
   inferring it from whether the key contains `@`.
 - [ ] Archive operations: squash consecutive deltas into a merged delta,

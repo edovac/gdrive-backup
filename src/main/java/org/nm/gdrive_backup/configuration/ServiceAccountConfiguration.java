@@ -41,8 +41,8 @@ import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 import org.nm.gdrive_backup.domain.port.out.FileEventPort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
-import org.nm.gdrive_backup.domain.port.out.FileVersionPort;
-import org.nm.gdrive_backup.domain.port.out.VersionStoragePort;
+import org.nm.gdrive_backup.domain.port.out.FileCapturePort;
+import org.nm.gdrive_backup.domain.port.out.CaptureStoragePort;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -124,8 +124,8 @@ public class ServiceAccountConfiguration {
 	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
 	FileContentBackupService fileContentBackupService(
 			@Qualifier("driveContentPort") DriveContentPort contentPort,
-			VersionStoragePort storagePort, FileVersionPort fileVersionPort) {
-		return new FileContentBackupService(contentPort, storagePort, fileVersionPort);
+			CaptureStoragePort storagePort, FileCapturePort fileCapturePort) {
+		return new FileContentBackupService(contentPort, storagePort, fileCapturePort);
 	}
 
 	@Bean

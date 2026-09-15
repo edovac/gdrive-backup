@@ -93,7 +93,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 
 	private void applyChange(ServiceAccountAccess access, DriveChange change) {
 		if (change.removed()) {
-			fileEventPort.save(new FileEvent(null, change.fileId(), "delete", null, null, Instant.now()));
+			fileEventPort.save(new FileEvent(null, change.fileId(), "delete", null, null, Instant.now(), null));
 			return;
 		}
 		StoredFile current = change.file();
@@ -142,6 +142,6 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	}
 
 	private void recordEvent(String fileId, String eventType, String oldValue, String newValue) {
-		fileEventPort.save(new FileEvent(null, fileId, eventType, oldValue, newValue, Instant.now()));
+		fileEventPort.save(new FileEvent(null, fileId, eventType, oldValue, newValue, Instant.now(), null));
 	}
 }

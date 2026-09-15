@@ -8,5 +8,6 @@ public record FileEvent(
 		String eventType,
 		String oldValue,
 		String newValue,
-		Instant timestamp) {
+		Instant timestamp,
+		Long archiveId) {
 }

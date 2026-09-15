@@ -30,7 +30,7 @@ class LocalBackupLocationAdapterTest {
 	Path temporaryDirectory;
 
 	private SqliteDatabase database;
-	private LocalVersionStorageAdapter storage;
+	private LocalCaptureStorageAdapter storage;
 	private LocalBackupLocationAdapter adapter;
 
 	@BeforeEach
@@ -38,7 +38,7 @@ class LocalBackupLocationAdapterTest {
 		Path activeDirectory = Files.createDirectories(temporaryDirectory.resolve("active"));
 		database = new SqliteDatabase(activeDirectory.resolve("backup.db"));
 		database.initialize();
-		storage = new LocalVersionStorageAdapter(activeDirectory.resolve("backupRoot"));
+		storage = new LocalCaptureStorageAdapter(activeDirectory.resolve("backupRoot"));
 		adapter = new LocalBackupLocationAdapter(database, storage);
 	}
 
@@ -148,11 +148,11 @@ class LocalBackupLocationAdapterTest {
 	}
 
 	@Test
-	void applyingBackupDestinationRedirectsStoredVersions() throws Exception {
+	void applyingBackupDestinationRedirectsStoredCaptures() throws Exception {
 		Path destination = temporaryDirectory.resolve("other-backups");
 
 		adapter.applyBackupDestination(destination);
-		Path stored = storage.store("user@example.com", "file-1", "revision-1", "Report.pdf",
+		Path stored = storage.store("user@example.com", "file-1", "Report.pdf",
 				new ByteArrayInputStream(new byte[] { 1 }));
 
 		assertTrue(stored.startsWith(destination.toAbsolutePath().normalize()));

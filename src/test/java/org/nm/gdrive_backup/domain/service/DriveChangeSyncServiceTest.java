@@ -21,7 +21,7 @@ import org.mockito.InOrder;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
-import org.nm.gdrive_backup.domain.model.FileVersion;
+import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.model.SyncResult;
@@ -116,8 +116,8 @@ class DriveChangeSyncServiceTest {
 		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
-		when(contentBackup.backup(ACCESS, current)).thenReturn(new FileVersion(8L, "file-1", "revision-2",
-				Instant.now(), "backup/report", 22));
+		when(contentBackup.backup(ACCESS, current)).thenReturn(new FileCapture(8L, "file-1", "revision-2",
+				Instant.now(), "backup/report", 22, null));
 
 		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, contentBackup)
 				.synchronize(ACCESS, "user@example.com");

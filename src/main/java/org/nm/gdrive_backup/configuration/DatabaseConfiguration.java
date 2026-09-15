@@ -5,7 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.nm.gdrive_backup.adapter.out.persistence.LocalBackupLocationAdapter;
-import org.nm.gdrive_backup.adapter.out.persistence.LocalVersionStorageAdapter;
+import org.nm.gdrive_backup.adapter.out.persistence.LocalCaptureStorageAdapter;
 import org.nm.gdrive_backup.adapter.out.persistence.SqliteDatabase;
 import org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase;
 import org.nm.gdrive_backup.domain.port.out.BackupLocationPort;
@@ -30,13 +30,13 @@ public class DatabaseConfiguration {
 	}
 
 	@Bean
-	LocalVersionStorageAdapter versionStorage() {
-		return new LocalVersionStorageAdapter(defaultDirectory().resolve("backupRoot"));
+	LocalCaptureStorageAdapter captureStorage() {
+		return new LocalCaptureStorageAdapter(defaultDirectory().resolve("backupRoot"));
 	}
 
 	@Bean
-	BackupLocationPort backupLocationPort(SqliteDatabase database, LocalVersionStorageAdapter versionStorage) {
-		return new LocalBackupLocationAdapter(database, versionStorage);
+	BackupLocationPort backupLocationPort(SqliteDatabase database, LocalCaptureStorageAdapter captureStorage) {
+		return new LocalBackupLocationAdapter(database, captureStorage);
 	}
 
 	@Bean
