@@ -151,8 +151,10 @@ requirements below as the source of truth for expected behavior.
   per-scope chains rooted in one full backup; starting a new full backup on a
   scope with an existing chain begins a new chain, leaving the old one intact.
   The chain is tracked in SQLite and mirrored in each manifest, with a
-  `sequence_number` used for archive naming. Still open: what a cancelled run
-  should write, and the full naming convention beyond the sequence number.
+  `sequence_number` used for archive naming. Each archive is a ZIP file with
+  its manifest embedded at the root; a cancelled run writes no archive and no
+  chain entry (see **Known limitations**). Naming and directory layout are
+  decided — see **Archive layout and naming** under **Local storage layout**.
 - Archive operations: squash consecutive deltas into one `MERGED_INCREMENTAL`
   delta, and collapse a full archive plus its deltas into a single flat
   `MERGED_FULL` tree that becomes the chain's new base. Both refuse to run on a
@@ -246,9 +248,12 @@ Windows packaging.
   archive's own manifest, letting an archive be checked and trusted without the
   database. Each archive records its `sequence_number` within its chain, and
   archive filenames include it so related archives are identifiable at a
-  glance — the full naming convention beyond that is still to be worked out.
-  The archive format and manifest layout need a design decision; ZIP is the
-  initial candidate.
+  glance. **Decided:** each archive is a single ZIP file (native Explorer
+  support on Windows, easy to move to an external drive as one unit); its
+  manifest is a JSON file embedded at the ZIP's root (e.g. `manifest.json`)
+  rather than a sidecar file, so it can never be separated from the archive it
+  describes. The full naming convention and directory layout are in
+  **Archive layout and naming** under **Local storage layout**.
 - **Flat-tree rules**: because a full archive is meant to be re-uploaded, it
   follows filesystem rules rather than Drive's:
   - **Live files only.** Trashed-but-undeleted files are recorded in the
@@ -538,6 +543,44 @@ The per-archive manifest identifies its scope (personal drive or a specific
 Shared Drive), backup mode, captured files and events, and its position in the
 archive chain.
 
+### Archive layout and naming
+
+Archives live in their own subtree, separate from the id-keyed store above,
+so the human-facing deliverable the admin browses and uploads never mixes
+with the disposable internal staging area:
+
+```
+backupRoot/archives/<scopeFolder>/archive-<sequenceNumber>-<mode>.zip
+```
+
+- `<scopeFolder>` identifies the chain. Unlike the id-keyed store's sanitizer
+  above (which reduces names to `[a-zA-Z0-9._@-]`), this uses the gentler
+  **flat-tree** sanitizer (only characters illegal on Windows — `\ / : * ? "
+  < > |` — are replaced), so folder names stay human-readable:
+  - Personal drive: `My Drive (<email>)`, e.g. `My Drive (edoardo@example.com)`
+    — the email is required, not optional, since an org-wide admin backs up
+    more than one user's personal drive over time.
+  - Shared Drive: `<drive name> (<drive_id>)`, e.g. `Finance (0AIJ4kZ...)` —
+    the `drive_id` suffix keeps the folder unique and stable even if the
+    Shared Drive is later renamed, or another Shared Drive shares its name.
+- `<sequenceNumber>` is the archive's `sequence_number`, 4-digit zero-padded
+  (`0001`, `0002`, ...) so filenames sort correctly in a plain file browser.
+- `<mode>` is the archive's `mode` in kebab-case: `full`, `incremental`,
+  `merged-full`, `merged-incremental`.
+- Each ZIP embeds its manifest at the root as `manifest.json` (see **Archive
+  output**), so the archive can never be separated from the record of what it
+  contains.
+
+Example, for a Shared Drive scope with a full backup, two incrementals, and a
+squash of those two deltas:
+
+```
+backupRoot/archives/Finance (0AIJ4kZ...)/archive-0001-full.zip
+backupRoot/archives/Finance (0AIJ4kZ...)/archive-0002-incremental.zip
+backupRoot/archives/Finance (0AIJ4kZ...)/archive-0003-incremental.zip
+backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
+```
+
 ---
 
 ## UI (JavaFX)
@@ -620,13 +663,19 @@ archive chain.
   database defaults to `~/.gdrive-backup/` while archives are written to the
   chosen external drive, so a lost, swapped, or relocated database leaves the
   archives to be understood from their manifests alone.
-- **Open**: what a cancelled run should write is undecided. The `archives`
-  table has a `cancelled` flag to record that a run was interrupted, but not
-  yet what (if anything) gets written for it — a partial delta is worse than a
-  partial full archive, since the next delta starts *after* the changes the
-  cancelled one dropped, silently losing them for good. Decide this with the
-  P1 archive-packaging work, alongside the temp-file/cleanup behavior already
-  deferred there.
+- **Decided**: a cancelled run (full or incremental) writes no archive and no
+  `archives` row — the run leaves the chain exactly as it was before it
+  started. For an incremental run this matters most: a partial delta would be
+  worse than none, since the next delta would resume *after* the changes the
+  cancelled run dropped, silently losing them for good; `sync_state` is
+  already checkpointed per-page (see **Sync algorithm**), so no Drive changes
+  are lost even though no archive is produced for the cancelled portion. The
+  archive writer stages output in a temp file/directory and only moves it into
+  the chosen backup destination — and only inserts the `archives` row — after
+  the run completes without cancellation; on cancellation the temp output is
+  discarded. The `archives.cancelled` flag remains for a future case (e.g. a
+  partial-full-archive option) but nothing sets it yet, since neither mode
+  writes a cancelled archive today.
 - Restore for a future `ALL_REVISIONS` archive (full or incremental) is
   undesigned, deferred along with restore generally.
 - The internal layout for multiple revisions of one file inside an
