@@ -2,6 +2,7 @@ package org.nm.gdrive_backup.domain.service;
 
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveChange;
+import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -58,17 +59,17 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	}
 
 	@Override
-	public SyncResult synchronize(ServiceAccountAccess access, String scopeKey) {
-		String pageToken = syncStatePort.findByScopeKey(scopeKey)
+	public SyncResult synchronize(ServiceAccountAccess access, DriveScope scope) {
+		String pageToken = syncStatePort.findByScopeKey(scope.key())
 				.map(SyncState::pageToken)
-				.orElseGet(() -> changePort.getStartPageToken(access, scopeKey));
+				.orElseGet(() -> changePort.getStartPageToken(access, scope));
 		int changeCount = 0;
 		String newStartPageToken = null;
 		while (newStartPageToken == null) {
 			if (cancellation.isImmediateStopRequested()) {
 				break;
 			}
-			DriveChangePage page = changePort.listChanges(access, scopeKey, pageToken);
+			DriveChangePage page = changePort.listChanges(access, scope, pageToken);
 			changeCount += page.changes().size();
 			page.changes().forEach(change -> {
 				applyChange(access, change);
@@ -82,9 +83,9 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			// cancelled-and-resumed run, this is what stops the next run from replaying
 			// already-applied pages and re-inserting duplicate file_events.
 			pageToken = newStartPageToken != null ? newStartPageToken : page.nextPageToken();
-			syncStatePort.save(new SyncState(scopeKey, pageToken));
+			syncStatePort.save(new SyncState(scope.key(), pageToken));
 		}
-		return new SyncResult(scopeKey, changeCount, pageToken);
+		return new SyncResult(scope, changeCount, pageToken);
 	}
 
 	private static String itemLabel(DriveChange change) {

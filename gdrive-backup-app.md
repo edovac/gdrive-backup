@@ -92,6 +92,16 @@ Last reviewed: 2026-09-15
   were renamed to `FileCapture`/`FileCapturePort`/`CaptureStoragePort`
   throughout. No migration tool exists, so any existing local `backup.db` has
   to be deleted and recreated on next launch.
+- [x] Scope type carried explicitly instead of inferred from `@`: a new
+  `DriveScope` (`key` plus a `PERSONAL`/`SHARED_DRIVE` type) replaces the bare
+  `scopeKey` string on every port and use case that routes on it —
+  `DriveFileListingPort`, `DriveChangePort`, `InitialDriveSyncUseCase`,
+  `DriveChangeSyncUseCase`, `DriveBackupUseCase` — and on the sync result
+  records (`BackupResult`, `InitialSyncResult`, `SyncResult`).
+  `GoogleDriveAdapter` now branches on `scope.type()` instead of
+  `!scopeKey.contains("@")`, and the JavaFX summary label does the same
+  instead of checking for `@` itself. `SyncStatePort`/`SyncState` stay keyed
+  by the raw string, since persistence there doesn't branch on scope type.
 
 ### In progress
 
@@ -107,8 +117,6 @@ Last reviewed: 2026-09-15
 
 ### Not started
 
-- [ ] Carry the scope type (personal vs Shared Drive) explicitly instead of
-  inferring it from whether the key contains `@`.
 - [ ] Archive operations: squash consecutive deltas into a merged delta,
   collapse a chain into a flat uploadable tree, warn on chain gaps, and start a
   new chain when a full backup runs on a scope that already has one.

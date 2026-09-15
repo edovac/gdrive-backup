@@ -136,7 +136,7 @@ public class ServiceAccountConfiguration {
 			BackupCancellation cancellation) {
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
 		if (changePort == null) {
-			return (access, scopeKey) -> {
+			return (access, scope) -> {
 				throw new GoogleOAuthException(
 						"Drive change synchronization is not configured. "
 								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
@@ -156,7 +156,7 @@ public class ServiceAccountConfiguration {
 		DriveFileListingPort fileListingPort = fileListingPortProvider.getIfAvailable();
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
 		if (fileListingPort == null || changePort == null) {
-			return (access, scopeKey) -> {
+			return (access, scope) -> {
 				throw new GoogleOAuthException(
 						"Initial Drive synchronization is not configured. "
 								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");

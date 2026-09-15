@@ -7,6 +7,7 @@ import java.util.List;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.BackupMode;
 import org.nm.gdrive_backup.domain.model.BackupResult;
+import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
 import org.nm.gdrive_backup.domain.model.StoredDrive;
@@ -61,10 +62,10 @@ public class DriveBackupService implements DriveBackupUseCase {
 	}
 
 	@Override
-	public BackupResult synchronize(ServiceAccountAccess access, String scopeKey, BackupMode mode) {
+	public BackupResult synchronize(ServiceAccountAccess access, DriveScope scope, BackupMode mode) {
 		return backupActivity.duringBackup(() -> {
 			cancellation.begin();
-			return synchronizeScope(access, scopeKey, mode);
+			return synchronizeScope(access, scope, mode);
 		});
 	}
 
@@ -82,9 +83,10 @@ public class DriveBackupService implements DriveBackupUseCase {
 				if (cancellation.isStopRequested()) {
 					break;
 				}
-				String scopeKey = drive.shared() ? drive.id() : access.impersonatedUserEmail();
+				DriveScope scope = drive.shared() ? DriveScope.sharedDrive(drive.id())
+						: DriveScope.personal(access.impersonatedUserEmail());
 				progressTracker.driveStarted(drive);
-				results.add(synchronizeScope(access, scopeKey, mode));
+				results.add(synchronizeScope(access, scope, mode));
 				progressTracker.driveCompleted();
 				if (drive.shared() && driveMetadataPort != null) {
 					driveMetadataPort.save(new StoredDrive(drive.id(), drive.name(), Instant.now()));
@@ -95,24 +97,24 @@ public class DriveBackupService implements DriveBackupUseCase {
 		});
 	}
 
-	private BackupResult synchronizeScope(ServiceAccountAccess access, String scopeKey, BackupMode mode) {
+	private BackupResult synchronizeScope(ServiceAccountAccess access, DriveScope scope, BackupMode mode) {
 		if (mode == BackupMode.FULL) {
-			return runFullInventory(access, scopeKey);
+			return runFullInventory(access, scope);
 		}
-		if (syncStatePort.findByScopeKey(scopeKey).isEmpty()) {
-			return runFullInventory(access, scopeKey);
+		if (syncStatePort.findByScopeKey(scope.key()).isEmpty()) {
+			return runFullInventory(access, scope);
 		}
 		try {
-			var result = changeSyncUseCase.synchronize(access, scopeKey);
-			return new BackupResult(result.scopeKey(), result.changeCount(), false, cancellation.isImmediateStopRequested());
+			var result = changeSyncUseCase.synchronize(access, scope);
+			return new BackupResult(result.scope(), result.changeCount(), false, cancellation.isImmediateStopRequested());
 		} catch (StaleDrivePageTokenException exception) {
-			return runFullInventory(access, scopeKey);
+			return runFullInventory(access, scope);
 		}
 	}
 
-	private BackupResult runFullInventory(ServiceAccountAccess access, String scopeKey) {
-		syncStatePort.deleteByScopeKey(scopeKey);
-		var result = initialSyncUseCase.synchronize(access, scopeKey);
-		return new BackupResult(result.scopeKey(), result.fileCount(), true, cancellation.isImmediateStopRequested());
+	private BackupResult runFullInventory(ServiceAccountAccess access, DriveScope scope) {
+		syncStatePort.deleteByScopeKey(scope.key());
+		var result = initialSyncUseCase.synchronize(access, scope);
+		return new BackupResult(result.scope(), result.fileCount(), true, cancellation.isImmediateStopRequested());
 	}
 }

@@ -9,6 +9,8 @@ import com.google.api.services.drive.model.File;
 import com.google.auth.http.HttpCredentialsAdapter;
 import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
+import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
@@ -90,11 +92,11 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	}
 
 	@Override
-	public String getStartPageToken(ServiceAccountAccess access, String scopeKey) {
+	public String getStartPageToken(ServiceAccountAccess access, DriveScope scope) {
 		try {
 			Drive.Changes.GetStartPageToken request = drive(access).changes().getStartPageToken()
 					.setSupportsAllDrives(true);
-			configureDriveScope(request, scopeKey);
+			configureDriveScope(request, scope);
 			return request.execute().getStartPageToken();
 		} catch (IOException | GeneralSecurityException exception) {
 			throw new GoogleDriveException("Unable to get Drive change start token", exception);
@@ -102,7 +104,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	}
 
 	@Override
-	public DriveChangePage listChanges(ServiceAccountAccess access, String scopeKey, String pageToken) {
+	public DriveChangePage listChanges(ServiceAccountAccess access, DriveScope scope, String pageToken) {
 		if (pageToken == null || pageToken.isBlank()) {
 			throw new IllegalArgumentException("pageToken must not be blank");
 		}
@@ -114,13 +116,13 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setIncludeItemsFromAllDrives(true)
 					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId)),"
 							+ "nextPageToken,newStartPageToken");
-			configureDriveScope(request, scopeKey);
+			configureDriveScope(request, scope);
 			var response = request.execute();
 			List<DriveChange> changes = response.getChanges() == null ? List.of() : response.getChanges().stream()
 				.map(change -> new DriveChange(
 						change.getFileId(),
 						Boolean.TRUE.equals(change.getRemoved()),
-						mapStoredFile(change.getFile(), scopeKey)))
+						mapStoredFile(change.getFile(), scope.key())))
 				.toList();
 			return new DriveChangePage(changes, response.getNextPageToken(), response.getNewStartPageToken());
 		} catch (GoogleJsonResponseException exception) {
@@ -134,7 +136,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	}
 
 	@Override
-	public List<StoredFile> listAllFiles(ServiceAccountAccess access, String scopeKey) {
+	public List<StoredFile> listAllFiles(ServiceAccountAccess access, DriveScope scope) {
 		try {
 			List<StoredFile> files = new java.util.ArrayList<>();
 			String pageToken = null;
@@ -147,11 +149,11 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 						.setSupportsAllDrives(true)
 						.setIncludeItemsFromAllDrives(true)
 						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId),nextPageToken");
-				configureFileScope(request, scopeKey);
+				configureFileScope(request, scope);
 				var response = request.execute();
 				if (response.getFiles() != null) {
 					files.addAll(response.getFiles().stream()
-							.map(file -> mapStoredFile(file, scopeKey)).toList());
+							.map(file -> mapStoredFile(file, scope.key())).toList());
 				}
 				pageToken = response.getNextPageToken();
 			} while (pageToken != null && !pageToken.isBlank());
@@ -202,26 +204,22 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 				|| normalized.contains("maximum allowed size") || normalized.contains("export size");
 	}
 
-	private static void configureDriveScope(Drive.Changes.GetStartPageToken request, String scopeKey) {
-		if (isSharedDriveScope(scopeKey)) {
-			request.setDriveId(scopeKey);
+	private static void configureDriveScope(Drive.Changes.GetStartPageToken request, DriveScope scope) {
+		if (scope.type() == DriveScopeType.SHARED_DRIVE) {
+			request.setDriveId(scope.key());
 		}
 	}
 
-	private static void configureDriveScope(Drive.Changes.List request, String scopeKey) {
-		if (isSharedDriveScope(scopeKey)) {
-			request.setDriveId(scopeKey);
+	private static void configureDriveScope(Drive.Changes.List request, DriveScope scope) {
+		if (scope.type() == DriveScopeType.SHARED_DRIVE) {
+			request.setDriveId(scope.key());
 		}
 	}
 
-	private static void configureFileScope(Drive.Files.List request, String scopeKey) {
-		if (isSharedDriveScope(scopeKey)) {
-			request.setCorpora("drive").setDriveId(scopeKey);
+	private static void configureFileScope(Drive.Files.List request, DriveScope scope) {
+		if (scope.type() == DriveScopeType.SHARED_DRIVE) {
+			request.setCorpora("drive").setDriveId(scope.key());
 		}
-	}
-
-	private static boolean isSharedDriveScope(String scopeKey) {
-		return scopeKey != null && !scopeKey.isBlank() && !scopeKey.contains("@");
 	}
 
 	private static StoredFile mapStoredFile(File file, String ownerScope) {

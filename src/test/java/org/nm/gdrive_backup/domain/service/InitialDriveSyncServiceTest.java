@@ -19,6 +19,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
+import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
@@ -33,6 +34,7 @@ class InitialDriveSyncServiceTest {
 
 	private static final ServiceAccountAccess ACCESS = new ServiceAccountAccess(
 			UUID.randomUUID(), "user@example.com", Instant.now().plusSeconds(3600), Set.of("drive.readonly"));
+	private static final DriveScope SCOPE = DriveScope.personal("user@example.com");
 
 	@Test
 	void persistsAllListedFilesBeforeSavingStartToken() {
@@ -45,17 +47,17 @@ class InitialDriveSyncServiceTest {
 		StoredFile second = new StoredFile("file-2", "user@example.com", "B", "root", null,
 				"text/plain", false, "revision-2", null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
-		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(first, second));
-		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("start-token");
+		when(listingPort.listAllFiles(ACCESS, SCOPE)).thenReturn(List.of(first, second));
+		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn("start-token");
 
 		InitialSyncResult result = new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
-		assertEquals(new InitialSyncResult("user@example.com", 2, "start-token"), result);
+		assertEquals(new InitialSyncResult(SCOPE, 2, "start-token"), result);
 		InOrder order = inOrder(metadataPort, changePort, statePort);
 		order.verify(metadataPort).save(first);
 		order.verify(metadataPort).save(second);
-		order.verify(changePort).getStartPageToken(ACCESS, "user@example.com");
+		order.verify(changePort).getStartPageToken(ACCESS, SCOPE);
 		order.verify(statePort).save(new SyncState("user@example.com", "start-token"));
 	}
 
@@ -68,7 +70,7 @@ class InitialDriveSyncServiceTest {
 		InitialDriveSyncService service = new InitialDriveSyncService(
 				mock(DriveFileListingPort.class), mock(DriveChangePort.class), mock(FileMetadataPort.class), statePort);
 
-		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, "user@example.com"));
+		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE));
 		verify(statePort).findByScopeKey("user@example.com");
 	}
 
@@ -84,13 +86,13 @@ class InitialDriveSyncServiceTest {
 		StoredFile folder = new StoredFile("folder-1", "user@example.com", "Folder", "root", null,
 				"application/vnd.google-apps.folder", false, null, null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
-		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(file, folder));
-		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("start-token");
+		when(listingPort.listAllFiles(ACCESS, SCOPE)).thenReturn(List.of(file, folder));
+		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn("start-token");
 		when(contentService.backup(ACCESS, file)).thenReturn(new FileCapture(7L, "file-1", "revision-1",
 				Instant.now(), "backup/report", 12, null));
 
 		new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort, contentService)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
 		verify(contentService).backup(ACCESS, file);
 		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
@@ -111,12 +113,12 @@ class InitialDriveSyncServiceTest {
 		StoredFile existing = new StoredFile("file-1", "user@example.com", "Old report", "root", null,
 				"text/plain", false, "revision-1", 7L);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
-		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(current));
+		when(listingPort.listAllFiles(ACCESS, SCOPE)).thenReturn(List.of(current));
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(existing));
-		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("fresh-token");
+		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn("fresh-token");
 
 		new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort, contentService)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
 		verify(contentService, never()).backup(ACCESS, current);
 		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
@@ -135,11 +137,11 @@ class InitialDriveSyncServiceTest {
 		StoredFile second = new StoredFile("file-2", "user@example.com", "B", "root", null,
 				"text/plain", false, "revision-2", null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
-		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(first, second));
-		when(changePort.getStartPageToken(ACCESS, "user@example.com")).thenReturn("start-token");
+		when(listingPort.listAllFiles(ACCESS, SCOPE)).thenReturn(List.of(first, second));
+		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn("start-token");
 
 		new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort, null, progressTracker)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
 		InOrder order = inOrder(progressTracker);
 		order.verify(progressTracker).enumerating();
@@ -160,16 +162,16 @@ class InitialDriveSyncServiceTest {
 		StoredFile second = new StoredFile("file-2", "user@example.com", "B", "root", null,
 				"text/plain", false, "revision-2", null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
-		when(listingPort.listAllFiles(ACCESS, "user@example.com")).thenReturn(List.of(first, second));
+		when(listingPort.listAllFiles(ACCESS, SCOPE)).thenReturn(List.of(first, second));
 		doAnswer(invocation -> {
 			cancellation.requestStop(BackupStopMode.IMMEDIATE);
 			return null;
 		}).when(metadataPort).save(first);
 
 		InitialSyncResult result = new InitialDriveSyncService(listingPort, changePort, metadataPort, statePort,
-				null, BackupProgressTracker.NO_OP, cancellation).synchronize(ACCESS, "user@example.com");
+				null, BackupProgressTracker.NO_OP, cancellation).synchronize(ACCESS, SCOPE);
 
-		assertEquals(new InitialSyncResult("user@example.com", 1, null), result);
+		assertEquals(new InitialSyncResult(SCOPE, 1, null), result);
 		verify(metadataPort).save(first);
 		verify(metadataPort, never()).save(second);
 		verify(statePort, never()).save(any());

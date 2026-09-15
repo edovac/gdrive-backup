@@ -1,5 +1,6 @@
 package org.nm.gdrive_backup.domain.service;
 
+import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.SyncState;
@@ -55,12 +56,12 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	}
 
 	@Override
-	public InitialSyncResult synchronize(ServiceAccountAccess access, String scopeKey) {
-		if (syncStatePort.findByScopeKey(scopeKey).isPresent()) {
-			throw new IllegalStateException("Drive scope already has a sync baseline: " + scopeKey);
+	public InitialSyncResult synchronize(ServiceAccountAccess access, DriveScope scope) {
+		if (syncStatePort.findByScopeKey(scope.key()).isPresent()) {
+			throw new IllegalStateException("Drive scope already has a sync baseline: " + scope.key());
 		}
 		progressTracker.enumerating();
-		var files = fileListingPort.listAllFiles(access, scopeKey);
+		var files = fileListingPort.listAllFiles(access, scope);
 		progressTracker.enumerated(files.size());
 		int processedCount = 0;
 		for (org.nm.gdrive_backup.domain.model.StoredFile file : files) {
@@ -83,11 +84,11 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		if (processedCount < files.size()) {
 			// A stopped-early run must never establish a baseline: doing so would make a
 			// later incremental sync silently skip every file this run never reached.
-			return new InitialSyncResult(scopeKey, processedCount, null);
+			return new InitialSyncResult(scope, processedCount, null);
 		}
-		String pageToken = changePort.getStartPageToken(access, scopeKey);
-		syncStatePort.save(new SyncState(scopeKey, pageToken));
-		return new InitialSyncResult(scopeKey, files.size(), pageToken);
+		String pageToken = changePort.getStartPageToken(access, scope);
+		syncStatePort.save(new SyncState(scope.key(), pageToken));
+		return new InitialSyncResult(scope, files.size(), pageToken);
 	}
 
 	private static boolean isFolder(org.nm.gdrive_backup.domain.model.StoredFile file) {

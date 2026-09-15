@@ -21,6 +21,7 @@ import org.mockito.InOrder;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
+import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -35,6 +36,8 @@ class DriveChangeSyncServiceTest {
 
 	private static final ServiceAccountAccess ACCESS = new ServiceAccountAccess(
 			UUID.randomUUID(), "user@example.com", Instant.now().plusSeconds(3600), Set.of("drive.readonly"));
+	private static final DriveScope SCOPE = DriveScope.personal("user@example.com");
+	private static final DriveScope SHARED_SCOPE = DriveScope.sharedDrive("drive-1");
 
 	@Test
 	void drainsPagesAndPersistsNewStartToken() {
@@ -44,16 +47,16 @@ class DriveChangeSyncServiceTest {
 		FileEventPort eventPort = mock(FileEventPort.class);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
-		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, null)), "next-token", null));
-		when(changePort.listChanges(ACCESS, "user@example.com", "next-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "next-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-2", true, null)), null, "new-token"));
 		DriveChangeSyncService service = new DriveChangeSyncService(
 				changePort, statePort, metadataPort, eventPort);
 
-		SyncResult result = service.synchronize(ACCESS, "user@example.com");
+		SyncResult result = service.synchronize(ACCESS, SCOPE);
 
-		assertEquals(new SyncResult("user@example.com", 2, "new-token"), result);
+		assertEquals(new SyncResult(SCOPE, 2, "new-token"), result);
 		verify(statePort).save(new SyncState("user@example.com", "new-token"));
 	}
 
@@ -64,14 +67,14 @@ class DriveChangeSyncServiceTest {
 		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
 		FileEventPort eventPort = mock(FileEventPort.class);
 		when(statePort.findByScopeKey("drive-1")).thenReturn(Optional.empty());
-		when(changePort.getStartPageToken(ACCESS, "drive-1")).thenReturn("start-token");
-		when(changePort.listChanges(ACCESS, "drive-1", "start-token"))
+		when(changePort.getStartPageToken(ACCESS, SHARED_SCOPE)).thenReturn("start-token");
+		when(changePort.listChanges(ACCESS, SHARED_SCOPE, "start-token"))
 				.thenReturn(new DriveChangePage(List.of(), null, "new-token"));
 
 		SyncResult result = new DriveChangeSyncService(
-				changePort, statePort, metadataPort, eventPort).synchronize(ACCESS, "drive-1");
+				changePort, statePort, metadataPort, eventPort).synchronize(ACCESS, SHARED_SCOPE);
 
-		assertEquals(new SyncResult("drive-1", 0, "new-token"), result);
+		assertEquals(new SyncResult(SHARED_SCOPE, 0, "new-token"), result);
 		verify(statePort).save(new SyncState("drive-1", "new-token"));
 	}
 
@@ -89,12 +92,12 @@ class DriveChangeSyncServiceTest {
 				"application/pdf", true, "revision-2", null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
-		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
 
 		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
 		verify(eventPort, times(4)).save(org.mockito.ArgumentMatchers.any());
 		verify(metadataPort).save(current);
@@ -113,14 +116,14 @@ class DriveChangeSyncServiceTest {
 				"text/plain", false, "revision-2", null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
-		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
 		when(contentBackup.backup(ACCESS, current)).thenReturn(new FileCapture(8L, "file-1", "revision-2",
 				Instant.now(), "backup/report", 22, null));
 
 		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, contentBackup)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
 		verify(contentBackup).backup(ACCESS, current);
 		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
@@ -138,12 +141,12 @@ class DriveChangeSyncServiceTest {
 				"text/plain", false, "revision-1", null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
-		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null),
 						new DriveChange("file-2", false, file)), null, "new-token"));
 
 		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, null, progressTracker)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
 		InOrder order = inOrder(progressTracker);
 		order.verify(progressTracker).itemProcessed("file-1");
@@ -159,13 +162,13 @@ class DriveChangeSyncServiceTest {
 		FileEventPort eventPort = mock(FileEventPort.class);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
-		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, null)), "next-token", null));
-		when(changePort.listChanges(ACCESS, "user@example.com", "next-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "next-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-2", true, null)), null, "new-token"));
 
 		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort)
-				.synchronize(ACCESS, "user@example.com");
+				.synchronize(ACCESS, SCOPE);
 
 		// Checkpointed after page one (the intermediate token), not just at the end: on a
 		// crash or a cancelled-and-resumed run, this is what stops a retry from replaying
@@ -183,9 +186,9 @@ class DriveChangeSyncServiceTest {
 		BackupCancellation cancellation = new BackupCancellation();
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
-		when(changePort.listChanges(ACCESS, "user@example.com", "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null)), "next-token", null));
-		when(changePort.listChanges(ACCESS, "user@example.com", "next-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "next-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-2", true, null)), null, "new-token"));
 		doAnswer(invocation -> {
 			cancellation.requestStop(BackupStopMode.IMMEDIATE);
@@ -193,10 +196,10 @@ class DriveChangeSyncServiceTest {
 		}).when(eventPort).save(argThat(event -> "file-1".equals(event.fileId())));
 
 		SyncResult result = new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, null,
-				BackupProgressTracker.NO_OP, cancellation).synchronize(ACCESS, "user@example.com");
+				BackupProgressTracker.NO_OP, cancellation).synchronize(ACCESS, SCOPE);
 
-		assertEquals(new SyncResult("user@example.com", 1, "next-token"), result);
-		verify(changePort, never()).listChanges(ACCESS, "user@example.com", "next-token");
+		assertEquals(new SyncResult(SCOPE, 1, "next-token"), result);
+		verify(changePort, never()).listChanges(ACCESS, SCOPE, "next-token");
 		verify(statePort).save(new SyncState("user@example.com", "next-token"));
 	}
 }

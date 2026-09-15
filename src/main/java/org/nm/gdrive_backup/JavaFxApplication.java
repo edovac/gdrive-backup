@@ -44,6 +44,8 @@ import org.nm.gdrive_backup.domain.model.BackupPhase;
 import org.nm.gdrive_backup.domain.model.BackupProgress;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveItem;
+import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
 import org.nm.gdrive_backup.domain.model.BackupResult;
@@ -472,7 +474,7 @@ public class JavaFxApplication extends Application {
 			boolean cancelled) {
 		String prefix = cancelled ? "Synchronization cancelled. " : "Synchronization complete. ";
 		return results.stream()
-				.map(result -> scopeLabel(result.scopeKey(), knownDrives) + ": " + itemSummary(result))
+				.map(result -> scopeLabel(result.scope(), knownDrives) + ": " + itemSummary(result))
 				.collect(java.util.stream.Collectors.joining("; ", prefix, ""));
 	}
 
@@ -482,15 +484,15 @@ public class JavaFxApplication extends Application {
 		return result.processedItemCount() + " " + activity + suffix;
 	}
 
-	private static String scopeLabel(String scopeKey, List<AvailableDrive> knownDrives) {
-		if (scopeKey.contains("@")) {
-			return "My Drive (" + scopeKey + ")";
+	private static String scopeLabel(DriveScope scope, List<AvailableDrive> knownDrives) {
+		if (scope.type() == DriveScopeType.PERSONAL) {
+			return "My Drive (" + scope.key() + ")";
 		}
 		return knownDrives.stream()
-				.filter(drive -> drive.id().equals(scopeKey))
+				.filter(drive -> drive.id().equals(scope.key()))
 				.findFirst()
 				.map(drive -> "Shared: " + drive.name())
-				.orElse("Shared drive " + scopeKey);
+				.orElse("Shared drive " + scope.key());
 	}
 
 	private static String modeLabel(BackupMode mode) {
