@@ -1,6 +1,8 @@
 package org.nm.gdrive_backup.domain.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
@@ -45,6 +47,7 @@ class DriveChangeSyncServiceTest {
 		SyncStatePort statePort = mock(SyncStatePort.class);
 		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
 		FileEventPort eventPort = mock(FileEventPort.class);
+		echoSavedEvents(eventPort);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
 		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
@@ -56,7 +59,14 @@ class DriveChangeSyncServiceTest {
 
 		SyncResult result = service.synchronize(ACCESS, SCOPE);
 
-		assertEquals(new SyncResult(SCOPE, 2, "new-token"), result);
+		assertEquals(SCOPE, result.scope());
+		assertEquals(2, result.changeCount());
+		assertEquals("old-token", result.fromPageToken());
+		assertEquals("new-token", result.toPageToken());
+		assertEquals(1, result.events().size());
+		assertEquals("file-2", result.events().getFirst().fileId());
+		assertEquals("delete", result.events().getFirst().eventType());
+		assertTrue(result.capturedContent().isEmpty());
 		verify(statePort).save(new SyncState("user@example.com", "new-token"));
 	}
 
@@ -74,7 +84,7 @@ class DriveChangeSyncServiceTest {
 		SyncResult result = new DriveChangeSyncService(
 				changePort, statePort, metadataPort, eventPort).synchronize(ACCESS, SHARED_SCOPE);
 
-		assertEquals(new SyncResult(SHARED_SCOPE, 0, "new-token"), result);
+		assertEquals(new SyncResult(SHARED_SCOPE, 0, "start-token", "new-token", List.of(), List.of()), result);
 		verify(statePort).save(new SyncState("drive-1", "new-token"));
 	}
 
@@ -84,6 +94,7 @@ class DriveChangeSyncServiceTest {
 		SyncStatePort statePort = mock(SyncStatePort.class);
 		FileMetadataPort metadataPort = mock(FileMetadataPort.class);
 		FileEventPort eventPort = mock(FileEventPort.class);
+		echoSavedEvents(eventPort);
 		StoredFile previous = new StoredFile(
 				"file-1", "user@example.com", "Report", "root", null,
 				"application/pdf", false, "revision-1", null);
@@ -96,11 +107,12 @@ class DriveChangeSyncServiceTest {
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
 
-		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort)
+		SyncResult result = new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort)
 				.synchronize(ACCESS, SCOPE);
 
-		verify(eventPort, times(4)).save(org.mockito.ArgumentMatchers.any());
+		verify(eventPort, times(4)).save(any());
 		verify(metadataPort).save(current);
+		assertEquals(4, result.events().size());
 	}
 
 	@Test
@@ -114,20 +126,21 @@ class DriveChangeSyncServiceTest {
 				"text/plain", false, "revision-1", 3L);
 		StoredFile current = new StoredFile("file-1", "user@example.com", "Report", "root", null,
 				"text/plain", false, "revision-2", null);
+		FileCapture capture = new FileCapture(8L, "file-1", "revision-2", Instant.now(), "backup/report", 22, null);
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(
 				new SyncState("user@example.com", "old-token")));
 		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
-		when(contentBackup.backup(ACCESS, current)).thenReturn(new FileCapture(8L, "file-1", "revision-2",
-				Instant.now(), "backup/report", 22, null));
+		when(contentBackup.backup(ACCESS, current)).thenReturn(capture);
 
-		new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, contentBackup)
+		SyncResult result = new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, contentBackup)
 				.synchronize(ACCESS, SCOPE);
 
 		verify(contentBackup).backup(ACCESS, current);
 		verify(metadataPort).save(new StoredFile("file-1", "user@example.com", "Report", "root", null,
 				"text/plain", false, "revision-2", 8L));
+		assertEquals(List.of(capture), result.capturedContent());
 	}
 
 	@Test
@@ -192,14 +205,23 @@ class DriveChangeSyncServiceTest {
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-2", true, null)), null, "new-token"));
 		doAnswer(invocation -> {
 			cancellation.requestStop(BackupStopMode.IMMEDIATE);
-			return null;
+			return invocation.getArgument(0);
 		}).when(eventPort).save(argThat(event -> "file-1".equals(event.fileId())));
 
 		SyncResult result = new DriveChangeSyncService(changePort, statePort, metadataPort, eventPort, null,
 				BackupProgressTracker.NO_OP, cancellation).synchronize(ACCESS, SCOPE);
 
-		assertEquals(new SyncResult(SCOPE, 1, "next-token"), result);
+		assertEquals(SCOPE, result.scope());
+		assertEquals(1, result.changeCount());
+		assertEquals("old-token", result.fromPageToken());
+		assertEquals("next-token", result.toPageToken());
+		assertEquals(1, result.events().size());
+		assertEquals("file-1", result.events().getFirst().fileId());
 		verify(changePort, never()).listChanges(ACCESS, SCOPE, "next-token");
 		verify(statePort).save(new SyncState("user@example.com", "next-token"));
+	}
+
+	private static void echoSavedEvents(FileEventPort eventPort) {
+		when(eventPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 	}
 }

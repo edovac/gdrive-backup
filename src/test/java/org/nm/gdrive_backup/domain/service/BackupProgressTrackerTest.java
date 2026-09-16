@@ -60,6 +60,18 @@ class BackupProgressTrackerTest {
 	}
 
 	@Test
+	void reportsPackagingPhase() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+
+		ArgumentCaptor<BackupProgress> captor = ArgumentCaptor.forClass(BackupProgress.class);
+		tracker.packaging();
+		verify(port, atLeastOnce()).report(captor.capture());
+
+		assertEquals(BackupPhase.PACKAGING, captor.getValue().phase());
+	}
+
+	@Test
 	void computesDeterministicEtaOnceItemsAreProcessed() {
 		tracker.jobStarted(List.of(PERSONAL));
 		tracker.driveStarted(PERSONAL);

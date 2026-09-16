@@ -6,6 +6,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.port.out.FileCapturePort;
@@ -13,6 +14,9 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class SqliteFileCaptureAdapter implements FileCapturePort {
+
+	private static final String SELECT_COLUMNS =
+			"SELECT id, file_id, revision_id, timestamp, local_path, size_bytes, archive_id FROM file_captures ";
 
 	private final SqliteDatabase database;
 
@@ -52,24 +56,42 @@ public class SqliteFileCaptureAdapter implements FileCapturePort {
 	@Override
 	public List<FileCapture> findByFileId(String fileId) {
 		try (var connection = database.openConnection();
-			var statement = connection.prepareStatement(
-					"SELECT id, file_id, revision_id, timestamp, local_path, size_bytes, archive_id "
-							+ "FROM file_captures WHERE file_id = ? ORDER BY id")) {
+			var statement = connection.prepareStatement(SELECT_COLUMNS + "WHERE file_id = ? ORDER BY id")) {
 			statement.setString(1, fileId);
 			try (ResultSet result = statement.executeQuery()) {
 				List<FileCapture> captures = new ArrayList<>();
 				while (result.next()) {
-					long rawArchiveId = result.getLong("archive_id");
-					Long archiveId = result.wasNull() ? null : rawArchiveId;
-					captures.add(new FileCapture(
-							result.getLong("id"), result.getString("file_id"), result.getString("revision_id"),
-							Instant.parse(result.getString("timestamp")), result.getString("local_path"),
-							result.getLong("size_bytes"), archiveId));
+					captures.add(readCapture(result));
 				}
 				return captures;
 			}
 		} catch (SQLException exception) {
 			throw new IllegalStateException("Unable to read SQLite file captures", exception);
 		}
+	}
+
+	@Override
+	public Optional<FileCapture> findById(Long id) {
+		try (var connection = database.openConnection();
+			var statement = connection.prepareStatement(SELECT_COLUMNS + "WHERE id = ?")) {
+			statement.setLong(1, id);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				return Optional.of(readCapture(result));
+			}
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Unable to read SQLite file capture", exception);
+		}
+	}
+
+	private static FileCapture readCapture(ResultSet result) throws SQLException {
+		long rawArchiveId = result.getLong("archive_id");
+		Long archiveId = result.wasNull() ? null : rawArchiveId;
+		return new FileCapture(
+				result.getLong("id"), result.getString("file_id"), result.getString("revision_id"),
+				Instant.parse(result.getString("timestamp")), result.getString("local_path"),
+				result.getLong("size_bytes"), archiveId);
 	}
 }

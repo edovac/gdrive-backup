@@ -2,10 +2,12 @@ package org.nm.gdrive_backup.adapter.out.persistence;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -42,5 +44,22 @@ class SqliteFileHistoryAdapterTest {
 		assertNotNull(rename.id());
 		assertEquals(List.of(firstCapture, secondCapture), captures.findByFileId("file-1"));
 		assertEquals(List.of(rename), events.findByFileId("file-1"));
+	}
+
+	@Test
+	void findsACaptureByItsOwnId() {
+		SqliteDatabase database = new SqliteDatabase(temporaryDirectory.resolve("backup.db"));
+		database.initialize();
+		new SqliteFileMetadataAdapter(database).save(new StoredFile(
+				"file-1", "user@example.com", "Report", "root", null,
+				"application/pdf", false, "revision-1", null));
+		SqliteFileCaptureAdapter captures = new SqliteFileCaptureAdapter(database);
+		FileCapture saved = captures.save(new FileCapture(
+				null, "file-1", "revision-1", Instant.parse("2026-09-12T10:00:00Z"), "/backup/report-1.pdf", 100L, null));
+
+		Optional<FileCapture> found = captures.findById(saved.id());
+
+		assertEquals(Optional.of(saved), found);
+		assertTrue(captures.findById(saved.id() + 999).isEmpty());
 	}
 }

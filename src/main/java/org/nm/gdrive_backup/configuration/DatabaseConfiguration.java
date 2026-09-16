@@ -2,10 +2,12 @@ package org.nm.gdrive_backup.configuration;
 
 import java.nio.file.Path;
 
+import org.nm.gdrive_backup.adapter.out.persistence.LocalArchiveWriterAdapter;
 import org.nm.gdrive_backup.adapter.out.persistence.LocalBackupLocationAdapter;
 import org.nm.gdrive_backup.adapter.out.persistence.LocalCaptureStorageAdapter;
 import org.nm.gdrive_backup.adapter.out.persistence.SqliteDatabase;
 import org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase;
+import org.nm.gdrive_backup.domain.port.out.ArchiveWriterPort;
 import org.nm.gdrive_backup.domain.port.out.BackupLocationPort;
 import org.nm.gdrive_backup.domain.service.BackupActivity;
 import org.nm.gdrive_backup.domain.service.BackupLocationService;
@@ -29,6 +31,11 @@ public class DatabaseConfiguration {
 	@Bean
 	BackupLocationPort backupLocationPort(SqliteDatabase database, LocalCaptureStorageAdapter captureStorage) {
 		return new LocalBackupLocationAdapter(database, captureStorage);
+	}
+
+	@Bean
+	ArchiveWriterPort archiveWriterPort(LocalCaptureStorageAdapter captureStorage) {
+		return new LocalArchiveWriterAdapter(captureStorage);
 	}
 
 	@Bean

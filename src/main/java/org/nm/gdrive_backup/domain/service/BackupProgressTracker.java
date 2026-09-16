@@ -82,6 +82,11 @@ public class BackupProgressTracker {
 		report();
 	}
 
+	public void packaging() {
+		phase = BackupPhase.PACKAGING;
+		report();
+	}
+
 	public void driveCompleted() {
 		completedDriveDurations.add(Duration.between(driveStartedAt, clock.instant()));
 		completedDrives++;

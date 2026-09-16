@@ -3,6 +3,7 @@ package org.nm.gdrive_backup.domain.service;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -15,6 +16,8 @@ import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 public class DriveChangeSyncService implements DriveChangeSyncUseCase {
@@ -60,10 +63,13 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 
 	@Override
 	public SyncResult synchronize(ServiceAccountAccess access, DriveScope scope) {
-		String pageToken = syncStatePort.findByScopeKey(scope.key())
+		String fromPageToken = syncStatePort.findByScopeKey(scope.key())
 				.map(SyncState::pageToken)
 				.orElseGet(() -> changePort.getStartPageToken(access, scope));
+		String pageToken = fromPageToken;
 		int changeCount = 0;
+		List<FileEvent> events = new ArrayList<>();
+		List<FileCapture> capturedContent = new ArrayList<>();
 		String newStartPageToken = null;
 		while (newStartPageToken == null) {
 			if (cancellation.isImmediateStopRequested()) {
@@ -72,7 +78,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			DriveChangePage page = changePort.listChanges(access, scope, pageToken);
 			changeCount += page.changes().size();
 			page.changes().forEach(change -> {
-				applyChange(access, change);
+				applyChange(access, change, events, capturedContent);
 				progressTracker.itemProcessed(itemLabel(change));
 			});
 			newStartPageToken = page.newStartPageToken();
@@ -85,16 +91,17 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			pageToken = newStartPageToken != null ? newStartPageToken : page.nextPageToken();
 			syncStatePort.save(new SyncState(scope.key(), pageToken));
 		}
-		return new SyncResult(scope, changeCount, pageToken);
+		return new SyncResult(scope, changeCount, fromPageToken, pageToken, events, capturedContent);
 	}
 
 	private static String itemLabel(DriveChange change) {
 		return change.file() != null ? change.file().name() : change.fileId();
 	}
 
-	private void applyChange(ServiceAccountAccess access, DriveChange change) {
+	private void applyChange(ServiceAccountAccess access, DriveChange change, List<FileEvent> events,
+			List<FileCapture> capturedContent) {
 		if (change.removed()) {
-			fileEventPort.save(new FileEvent(null, change.fileId(), "delete", null, null, Instant.now(), null));
+			events.add(recordEvent(change.fileId(), "delete", null, null));
 			return;
 		}
 		StoredFile current = change.file();
@@ -102,11 +109,12 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			return;
 		}
 		Optional<StoredFile> previous = fileMetadataPort.findByFileId(current.fileId());
-		previous.ifPresent(old -> recordDifferences(old, current));
+		previous.ifPresent(old -> recordDifferences(old, current, events));
 		fileMetadataPort.save(current);
 		if (shouldBackUpContent(previous, current)) {
-			var version = contentBackupService.backup(access, current);
-			fileMetadataPort.save(withCurrentVersion(current, version.id()));
+			var capture = contentBackupService.backup(access, current);
+			fileMetadataPort.save(withCurrentVersion(current, capture.id()));
+			capturedContent.add(capture);
 		}
 	}
 
@@ -126,23 +134,23 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 				file.mimeType(), file.trashed(), file.headRevisionId(), versionId);
 	}
 
-	private void recordDifferences(StoredFile previous, StoredFile current) {
+	private void recordDifferences(StoredFile previous, StoredFile current, List<FileEvent> events) {
 		if (!previous.name().equals(current.name())) {
-			recordEvent(current.fileId(), "rename", previous.name(), current.name());
+			events.add(recordEvent(current.fileId(), "rename", previous.name(), current.name()));
 		}
 		if (!previous.parents().equals(current.parents()) || !java.util.Objects.equals(previous.driveId(), current.driveId())) {
-			recordEvent(current.fileId(), "move", previous.parents(), current.parents());
+			events.add(recordEvent(current.fileId(), "move", previous.parents(), current.parents()));
 		}
 		if (previous.trashed() != current.trashed()) {
-			recordEvent(current.fileId(), current.trashed() ? "trash" : "untrash",
-					Boolean.toString(previous.trashed()), Boolean.toString(current.trashed()));
+			events.add(recordEvent(current.fileId(), current.trashed() ? "trash" : "untrash",
+					Boolean.toString(previous.trashed()), Boolean.toString(current.trashed())));
 		}
 		if (!java.util.Objects.equals(previous.headRevisionId(), current.headRevisionId())) {
-			recordEvent(current.fileId(), "content", previous.headRevisionId(), current.headRevisionId());
+			events.add(recordEvent(current.fileId(), "content", previous.headRevisionId(), current.headRevisionId()));
 		}
 	}
 
-	private void recordEvent(String fileId, String eventType, String oldValue, String newValue) {
-		fileEventPort.save(new FileEvent(null, fileId, eventType, oldValue, newValue, Instant.now(), null));
+	private FileEvent recordEvent(String fileId, String eventType, String oldValue, String newValue) {
+		return fileEventPort.save(new FileEvent(null, fileId, eventType, oldValue, newValue, Instant.now(), null));
 	}
 }

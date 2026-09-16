@@ -27,6 +27,7 @@ import org.nm.gdrive_backup.domain.service.DriveUsageQuotaService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUsageReportService;
 import org.nm.gdrive_backup.domain.service.CloudQuotaLimitService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
+import org.nm.gdrive_backup.domain.service.ArchivePackagingService;
 import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
 import org.nm.gdrive_backup.domain.service.FileContentBackupService;
 import org.nm.gdrive_backup.domain.service.InitialDriveSyncService;
@@ -34,9 +35,12 @@ import org.nm.gdrive_backup.domain.service.DriveBackupService;
 import org.nm.gdrive_backup.domain.service.BackupActivity;
 import org.nm.gdrive_backup.domain.service.BackupProgressTracker;
 import org.nm.gdrive_backup.domain.service.BackupCancellation;
+import org.nm.gdrive_backup.domain.port.in.ArchivePackagingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
+import org.nm.gdrive_backup.domain.port.out.ArchivePort;
+import org.nm.gdrive_backup.domain.port.out.ArchiveWriterPort;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 import org.nm.gdrive_backup.domain.port.out.FileEventPort;
@@ -167,12 +171,18 @@ public class ServiceAccountConfiguration {
 	}
 
 	@Bean
+	ArchivePackagingUseCase archivePackagingUseCase(ArchivePort archivePort, ArchiveWriterPort archiveWriterPort,
+			FileMetadataPort fileMetadataPort, FileCapturePort fileCapturePort) {
+		return new ArchivePackagingService(archivePort, archiveWriterPort, fileMetadataPort, fileCapturePort);
+	}
+
+	@Bean
 	DriveBackupUseCase driveBackupUseCase(SyncStatePort syncStatePort,
 			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase,
 			BackupActivity backupActivity, DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
-			BackupCancellation cancellation) {
+			BackupCancellation cancellation, ArchivePackagingUseCase archivePackagingUseCase) {
 		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase,
-				backupActivity, driveMetadataPort, progressTracker, cancellation);
+				backupActivity, driveMetadataPort, progressTracker, cancellation, archivePackagingUseCase);
 	}
 
 	@Bean

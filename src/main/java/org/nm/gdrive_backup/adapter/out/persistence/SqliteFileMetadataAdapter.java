@@ -2,6 +2,8 @@ package org.nm.gdrive_backup.adapter.out.persistence;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -29,6 +31,26 @@ public class SqliteFileMetadataAdapter implements FileMetadataPort {
 					return Optional.empty();
 				}
 				return Optional.of(readFile(result));
+			}
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Unable to read SQLite file metadata", exception);
+		}
+	}
+
+	@Override
+	public List<StoredFile> findAllByOwnerScope(String ownerScope) {
+		try (var connection = database.openConnection();
+			var statement = connection.prepareStatement(
+					"SELECT file_id, owner_scope, name, parents, drive_id, mime_type, trashed, "
+							+ "head_revision_id, current_version_id FROM files WHERE owner_scope = ? "
+							+ "ORDER BY file_id")) {
+			statement.setString(1, ownerScope);
+			try (ResultSet result = statement.executeQuery()) {
+				List<StoredFile> files = new ArrayList<>();
+				while (result.next()) {
+					files.add(readFile(result));
+				}
+				return files;
 			}
 		} catch (SQLException exception) {
 			throw new IllegalStateException("Unable to read SQLite file metadata", exception);

@@ -11,6 +11,7 @@ import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
 import org.nm.gdrive_backup.domain.model.StoredDrive;
+import org.nm.gdrive_backup.domain.port.in.ArchivePackagingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
@@ -27,6 +28,7 @@ public class DriveBackupService implements DriveBackupUseCase {
 	private final DriveMetadataPort driveMetadataPort;
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
+	private final ArchivePackagingUseCase archivePackagingUseCase;
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity) {
@@ -52,6 +54,14 @@ public class DriveBackupService implements DriveBackupUseCase {
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
 			DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
 			BackupCancellation cancellation) {
+		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, driveMetadataPort, progressTracker,
+				cancellation, null);
+	}
+
+	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
+			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
+			DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
+			BackupCancellation cancellation, ArchivePackagingUseCase archivePackagingUseCase) {
 		this.syncStatePort = syncStatePort;
 		this.initialSyncUseCase = initialSyncUseCase;
 		this.changeSyncUseCase = changeSyncUseCase;
@@ -59,13 +69,14 @@ public class DriveBackupService implements DriveBackupUseCase {
 		this.driveMetadataPort = driveMetadataPort;
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
+		this.archivePackagingUseCase = archivePackagingUseCase;
 	}
 
 	@Override
 	public BackupResult synchronize(ServiceAccountAccess access, DriveScope scope, BackupMode mode) {
 		return backupActivity.duringBackup(() -> {
 			cancellation.begin();
-			return synchronizeScope(access, scope, mode);
+			return synchronizeScope(access, scope, mode, null);
 		});
 	}
 
@@ -86,7 +97,7 @@ public class DriveBackupService implements DriveBackupUseCase {
 				DriveScope scope = drive.shared() ? DriveScope.sharedDrive(drive.id())
 						: DriveScope.personal(access.impersonatedUserEmail());
 				progressTracker.driveStarted(drive);
-				results.add(synchronizeScope(access, scope, mode));
+				results.add(synchronizeScope(access, scope, mode, drive.name()));
 				progressTracker.driveCompleted();
 				if (drive.shared() && driveMetadataPort != null) {
 					driveMetadataPort.save(new StoredDrive(drive.id(), drive.name(), Instant.now()));
@@ -97,24 +108,35 @@ public class DriveBackupService implements DriveBackupUseCase {
 		});
 	}
 
-	private BackupResult synchronizeScope(ServiceAccountAccess access, DriveScope scope, BackupMode mode) {
+	private BackupResult synchronizeScope(ServiceAccountAccess access, DriveScope scope, BackupMode mode,
+			String scopeDisplayName) {
 		if (mode == BackupMode.FULL) {
-			return runFullInventory(access, scope);
+			return runFullInventory(access, scope, scopeDisplayName);
 		}
 		if (syncStatePort.findByScopeKey(scope.key()).isEmpty()) {
-			return runFullInventory(access, scope);
+			return runFullInventory(access, scope, scopeDisplayName);
 		}
 		try {
 			var result = changeSyncUseCase.synchronize(access, scope);
-			return new BackupResult(result.scope(), result.changeCount(), false, cancellation.isImmediateStopRequested());
+			boolean cancelled = cancellation.isImmediateStopRequested();
+			if (!cancelled && archivePackagingUseCase != null) {
+				progressTracker.packaging();
+				archivePackagingUseCase.packageIncrementalArchive(scope, scopeDisplayName, result);
+			}
+			return new BackupResult(result.scope(), result.changeCount(), false, cancelled);
 		} catch (StaleDrivePageTokenException exception) {
-			return runFullInventory(access, scope);
+			return runFullInventory(access, scope, scopeDisplayName);
 		}
 	}
 
-	private BackupResult runFullInventory(ServiceAccountAccess access, DriveScope scope) {
+	private BackupResult runFullInventory(ServiceAccountAccess access, DriveScope scope, String scopeDisplayName) {
 		syncStatePort.deleteByScopeKey(scope.key());
 		var result = initialSyncUseCase.synchronize(access, scope);
-		return new BackupResult(result.scope(), result.fileCount(), true, cancellation.isImmediateStopRequested());
+		boolean cancelled = cancellation.isImmediateStopRequested();
+		if (!cancelled && archivePackagingUseCase != null) {
+			progressTracker.packaging();
+			archivePackagingUseCase.packageFullArchive(scope, scopeDisplayName);
+		}
+		return new BackupResult(result.scope(), result.fileCount(), true, cancelled);
 	}
 }

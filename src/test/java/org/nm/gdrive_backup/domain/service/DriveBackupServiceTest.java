@@ -33,6 +33,7 @@ import org.nm.gdrive_backup.domain.model.StoredDrive;
 import org.nm.gdrive_backup.domain.model.SyncResult;
 import org.nm.gdrive_backup.domain.model.SyncState;
 import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
+import org.nm.gdrive_backup.domain.port.in.ArchivePackagingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.DriveMetadataPort;
@@ -89,7 +90,7 @@ class DriveBackupServiceTest {
 		when(statePort.findByScopeKey("user@example.com"))
 				.thenReturn(Optional.of(new SyncState("user@example.com", "old-token")));
 		when(changeSync.synchronize(ACCESS, PERSONAL_SCOPE))
-				.thenReturn(new SyncResult(PERSONAL_SCOPE, 2, "new-token"));
+				.thenReturn(new SyncResult(PERSONAL_SCOPE, 2, "old-token", "new-token", List.of(), List.of()));
 
 		BackupResult result = new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity())
 				.synchronize(ACCESS, PERSONAL_SCOPE, BackupMode.INCREMENTAL);
@@ -318,5 +319,95 @@ class DriveBackupServiceTest {
 
 		assertEquals(List.of(new BackupResult(PERSONAL_SCOPE, 4, true, false)), results);
 		verify(initialSync, never()).synchronize(ACCESS, SHARED_SCOPE);
+	}
+
+	@Test
+	void packagesAFullArchiveAfterASuccessfulFullInventoryWithNoDisplayNameForTheSingleScopeEntryPoint() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		ArchivePackagingUseCase archivePackagingUseCase = mock(ArchivePackagingUseCase.class);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, PERSONAL_SCOPE)).thenReturn(new InitialSyncResult(PERSONAL_SCOPE, 4, "token"));
+
+		new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(), null,
+				BackupProgressTracker.NO_OP, new BackupCancellation(), archivePackagingUseCase)
+				.synchronize(ACCESS, PERSONAL_SCOPE, BackupMode.FULL);
+
+		verify(archivePackagingUseCase).packageFullArchive(PERSONAL_SCOPE, null);
+	}
+
+	@Test
+	void packagesAnIncrementalArchiveAfterASuccessfulIncrementalSync() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		ArchivePackagingUseCase archivePackagingUseCase = mock(ArchivePackagingUseCase.class);
+		when(statePort.findByScopeKey("user@example.com"))
+				.thenReturn(Optional.of(new SyncState("user@example.com", "old-token")));
+		SyncResult syncResult = new SyncResult(PERSONAL_SCOPE, 2, "old-token", "new-token", List.of(), List.of());
+		when(changeSync.synchronize(ACCESS, PERSONAL_SCOPE)).thenReturn(syncResult);
+
+		new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(), null,
+				BackupProgressTracker.NO_OP, new BackupCancellation(), archivePackagingUseCase)
+				.synchronize(ACCESS, PERSONAL_SCOPE, BackupMode.INCREMENTAL);
+
+		verify(archivePackagingUseCase).packageIncrementalArchive(PERSONAL_SCOPE, null, syncResult);
+	}
+
+	@Test
+	void reportsThePackagingPhaseBeforeInvokingTheUseCase() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		ArchivePackagingUseCase archivePackagingUseCase = mock(ArchivePackagingUseCase.class);
+		BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, PERSONAL_SCOPE)).thenReturn(new InitialSyncResult(PERSONAL_SCOPE, 4, "token"));
+
+		new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(), null,
+				progressTracker, new BackupCancellation(), archivePackagingUseCase)
+				.synchronize(ACCESS, PERSONAL_SCOPE, BackupMode.FULL);
+
+		InOrder order = inOrder(progressTracker, archivePackagingUseCase);
+		order.verify(progressTracker).packaging();
+		order.verify(archivePackagingUseCase).packageFullArchive(PERSONAL_SCOPE, null);
+	}
+
+	@Test
+	void skipsPackagingWhenTheRunWasCancelled() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		ArchivePackagingUseCase archivePackagingUseCase = mock(ArchivePackagingUseCase.class);
+		BackupCancellation cancellation = new BackupCancellation();
+		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, PERSONAL_SCOPE)).thenAnswer(invocation -> {
+			cancellation.requestStop(BackupStopMode.IMMEDIATE);
+			return new InitialSyncResult(PERSONAL_SCOPE, 4, "token");
+		});
+
+		new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(), null,
+				BackupProgressTracker.NO_OP, cancellation, archivePackagingUseCase)
+				.synchronize(ACCESS, PERSONAL_SCOPE, BackupMode.FULL);
+
+		verify(archivePackagingUseCase, never()).packageFullArchive(any(), any());
+	}
+
+	@Test
+	void passesTheSharedDriveDisplayNameToPackagingWhenSynchronizingSelectedDrives() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		ArchivePackagingUseCase archivePackagingUseCase = mock(ArchivePackagingUseCase.class);
+		when(statePort.findByScopeKey(anyString())).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, SHARED_SCOPE)).thenReturn(new InitialSyncResult(SHARED_SCOPE, 2, "token-1"));
+
+		new DriveBackupService(statePort, initialSync, changeSync, new BackupActivity(), null,
+				BackupProgressTracker.NO_OP, new BackupCancellation(), archivePackagingUseCase)
+				.synchronizeSelectedDrives(ACCESS, List.of(new AvailableDrive("drive-1", "Finance", true)),
+						BackupMode.INCREMENTAL);
+
+		verify(archivePackagingUseCase).packageFullArchive(SHARED_SCOPE, "Finance");
 	}
 }

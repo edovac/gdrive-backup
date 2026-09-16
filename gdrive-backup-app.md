@@ -25,7 +25,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-15
+Last reviewed: 2026-09-16
 
 ### Completed
 
@@ -111,24 +111,22 @@ Last reviewed: 2026-09-15
   `!scopeKey.contains("@")`, and the JavaFX summary label does the same
   instead of checking for `@` itself. `SyncStatePort`/`SyncState` stay keyed
   by the raw string, since persistence there doesn't branch on scope type.
+- [x] SQLite schema and persistence for users, drives, files, captures, events, archives, and sync state. Schema initialization and all metadata/history repositories are in place, including `ArchivePort`/`SqliteArchiveAdapter`, and sync orchestration now writes to `archives` as part of each run.
+- [x] Backup options and per-drive archive packaging: the admin picks full versus incremental mode in the UI before starting a sync; `INCREMENTAL` falls back to a full inventory when no baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories regardless of any saved cursor. After each scope's sync completes (and wasn't cancelled), `ArchivePackagingService` writes its ZIP archive: a full run materializes the live, non-trashed files into a real Drive-shaped folder tree (`FlatTreePathResolver`, with multi-parent flattening, collision suffixing, and a depth/cycle-safe walk of the id-based parent chains); an incremental run writes an id-keyed delta of the run's captured content plus its events, or produces no archive at all when nothing changed. `LocalArchiveWriterAdapter` stages each ZIP to a temp file and atomically publishes it, embedding `manifest.json` (Gson, adapter-side only) before the `archives` row is inserted, so a crash never leaves a DB row pointing at a missing file. Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies. `file_captures.archive_id`/`file_events.archive_id` backfill is deferred to the archive-operations item below, since nothing consumes it yet.
 
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
-- [-] SQLite schema and persistence for users, drives, files, captures, events, archives, and sync state. Schema initialization and all metadata/history repositories are in place; sync orchestration remains.
 - [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If any one scope fails the whole run stops. An org-wide sweep across every Workspace user and partial-failure handling with a completion summary remain.
-- [-] Backup options and archive packaging: let the admin choose full versus incremental mode, then produce the per-drive archive output described under **Archive output** (a flat, uploadable tree for a full run, an id-keyed delta for an incremental one, none when an incremental run finds no changes). Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies.
-  Full versus incremental mode selection is implemented: the admin picks the mode in the
-  UI before starting a sync, `INCREMENTAL` falls back to a full inventory when no
-  baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories
-  regardless of any saved cursor. Per-drive archive packaging and the archive
-  operations remain.
 
 ### Not started
 
 - [ ] Archive operations: squash consecutive deltas into a merged delta,
   collapse a chain into a flat uploadable tree, warn on chain gaps, and start a
-  new chain when a full backup runs on a scope that already has one.
+  new chain when a full backup runs on a scope that already has one (today's
+  `sequence_number` is monotonic per scope, not per chain). Also backfill
+  `file_captures.archive_id`/`file_events.archive_id`, which the archive
+  writer deliberately leaves null until these operations exist to consume it.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -154,16 +152,14 @@ requirements below as the source of truth for expected behavior.
 
 **P1 — complete the backup product**
 
-- Per-drive archive output, each with its own manifest: a flat, directly
+- [x] Per-drive archive output, each with its own manifest: a flat, directly
   uploadable tree for a full run, an id-keyed delta for an incremental one,
-  none when an incremental run finds no changes. Archives are organized into
-  per-scope chains rooted in one full backup; starting a new full backup on a
-  scope with an existing chain begins a new chain, leaving the old one intact.
-  The chain is tracked in SQLite and mirrored in each manifest, with a
-  `sequence_number` used for archive naming. Each archive is a ZIP file with
-  its manifest embedded at the root; a cancelled run writes no archive and no
-  chain entry (see **Known limitations**). Naming and directory layout are
-  decided — see **Archive layout and naming** under **Local storage layout**.
+  none when an incremental run finds no changes. Each archive is a ZIP file
+  with its manifest embedded at the root; a cancelled run writes no archive
+  and no chain entry. `sequence_number` is currently monotonic per scope
+  rather than per chain, since nothing tracks separate chains yet — starting
+  a genuinely new chain on a fresh full backup is still open, see the archive
+  operations item below.
 - Archive operations: squash consecutive deltas into one `MERGED_INCREMENTAL`
   delta, and collapse a full archive plus its deltas into a single flat
   `MERGED_FULL` tree that becomes the chain's new base. Both refuse to run on a
