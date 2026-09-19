@@ -137,12 +137,15 @@ Last reviewed: 2026-09-19
   and build a full archive from a complete set of incremental archives
   (base full plus every delta) without touching Drive. Requires recreating any
   existing `backup.db`, since there is no migration tool.
-- [ ] Archive operations: squash consecutive deltas into a merged delta,
-  collapse a chain into a flat uploadable tree, warn on chain gaps, and start a
-  new chain when a full backup runs on a scope that already has one (today's
-  `sequence_number` is monotonic per scope, not per chain). The collapse
-  operation is also how a full archive is built from a complete set of
-  incremental archives, with no Drive access.
+- [ ] Archive operations (manual, per drive, from the Archive manager): the
+  **merge** operation (base full plus all current incrementals into one
+  `MERGED_FULL`, which becomes the chain's new root so incremental backups
+  continue after it) with an optional, verified and confirmed deletion of the
+  superseded partial archives, plus chain-gap detection and starting a new
+  chain when a from-scratch full backup runs on a scope that already has one
+  (today's `sequence_number` is monotonic per scope, not per chain). Merge
+  reads only archives, never Drive. See **Archive operations** under Core
+  requirements.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -180,11 +183,11 @@ requirements below as the source of truth for expected behavior.
   archive is always built from scratch by streaming every file from Drive, and
   can alternatively be built from a complete set of incremental archives
   (base full plus every delta). See **Storage layout**.
-- Archive operations: squash consecutive deltas into one `MERGED_INCREMENTAL`
-  delta, and collapse a full archive plus its deltas into a single flat
-  `MERGED_FULL` tree that becomes the chain's new base. Both refuse to run on a
-  chain with a missing link, and both keep the superseded archives by default,
-  offering the admin the option to delete them afterward.
+- Archive operations: the **merge** operation — a `MERGED_FULL` built from the
+  base full plus all current incrementals, which becomes the chain's new root
+  so incremental backups continue after it — with an option to delete the
+  superseded partial archives. Manual, per drive, reads only archives, and
+  refuses to run on a chain with a missing link.
 - Chain-gap detection and warnings, since deleting an archive now permanently
   destroys the history it held.
 - Partial-failure handling and a completion summary for organization-wide runs.
@@ -268,7 +271,7 @@ Windows packaging.
     API quota and time). A full archive can **also be built from a complete
     set of incremental archives** for the scope — its base full archive plus
     every delta after it, with no gap — by applying each delta's content and
-    events in order, without contacting Google (the collapse operation; see
+    events in order, without contacting Google (the **merge** operation; see
     **Archive operations**).
   - An **incremental** run produces a **delta** archive: an id-keyed payload of
     the content that changed, streamed from Drive straight into the ZIP as
@@ -278,6 +281,16 @@ Windows packaging.
     tree could not be uploaded anyway, and a moved file's new path would lose
     where it came from. A rename with no new content still counts as a change
     and still produces a delta archive.
+  - **Self-describing deltas.** Each delta's manifest records, for **every file
+    the run touched** (new content, rename, move, trash, untrash or delete),
+    the file's resulting `name`, `parents`, `mime_type` and `trashed` state, plus
+    its `file_id`, revision and entry name when content is included. Content
+    entries stay id-keyed, but the manifest alone is enough to place every
+    file in the folder tree. This is what lets the merge rebuild the Drive-shaped
+    tree from the archives alone, with `backup.db` lost or untrusted. The full
+    archive's manifest likewise records name, parents and mime type for every
+    live file **and every folder** (folders are needed to resolve ancestor names
+    and are not otherwise present in the ZIP).
   - An incremental run whose changes feed returned nothing produces **no
     archive at all**, and the UI says so explicitly rather than presenting a
     completed backup whose archive is missing.
@@ -306,26 +319,49 @@ Windows packaging.
   - **Collisions disambiguated.** Drive allows two files with the same name in
     one folder; a filesystem does not. Same-name siblings get a ` (2)`, ` (3)`
     suffix.
-- **Archive operations**: the admin can reshape existing archives without
-  re-contacting Google. The database is available during these operations, but
-  the **archives are authoritative** — their contents and manifests drive the
+- **Archive operations**: there is one operation, **merge**, which the admin
+  runs manually per drive from the Archive manager without re-contacting
+  Google. The intended strategy is to run **frequent incremental backups** and
+  periodically **create a full checkpoint from them**, which avoids
+  re-downloading the whole Drive; a from-scratch full backup from Drive stays
+  available as the recovery choice when incremental archives are lost or
+  corrupted. The database is available during the operation, but the
+  **archives are authoritative** — their contents and manifests drive the
   work, while the database locates the chain, confirms no link is missing, and
-  records the result. This keeps merges correct even when the scope has been
-  re-synced since those archives were written.
-  - **Squash**: merge several consecutive deltas into one `MERGED_INCREMENTAL`
-    archive covering the combined cursor range, still incremental. Events
-    collapse to their net effect — a file renamed A→B then B→C appears once as
-    A→C, and a file created then deleted inside the range drops out entirely.
-  - **Collapse**: merge a full archive and the deltas that follow it into a
-    single flat, directly-uploadable `MERGED_FULL` archive, applying each
-    delta's events in order. This becomes the chain's new base, and replaces
-    what would otherwise be a separate "convert versioned to non-versioned"
-    step.
-  - Both refuse to run on a chain with a missing link, and report which archive
-    is absent.
-  - Either operation keeps the archives it superseded by default; the admin is
-    offered the option to delete them afterward once the merge result is
-    confirmed good.
+  records the result.
+  - **Merge operation**: creates a **full backup from a set of incremental
+    archives** — the drive's current base full plus **all** its current
+    incrementals (no range selection), applying each delta's content and
+    events in order — as a flat, directly-uploadable `MERGED_FULL` archive. It
+    refuses to run on a chain with a missing link, reporting which archive is
+    absent. The merge needs **only the archives**: file names and parents come
+    from the manifests (see **Self-describing deltas**), and the tree is
+    resolved with the same flat-tree rules as a from-scratch full. The result
+    is a complete archive: extract it and the resulting folder tree can be
+    copied or uploaded to a new drive as it stands. The same limits as any full
+    archive apply (Google-native files are exported to Office/PDF; sharing,
+    permissions, comments and version history are not carried).
+  - **Incremental backups continue after a merge.** The merged full becomes the
+    chain's **new root**: its state equals the last merged incremental, its
+    `to_page_token` is that incremental's `to_page_token`, and the next
+    incremental backup chains onto it (`base_archive_id` = the merged full).
+    The `sync_state` cursor is untouched by a merge, so the next incremental
+    picks up exactly where the last one ended.
+  - **Superseded partial archives.** After a merge, the previous base full and
+    the incrementals it consumed are **obsolete**: their content is fully
+    carried by the merged full, and they are no longer part of the active
+    chain. The merge itself deletes nothing — they stay on disk as an older,
+    no-longer-extended chain (so the admin holds two equivalent backups of that
+    state) until the admin chooses the **option to delete the obsolete partial
+    archives**, either as part of the merge or later from the Archive manager.
+  - **Verification and confirmation.** Archives are the only copy of the data,
+    so before anything is deleted the app re-reads the new merged full and
+    checks its entries and sizes against its own manifest and the database
+    index, then shows the admin the exact list of obsolete archives about to be
+    deleted, and deletes only after explicit confirmation.
+  - The merged archive records the archives it was built from — in its
+    manifest and in the database (`archive_sources`) — so the relationship is
+    checkable without opening the sources.
 - **Backup mode**: the admin chooses a full backup or an incremental backup.
   A full backup inventories the selected scope regardless of its change cursor
   and archives it in full; an incremental backup uses the saved `changes.list`
@@ -480,15 +516,29 @@ archives                   -- one row per archive written; the chain's source of
   id (PK)
   scope_key                -- user email or drive_id
   sequence_number          -- ordinal within the chain, for naming/display
-  base_archive_id          -- FK -> archives; null for a chain's root full archive
-  mode                     -- 'FULL' | 'INCREMENTAL' | 'MERGED_INCREMENTAL' | 'MERGED_FULL'
+  base_archive_id          -- FK -> archives; null for a chain's root, which is a FULL or a
+                           -- MERGED_FULL archive; incrementals point at their predecessor
+  mode                     -- 'FULL' | 'INCREMENTAL' | 'MERGED_FULL' (result of a merge)
   revision_mode            -- 'LATEST_ONLY' | 'ALL_REVISIONS' (future); fixed for the whole chain
   created_at
   archive_path             -- relative to backupRoot; where the archive was written
   from_page_token          -- cursor range this delta covers; null for a full archive
   to_page_token
   cancelled                -- true if the run that produced this archive was interrupted
+
+archive_sources            -- which archives a merged archive was built from
+  archive_id (FK)          -- the MERGED_FULL archive
+  source_archive_id (FK)   -- one source archive it consumed (the old base full and/or incrementals)
 ```
+
+Obsolete archives (those consumed by a merge) remain listed in `archives` with
+their `archive_sources` link until deleted. When the admin deletes them, in the
+same transaction the `file_captures` rows for content the merged full still
+carries are re-pointed at the merged full and its entries, index rows for
+superseded revisions that no archive carries any more are removed, and the
+`file_events` history rows are kept and re-pointed at the merged full (whose
+manifest records the net-effect events it superseded), so the operation history
+stays complete.
 
 Each archive's manifest mirrors its `archives` row so the chain can be checked
 and trusted from the archive alone. The database now lives inside the same
@@ -541,6 +591,9 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
      being staged, and record a `file_captures` index row pointing at that
      entry once the archive is published. Superseded content survives only in
      whichever earlier archive already carried it.
+   - Whatever the change, add the file's resulting `name`, `parents`,
+     `mime_type` and `trashed` state to the delta manifest's file list, so the
+     manifest is self-describing (see **Archive output**).
 4. Handle a stale/expired `page_token` (e.g. after a long offline period) as
    an explicit error path that falls back to a full resync for that scope,
    rather than failing silently.
@@ -559,6 +612,115 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
    or cancelled run writes nothing and the next run replays the change feed
    from the last committed cursor. A full run likewise commits its metadata
    snapshot and baseline cursor only after its archive is published.
+
+---
+
+## State diagrams
+
+Two views of the same design: how a single **backup run** moves through its
+states, and how an **archive** (and its chain) moves through its lifecycle.
+The diagrams are Mermaid, rendered by GitHub and the VS Code Markdown preview.
+
+### Backup run (one drive)
+
+The phase names `ENUMERATING`, `BACKING_UP`, `PACKAGING` and `FINISHED` match
+`BackupPhase`. The **Committing** state is part of the commit protocol (see
+**Sync algorithm**, step 6). Nothing is written to the archive folder or the
+database before **Publishing**, so every failure or cancellation state below
+leaves the previous committed state untouched.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> ChoosingMode: admin starts backup for a drive
+
+    state ChoosingMode <<choice>>
+    ChoosingMode --> FullRun: mode = FULL
+    ChoosingMode --> FullRun: INCREMENTAL, no sync_state row
+    ChoosingMode --> IncrementalRun: INCREMENTAL, sync_state exists
+
+    state FullRun {
+        [*] --> Enumerating_F
+        Enumerating_F: ENUMERATING (list all files, get baseline token)
+        Enumerating_F --> Streaming_F
+        Streaming_F: BACKING_UP (re-download everything into the staged ZIP)
+    }
+
+    state IncrementalRun {
+        [*] --> Enumerating_I
+        Enumerating_I: ENUMERATING (read changes.list from saved cursor)
+        Enumerating_I --> Streaming_I
+        Streaming_I: BACKING_UP (stream changed content into the staged ZIP)
+    }
+
+    IncrementalRun --> FullRun: stale page token, fall back to full inventory
+    IncrementalRun --> NothingToDo: changes feed empty
+    NothingToDo --> Finished: no archive, UI says so
+
+    FullRun --> Packaging: complete
+    IncrementalRun --> Packaging: changes found
+    Packaging: PACKAGING (manifest, ZIP finalised in a temp file)
+    Packaging --> Publishing: ZIP staged
+    Publishing: atomic move of the temp file to the final path
+    Publishing --> Committing: ZIP published
+    Committing: one DB transaction (files, events, captures, archives row, sync_state)
+    Committing --> Finished: committed
+
+    FullRun --> Cancelled: admin cancels
+    IncrementalRun --> Cancelled: admin cancels
+    Packaging --> Cancelled: admin cancels
+    Cancelled: writes no archive and no archives row, cursor not advanced
+
+    FullRun --> Failed: error
+    IncrementalRun --> Failed: error
+    Packaging --> Failed: error
+    Publishing --> Failed: error
+    Failed: temp file removed, nothing committed, next run replays from the last cursor
+
+    Committing --> OrphanZip: crash after publish, before commit
+    OrphanZip: ZIP exists but no DB row, manifest says what it holds
+
+    Finished --> [*]
+    Cancelled --> [*]
+    Failed --> [*]
+    OrphanZip --> [*]
+```
+
+### Archive and chain lifecycle
+
+An archive row only ever exists for a published ZIP. A merge does not delete
+anything: it creates a `MERGED_FULL` that becomes the chain's new root and turns
+the archives it consumed into **Obsolete** ones, which stay on disk until the
+admin confirms their deletion.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ActiveFull: full backup published (chain root)
+    ActiveFull --> ActiveFull: incremental published (chain extended)
+    ActiveFull --> Merging: admin runs merge (needs a gap-free chain)
+
+    state Merging {
+        [*] --> ReadingArchives
+        ReadingArchives: read base full and every incremental, apply in order
+        ReadingArchives --> WritingMergedFull
+        WritingMergedFull: stage and publish the MERGED_FULL
+    }
+
+    Merging --> ActiveFull: merged full is the new root, next incremental chains onto it
+    Merging --> ActiveFull: merge failed or chain gap, nothing changes
+
+    Obsolete: superseded partial archives kept on disk
+    Merging --> Obsolete: consumed archives marked obsolete
+    Obsolete --> Verifying: admin chooses to delete obsolete archives
+    Verifying: re-read merged full against its manifest and the DB index
+    Verifying --> Confirming: checks pass
+    Verifying --> Obsolete: checks fail, nothing deleted
+    Confirming: show the exact list of files to delete
+    Confirming --> Obsolete: admin declines
+    Confirming --> Deleted: admin confirms
+    Deleted: files removed, index rows re-pointed, event history kept
+    Deleted --> [*]
+```
 
 ---
 
@@ -623,19 +785,29 @@ backupRoot/archives/<scopeFolder>/archive-<sequenceNumber>-<mode>.zip
 - `<sequenceNumber>` is the archive's `sequence_number`, 4-digit zero-padded
   (`0001`, `0002`, ...) so filenames sort correctly in a plain file browser.
 - `<mode>` is the archive's `mode` in kebab-case: `full`, `incremental`,
-  `merged-full`, `merged-incremental`.
+  `merged-full`.
 - Each ZIP embeds its manifest at the root as `manifest.json` (see **Archive
   output**), so the archive can never be separated from the record of what it
   contains.
 
-Example, for a Shared Drive scope with a full backup, two incrementals, and a
-squash of those two deltas:
+Example, for a Shared Drive scope with a full backup and two incrementals,
+after a **merge** (adds a full that becomes the new chain root; deletes
+nothing yet):
 
 ```
 backupRoot/archives/Finance (0AIJ4kZ...)/archive-0001-full.zip
 backupRoot/archives/Finance (0AIJ4kZ...)/archive-0002-incremental.zip
 backupRoot/archives/Finance (0AIJ4kZ...)/archive-0003-incremental.zip
-backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
+backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-full.zip
+```
+
+Then the next incremental backup becomes `0005` and chains onto `0004`. If the
+admin also deletes the obsolete partial archives (`0001`–`0003`), after
+verification and confirmation, what remains is:
+
+```
+backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-full.zip
+backupRoot/archives/Finance (0AIJ4kZ...)/archive-0005-incremental.zip
 ```
 
 ---
@@ -659,9 +831,12 @@ backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
   accounts, revoked access, etc. are expected at org scale).
 - **Archive manager**: list each scope's archive chain in order, showing which
   archive is the full baseline and which deltas follow it, and warn when a link
-  is missing. From here the admin runs the two archive operations — squash
-  consecutive deltas, and collapse a chain into a flat uploadable tree — with a
-  clear statement of what each one discards before it runs.
+  is missing. Archives made obsolete by a merge are shown as such (an older,
+  no-longer-extended chain). From here the admin manually runs the **merge**
+  operation per drive (all current incrementals plus the base into a new full
+  that becomes the chain's root, after which incremental backups continue) and
+  can choose to delete the obsolete partial archives, with the exact file list
+  shown beforehand and a confirmation step before any deletion.
 - **History view**: query `file_events` + `file_captures` for a selected file
   to show renames/moves/trashes and when its content was captured over time,
   including which archive holds each capture.
@@ -707,8 +882,8 @@ backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
   whether the drive currently mounted at a saved path is the same physical
   drive used previously, or warn before writing to an unexpected one.
 - A delta archive cannot restore a drive on its own: it needs the full archive
-  it descends from plus every delta in between, in order. The collapse
-  operation is the reassembly tooling; programmatic restore stays out of scope.
+  it descends from plus every delta in between, in order. The merge operation is
+  the reassembly tooling; programmatic restore stays out of scope.
 - **The archive chain is the only history and the only copy.** The app keeps no
   local content outside the archives, so deleting or losing an archive
   permanently destroys the states it held — there is no local fallback (only a
