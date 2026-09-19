@@ -1008,6 +1008,29 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   in a temp ZIP, `sync_state` advances only at commit (see **Sync algorithm**,
   commit protocol), so an interrupted run replays its change feed from the last
   committed cursor instead of resuming mid-feed.
+- **Memory grows with the number of files in a run.** A run holds its file
+  listing, path-resolution tables, manifest records and pending database rows
+  in memory (file content streams and is never held). Measured on synthetic
+  drives with the real ZIP writer and SQLite commit (Drive faked, short ids and
+  names, smallest heap size out of 128 MB, 256 MB, 512 MB, 1 GB, 2 GB that
+  finished, so the true minimum lies between it and the next size down):
+
+  | Files in the run | Full run | Incremental run (all new files with content) |
+  |---|---|---|
+  | 100k | 128 MB or less | 128 MB or less |
+  | 500k | 512 MB | 1 GB |
+  | 1M | 1 GB | 2 GB |
+
+  That is roughly 0.5–1 KB per file for a full run and 1–2 KB per file for an
+  incremental one, so real names and ids may cost somewhat more. The JVM's
+  default maximum heap is a quarter of the machine's RAM; the supported scale
+  is therefore about **100k files comfortably, and up to about 500k on a
+  machine with 4 GB of RAM or more**. Beyond that, raise `-Xmx`, or expect an
+  `OutOfMemoryError` (which fails the run and writes nothing). An incremental
+  run after a very long gap or a mass upload is the likeliest way to hit it.
+  Lifting the limit needs the run's metadata staged in a temporary SQLite
+  table and a paged listing, which is not planned. The measurement harness is
+  not part of the repository.
 - A flat full archive cannot represent Drive faithfully, and re-uploading one
   loses: files that shared a name in a folder (renamed with a ` (2)` suffix),
   any file that had multiple parents, and Google-native fidelity — an exported
