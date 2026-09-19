@@ -86,7 +86,8 @@ class InitialDriveSyncServiceTest {
 		assertFalse(result.cancelled());
 		assertEquals(ArchiveMode.FULL, sessions.publishedManifest.mode());
 		assertEquals(RevisionMode.LATEST_ONLY, sessions.publishedManifest.revisionMode());
-		assertEquals("Docs/Report.pdf", sessions.publishedManifest.files().getFirst().path());
+		assertEquals(DriveScope.personal("user@example.com"), sessions.publishedManifest.scope());
+		assertNull(sessions.publishedManifest.baseSequenceNumber());
 		assertNull(sessions.publishedManifest.toPageToken());
 	}
 
@@ -165,6 +166,46 @@ class InitialDriveSyncServiceTest {
 		assertEquals(Set.of("Notes.docx"), sessions.entries.keySet());
 		assertEquals("v3", commits.commits.getFirst().captures().getFirst().revisionId());
 		assertEquals(3, commits.commits.getFirst().files().size());
+	}
+
+	@Test
+	void theManifestListsEveryFileAndFolderButOnlyStreamedOnesCarryAnEntry() throws Exception {
+		StoredFile folder = file("folder-1", "Docs", "", FOLDER, null);
+		StoredFile report = new StoredFile("file-1", "user@example.com", "Report.pdf", "folder-1,folder-2", "drive-9",
+				"application/pdf", false, "revision-1", null);
+		StoredFile form = file("file-2", "Survey", "folder-1", "application/vnd.google-apps.form", "v1");
+		StoredFile doc = file("file-3", "Notes", "folder-1", "application/vnd.google-apps.document", "v3");
+		stubDrive("token", folder, report, form, doc);
+		stubDownload("file-1", "bytes");
+		when(contentPort.export(ACCESS, "file-3",
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+				.thenThrow(new org.nm.gdrive_backup.domain.model.DriveExportLimitException("too large", null));
+		when(contentPort.export(ACCESS, "file-3", "application/pdf"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1, 2 }));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		var records = sessions.publishedManifest.files();
+		assertEquals(List.of("folder-1", "file-1", "file-2", "file-3"), records.stream().map(r -> r.fileId()).toList());
+		var folderRecord = records.get(0);
+		assertNull(folderRecord.entry());
+		assertNull(folderRecord.revisionId());
+		assertEquals(FOLDER, folderRecord.mimeType());
+		var reportRecord = records.get(1);
+		assertEquals("Docs/Report.pdf", reportRecord.entry());
+		assertEquals("revision-1", reportRecord.revisionId());
+		assertEquals(5L, reportRecord.sizeBytes());
+		assertEquals(List.of("folder-1", "folder-2"), reportRecord.parents());
+		assertEquals("drive-9", reportRecord.driveId());
+		assertNull(reportRecord.exportMimeType());
+		var formRecord = records.get(2);
+		assertNull(formRecord.entry());
+		assertEquals("application/vnd.google-apps.form", formRecord.mimeType());
+		var docRecord = records.get(3);
+		assertEquals("Docs/Notes.pdf", docRecord.entry());
+		assertEquals("application/pdf", docRecord.exportMimeType());
+		assertEquals("v3", docRecord.revisionId());
+		assertEquals("Notes", docRecord.name());
 	}
 
 	@Test

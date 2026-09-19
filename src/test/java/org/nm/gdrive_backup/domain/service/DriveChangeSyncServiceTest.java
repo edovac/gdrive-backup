@@ -180,7 +180,7 @@ class DriveChangeSyncServiceTest {
 		assertEquals(1, commit.captures().size());
 		assertEquals("content/file-1", commit.captures().getFirst().entryName());
 		assertEquals("revision-2", commit.captures().getFirst().revisionId());
-		assertEquals("content/file-1", sessions.publishedManifest.files().getFirst().path());
+		assertEquals("content/file-1", sessions.publishedManifest.files().getFirst().entry());
 	}
 
 	@Test
@@ -331,5 +331,102 @@ class DriveChangeSyncServiceTest {
 		assertEquals(Set.of("content/doc-1"), sessions.entries.keySet());
 		assertEquals("v3", commits.commits.getFirst().captures().getFirst().revisionId());
 		assertEquals(2, commits.commits.getFirst().files().size());
+	}
+
+	@Test
+	void aRenameOnlyChangeIsListedWithItsNewMetadataAndNoEntry() {
+		baseline("old-token");
+		StoredFile previous = new StoredFile("file-1", "user@example.com", "Old.pdf", "folder-1", null, "application/pdf",
+				false, "revision-1", 5L);
+		StoredFile current = new StoredFile("file-1", "user@example.com", "New.pdf", "folder-1", null, "application/pdf",
+				false, "revision-1", null);
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		var record = sessions.publishedManifest.files().getFirst();
+		assertEquals("file-1", record.fileId());
+		assertEquals("New.pdf", record.name());
+		assertEquals(List.of("folder-1"), record.parents());
+		assertNull(record.entry());
+		assertNull(record.revisionId());
+		assertEquals(1, sessions.publishedManifest.files().size());
+		assertEquals(Integer.valueOf(1), sessions.publishedManifest.baseSequenceNumber());
+	}
+
+	@Test
+	void aContentChangeRecordsTheEntryRevisionSizeAndExportFormat() throws Exception {
+		baseline("old-token");
+		StoredFile previous = new StoredFile("doc-1", "user@example.com", "Notes", "", null,
+				"application/vnd.google-apps.document", false, "v2", 5L);
+		StoredFile current = new StoredFile("doc-1", "user@example.com", "Notes", "", null,
+				"application/vnd.google-apps.document", false, "v3", null);
+		when(metadataPort.findByFileId("doc-1")).thenReturn(Optional.of(previous));
+		when(contentPort.export(ACCESS, "doc-1",
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1, 2, 3 }));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("doc-1", false, current)), null, "new-token"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		var record = sessions.publishedManifest.files().getFirst();
+		assertEquals("content/doc-1", record.entry());
+		assertEquals("v3", record.revisionId());
+		assertEquals(3L, record.sizeBytes());
+		assertEquals("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				record.exportMimeType());
+	}
+
+	@Test
+	void aRemovedFileGetsARemovedRecordAndATouchedThenRemovedFileCollapsesToOne() {
+		baseline("old-token");
+		StoredFile touched = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
+				null, null);
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.empty());
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+				List.of(new DriveChange("file-1", false, touched), new DriveChange("file-1", true, null),
+						new DriveChange("file-2", true, null)), null, "new-token"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		var records = sessions.publishedManifest.files();
+		assertEquals(List.of("file-1", "file-2"), records.stream().map(r -> r.fileId()).toList());
+		assertTrue(records.stream().allMatch(r -> r.removed()));
+		assertNull(records.getFirst().name());
+	}
+
+	@Test
+	void aBrandNewFolderIsArchivedEvenThoughItHasNoEventAndNoContent() {
+		baseline("old-token");
+		StoredFile folder = new StoredFile("folder-9", "user@example.com", "Projects", "", null,
+				"application/vnd.google-apps.folder", false, null, null);
+		when(metadataPort.findByFileId("folder-9")).thenReturn(Optional.empty());
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("folder-9", false, folder)), null, "new-token"));
+
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(100L, result.archive().id());
+		assertEquals("Projects", sessions.publishedManifest.files().getFirst().name());
+		assertTrue(sessions.publishedManifest.events().isEmpty());
+		assertTrue(commits.commits.getFirst().captures().isEmpty());
+	}
+
+	@Test
+	void anUnchangedKnownFileTouchedByTheFeedDoesNotProduceAnArchive() {
+		baseline("old-token");
+		StoredFile same = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
+				"revision-1", 5L);
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(same));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, same)), null, "new-token"));
+
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		assertNull(result.archive());
+		assertTrue(sessions.openedPaths.isEmpty());
 	}
 }

@@ -9,6 +9,7 @@ import java.util.Optional;
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.FileCapture;
+import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
@@ -33,7 +34,7 @@ public class FileContentStreamingService {
 	}
 
 	/** Returns an uncommitted capture (no id, no archive id) naming the entry that now holds the content. */
-	public FileCapture stream(ServiceAccountAccess access, StoredFile file, ArchiveSession session, String entryName) {
+	public StreamedFile stream(ServiceAccountAccess access, StoredFile file, ArchiveSession session, String entryName) {
 		if (file == null || file.fileId() == null || file.fileId().isBlank()) {
 			throw new IllegalArgumentException("file with an id is required");
 		}
@@ -60,14 +61,16 @@ public class FileContentStreamingService {
 		}
 	}
 
-	private FileCapture streamContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
+	private StreamedFile streamContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
 			ArchiveSession session, String entryName) throws IOException {
 		// The stream is opened before the entry so an export-limit failure leaves nothing half-written.
 		try (InputStream content = exportFormat == null
 				? contentPort.download(access, file.fileId())
 				: contentPort.export(access, file.fileId(), exportFormat.mimeType())) {
 			long size = session.writeEntry(entryName, content);
-			return new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(), null, entryName, size);
+			FileCapture capture = new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(), null,
+					entryName, size);
+			return new StreamedFile(capture, exportFormat == null ? null : exportFormat.mimeType());
 		}
 	}
 

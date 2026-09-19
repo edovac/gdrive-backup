@@ -22,6 +22,7 @@ import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
+import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 
 class FileContentStreamingServiceTest {
@@ -39,10 +40,11 @@ class FileContentStreamingServiceTest {
 		StoredFile file = file("file-1", "Report.pdf", "application/pdf");
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1, 2, 3 }));
 
-		FileCapture capture;
+		StreamedFile streamed;
 		try (var session = sessions.open("archives/x.zip")) {
-			capture = service.stream(ACCESS, file, session, "Docs/Report.pdf");
+			streamed = service.stream(ACCESS, file, session, "Docs/Report.pdf");
 		}
+		FileCapture capture = streamed.capture();
 
 		assertEquals(3, sessions.entries.get("Docs/Report.pdf").length);
 		assertEquals("Docs/Report.pdf", capture.entryName());
@@ -50,6 +52,7 @@ class FileContentStreamingServiceTest {
 		assertEquals(3, capture.sizeBytes());
 		assertNull(capture.id());
 		assertNull(capture.archiveId());
+		assertNull(streamed.exportMimeType());
 	}
 
 	@Test
@@ -58,9 +61,10 @@ class FileContentStreamingServiceTest {
 		when(contentPort.export(ACCESS, "file-1", DOCX)).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
 
 		try (var session = sessions.open("archives/x.zip")) {
-			FileCapture capture = service.stream(ACCESS, file, session, "Report.docx");
+			StreamedFile streamed = service.stream(ACCESS, file, session, "Report.docx");
 
-			assertEquals("Report.docx", capture.entryName());
+			assertEquals("Report.docx", streamed.capture().entryName());
+			assertEquals(DOCX, streamed.exportMimeType());
 		}
 		verify(contentPort, never()).download(ACCESS, "file-1");
 	}
@@ -73,9 +77,10 @@ class FileContentStreamingServiceTest {
 				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
 
 		try (var session = sessions.open("archives/x.zip")) {
-			FileCapture capture = service.stream(ACCESS, file, session, "Docs/Report.docx");
+			StreamedFile streamed = service.stream(ACCESS, file, session, "Docs/Report.docx");
 
-			assertEquals("Docs/Report.pdf", capture.entryName());
+			assertEquals("Docs/Report.pdf", streamed.capture().entryName());
+			assertEquals("application/pdf", streamed.exportMimeType());
 			assertTrue(session.containsEntry("Docs/Report.pdf"));
 			assertTrue(!session.containsEntry("Docs/Report.docx"));
 		}
@@ -91,7 +96,7 @@ class FileContentStreamingServiceTest {
 		try (var session = sessions.open("archives/x.zip")) {
 			session.writeEntry("Report.pdf", new ByteArrayInputStream(new byte[] { 9 }));
 
-			FileCapture capture = service.stream(ACCESS, file, session, "Report.docx");
+			FileCapture capture = service.stream(ACCESS, file, session, "Report.docx").capture();
 
 			assertEquals("Report (2).pdf", capture.entryName());
 		}

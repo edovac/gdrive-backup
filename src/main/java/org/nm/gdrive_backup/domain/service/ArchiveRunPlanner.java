@@ -21,25 +21,24 @@ public class ArchiveRunPlanner {
 
 	public Plan planFull(DriveScope scope, String scopeDisplayNameOrNull) {
 		List<Archive> existing = archivePort.findByScopeKey(scope.key());
-		return plan(scope, scopeDisplayNameOrNull, ArchiveMode.FULL, nextSequenceNumber(existing), null);
+		return plan(scope, scopeDisplayNameOrNull, ArchiveMode.FULL, nextSequenceNumber(existing), null, null);
 	}
 
 	public Plan planIncremental(DriveScope scope, String scopeDisplayNameOrNull) {
 		List<Archive> existing = archivePort.findByScopeKey(scope.key());
-		Long baseArchiveId = existing.stream()
+		Archive base = existing.stream()
 				.max(Comparator.comparingInt(Archive::sequenceNumber))
-				.map(Archive::id)
 				.orElseThrow(() -> new IllegalStateException(
 						"Incremental archive for " + scope.key() + " has no prior archive to chain from"));
-		return plan(scope, scopeDisplayNameOrNull, ArchiveMode.INCREMENTAL, nextSequenceNumber(existing),
-				baseArchiveId);
+		return plan(scope, scopeDisplayNameOrNull, ArchiveMode.INCREMENTAL, nextSequenceNumber(existing), base.id(),
+				base.sequenceNumber());
 	}
 
 	private static Plan plan(DriveScope scope, String scopeDisplayNameOrNull, ArchiveMode mode, int sequenceNumber,
-			Long baseArchiveId) {
+			Long baseArchiveId, Integer baseSequenceNumber) {
 		String path = "archives/" + ArchiveNaming.scopeFolderName(scope, scopeDisplayNameOrNull) + "/"
 				+ ArchiveNaming.archiveFileName(sequenceNumber, mode);
-		return new Plan(scope, mode, sequenceNumber, baseArchiveId, path);
+		return new Plan(scope, mode, sequenceNumber, baseArchiveId, baseSequenceNumber, path);
 	}
 
 	private static int nextSequenceNumber(List<Archive> existing) {
@@ -49,7 +48,7 @@ public class ArchiveRunPlanner {
 	}
 
 	public record Plan(DriveScope scope, ArchiveMode mode, int sequenceNumber, Long baseArchiveId,
-			String relativeTargetPath) {
+			Integer baseSequenceNumber, String relativeTargetPath) {
 
 		public Archive toArchive(Instant createdAt, String fromPageToken, String toPageToken) {
 			return new Archive(null, scope.key(), sequenceNumber, baseArchiveId, mode, RevisionMode.LATEST_ONLY,

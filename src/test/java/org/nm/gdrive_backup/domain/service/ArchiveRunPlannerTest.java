@@ -42,6 +42,7 @@ class ArchiveRunPlannerTest {
 
 		assertEquals(4, plan.sequenceNumber());
 		assertNull(plan.baseArchiveId());
+		assertNull(plan.baseSequenceNumber());
 	}
 
 	@Test
@@ -52,6 +53,7 @@ class ArchiveRunPlannerTest {
 
 		assertEquals(3, plan.sequenceNumber());
 		assertEquals(20L, plan.baseArchiveId());
+		assertEquals(2, plan.baseSequenceNumber());
 		assertEquals("archives/My Drive (user@example.com)/archive-0003-incremental.zip", plan.relativeTargetPath());
 	}
 

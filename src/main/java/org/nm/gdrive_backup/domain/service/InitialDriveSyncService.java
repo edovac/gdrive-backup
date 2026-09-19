@@ -10,6 +10,7 @@ import java.util.Map;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest.ManifestFile;
+import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.FileCapture;
@@ -65,7 +66,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 
 		FlatTreePathResolver resolver = new FlatTreePathResolver(namesWithExportExtensions(files));
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planFull(scope, scopeDisplayNameOrNull);
-		List<FileCapture> captures = new ArrayList<>();
+		Map<String, StreamedFile> streamedByFileId = new HashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 			int processed = 0;
 			for (StoredFile file : files) {
@@ -73,7 +74,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 					return new InitialSyncResult(scope, processed, null, null, true);
 				}
 				if (isEligible(file)) {
-					captures.add(contentStreamingService.stream(access, file, session,
+					streamedByFileId.put(file.fileId(), contentStreamingService.stream(access, file, session,
 							resolver.resolveEntryName(file)));
 				}
 				progressTracker.itemProcessed(file.name());
@@ -82,8 +83,9 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();
 			Archive archive = plan.toArchive(createdAt, null, null);
-			session.publish(new ArchiveManifest(scope.key(), plan.mode(), RevisionMode.LATEST_ONLY,
-					plan.sequenceNumber(), null, createdAt, null, null, manifestFiles(captures), List.of()));
+			session.publish(new ArchiveManifest(scope, plan.mode(), RevisionMode.LATEST_ONLY, plan.sequenceNumber(),
+					null, createdAt, null, null, List.of(), manifestFiles(files, streamedByFileId), List.of()));
+			List<FileCapture> captures = streamedByFileId.values().stream().map(StreamedFile::capture).toList();
 			Archive saved = syncCommitPort.commit(new PendingCommit(archive, files, List.of(), captures,
 					new SyncState(scope.key(), pageToken)));
 			return new InitialSyncResult(scope, files.size(), pageToken, saved, false);
@@ -113,10 +115,10 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 				file.trashed(), file.headRevisionId(), file.currentVersionId());
 	}
 
-	private static List<ManifestFile> manifestFiles(List<FileCapture> captures) {
-		return captures.stream()
-				.map(capture -> new ManifestFile(capture.fileId(), capture.entryName(), capture.revisionId(),
-						capture.sizeBytes()))
+	/** Every listed file, in listing order; only those streamed this run carry an entry. */
+	private static List<ManifestFile> manifestFiles(List<StoredFile> files, Map<String, StreamedFile> streamedByFileId) {
+		return files.stream()
+				.map(file -> ManifestFile.of(file, streamedByFileId.get(file.fileId())))
 				.toList();
 	}
 }

@@ -21,6 +21,7 @@ import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.FileEvent;
+import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
 import org.nm.gdrive_backup.domain.model.RevisionMode;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
@@ -97,27 +98,28 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 
 		SyncState newState = new SyncState(scope.key(), pageToken);
 		List<StoredFile> files = new ArrayList<>(pending.files.values());
-		if (pending.events.isEmpty() && pending.contentFileIds.isEmpty()) {
+		if (!pending.hasAnythingToArchive()) {
 			syncCommitPort.commit(new PendingCommit(null, files, List.of(), List.of(), newState));
 			return new SyncResult(scope, changeCount, pageToken, null, false);
 		}
 
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planIncremental(scope, scopeDisplayNameOrNull);
-		List<FileCapture> captures = new ArrayList<>();
+		Map<String, StreamedFile> streamedByFileId = new LinkedHashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 			for (String fileId : pending.contentFileIds) {
 				if (cancellation.isImmediateStopRequested()) {
 					return new SyncResult(scope, changeCount, null, null, true);
 				}
-				captures.add(contentStreamingService.stream(access, pending.files.get(fileId), session,
+				streamedByFileId.put(fileId, contentStreamingService.stream(access, pending.files.get(fileId), session,
 						"content/" + fileId));
 			}
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();
 			Archive archive = plan.toArchive(createdAt, fromPageToken, pageToken);
-			session.publish(new ArchiveManifest(scope.key(), plan.mode(), RevisionMode.LATEST_ONLY,
-					plan.sequenceNumber(), plan.baseArchiveId(), createdAt, fromPageToken, pageToken,
-					manifestFiles(captures), manifestEvents(pending.events)));
+			session.publish(new ArchiveManifest(scope, plan.mode(), RevisionMode.LATEST_ONLY, plan.sequenceNumber(),
+					plan.baseSequenceNumber(), createdAt, fromPageToken, pageToken, List.of(),
+					manifestFiles(pending, streamedByFileId), manifestEvents(pending.events)));
+			List<FileCapture> captures = streamedByFileId.values().stream().map(StreamedFile::capture).toList();
 			Archive saved = syncCommitPort.commit(new PendingCommit(archive, files, pending.events, captures, newState));
 			return new SyncResult(scope, changeCount, pageToken, saved, false);
 		} catch (IOException exception) {
@@ -129,11 +131,16 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		return change.file() != null ? change.file().name() : change.fileId();
 	}
 
-	private static List<ManifestFile> manifestFiles(List<FileCapture> captures) {
-		return captures.stream()
-				.map(capture -> new ManifestFile(capture.fileId(), capture.entryName(), capture.revisionId(),
-						capture.sizeBytes()))
-				.toList();
+	/** One record per file the run touched, then a removed record per file Drive reported as removed. */
+	private static List<ManifestFile> manifestFiles(PendingChanges pending, Map<String, StreamedFile> streamedByFileId) {
+		List<ManifestFile> records = new ArrayList<>();
+		for (StoredFile file : pending.files.values()) {
+			if (!pending.removedFileIds.contains(file.fileId())) {
+				records.add(ManifestFile.of(file, streamedByFileId.get(file.fileId())));
+			}
+		}
+		pending.removedFileIds.forEach(fileId -> records.add(ManifestFile.removed(fileId)));
+		return records;
 	}
 
 	private static List<ManifestEvent> manifestEvents(List<FileEvent> events) {
@@ -149,11 +156,22 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		final Map<String, StoredFile> files = new LinkedHashMap<>();
 		final List<FileEvent> events = new ArrayList<>();
 		final Set<String> contentFileIds = new LinkedHashSet<>();
+		final Set<String> removedFileIds = new LinkedHashSet<>();
+		private boolean sawNewFile;
+
+		/**
+		 * A file seen for the first time changes the tree even with no event and no content (a new folder, a Form),
+		 * and an archives-only merge needs it, so it counts as something to archive.
+		 */
+		boolean hasAnythingToArchive() {
+			return !events.isEmpty() || !contentFileIds.isEmpty() || !removedFileIds.isEmpty() || sawNewFile;
+		}
 
 		void apply(DriveChange change) {
 			if (change.removed()) {
 				events.add(event(change.fileId(), "delete", null, null));
 				contentFileIds.remove(change.fileId());
+				removedFileIds.add(change.fileId());
 				return;
 			}
 			StoredFile current = change.file();
@@ -162,6 +180,8 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			}
 			Optional<StoredFile> previous = Optional.ofNullable(files.get(current.fileId()))
 					.or(() -> fileMetadataPort.findByFileId(current.fileId()));
+			removedFileIds.remove(current.fileId());
+			sawNewFile |= previous.isEmpty();
 			previous.ifPresent(old -> recordDifferences(old, current));
 			// current_version_id is assigned at commit from the captures, so the incoming value (null) is
 			// replaced by the one the previous row carried, keeping "has this file ever been captured" true.

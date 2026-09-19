@@ -25,6 +25,8 @@ import com.google.gson.annotations.SerializedName;
 
 public class LocalArchiveSessionAdapter implements ArchiveSessionPort {
 
+	/** Bump when the manifest shape changes incompatibly; readers refuse versions they do not know. */
+	private static final int FORMAT_VERSION = 1;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private final LocalBackupRoot backupRoot;
@@ -126,36 +128,66 @@ public class LocalArchiveSessionAdapter implements ArchiveSessionPort {
 	}
 
 	private static ManifestJson toJson(ArchiveManifest manifest) {
-		List<ManifestJson.FileJson> files = manifest.files().stream()
-				.map(file -> new ManifestJson.FileJson(file.fileId(), file.path(), file.revisionId(), file.sizeBytes()))
-				.toList();
+		List<ManifestJson.FileJson> files = manifest.files().stream().map(LocalArchiveSessionAdapter::toJson).toList();
 		List<ManifestJson.EventJson> events = manifest.events().stream()
 				.map(event -> new ManifestJson.EventJson(event.fileId(), event.eventType(), event.oldValue(),
 						event.newValue(), event.timestamp().toString()))
 				.toList();
-		return new ManifestJson(manifest.scopeKey(), manifest.mode().name(), manifest.revisionMode().name(),
-				manifest.sequenceNumber(), manifest.baseArchiveId(), manifest.createdAt().toString(),
-				manifest.fromPageToken(), manifest.toPageToken(), files, events);
+		List<ManifestJson.SourceJson> sources = manifest.sourceArchives().isEmpty() ? null
+				: manifest.sourceArchives().stream()
+						.map(source -> new ManifestJson.SourceJson(source.sequenceNumber(), source.fileName()))
+						.toList();
+		return new ManifestJson(FORMAT_VERSION, manifest.scope().key(), manifest.scope().type().name(),
+				manifest.mode().name(), manifest.revisionMode().name(), manifest.sequenceNumber(),
+				manifest.baseSequenceNumber(), manifest.createdAt().toString(), manifest.fromPageToken(),
+				manifest.toPageToken(), sources, files, events);
 	}
 
-	/** Adapter-local wire format: snake_case keys so manifest.json is legible next to the archives table. */
+	/** A removed record carries only its id; every other record always states its trashed flag. */
+	private static ManifestJson.FileJson toJson(ArchiveManifest.ManifestFile file) {
+		if (file.removed()) {
+			return new ManifestJson.FileJson(file.fileId(), true, null, null, null, null, null, null, null, null, null);
+		}
+		return new ManifestJson.FileJson(file.fileId(), null, file.name(), file.parents(), file.driveId(),
+				file.mimeType(), file.trashed(), file.revisionId(), file.entry(), file.sizeBytes(),
+				file.exportMimeType());
+	}
+
+	/**
+	 * Adapter-local wire format (see "Manifest format" in the requirements): snake_case keys so manifest.json is
+	 * legible next to the archives table. Gson omits null fields, which is how absent keys are produced.
+	 */
 	private record ManifestJson(
+			@SerializedName("format_version") int formatVersion,
 			@SerializedName("scope_key") String scopeKey,
+			@SerializedName("scope_type") String scopeType,
 			String mode,
 			@SerializedName("revision_mode") String revisionMode,
 			@SerializedName("sequence_number") int sequenceNumber,
-			@SerializedName("base_archive_id") Long baseArchiveId,
+			@SerializedName("base_sequence_number") Integer baseSequenceNumber,
 			@SerializedName("created_at") String createdAt,
 			@SerializedName("from_page_token") String fromPageToken,
 			@SerializedName("to_page_token") String toPageToken,
+			@SerializedName("source_archives") List<SourceJson> sourceArchives,
 			List<FileJson> files,
 			List<EventJson> events) {
 
+		private record SourceJson(@SerializedName("sequence_number") int sequenceNumber,
+				@SerializedName("file_name") String fileName) {
+		}
+
 		private record FileJson(
 				@SerializedName("file_id") String fileId,
-				String path,
+				Boolean removed,
+				String name,
+				List<String> parents,
+				@SerializedName("drive_id") String driveId,
+				@SerializedName("mime_type") String mimeType,
+				Boolean trashed,
 				@SerializedName("revision_id") String revisionId,
-				@SerializedName("size_bytes") long sizeBytes) {
+				String entry,
+				@SerializedName("size_bytes") Long sizeBytes,
+				@SerializedName("export_mime_type") String exportMimeType) {
 		}
 
 		private record EventJson(

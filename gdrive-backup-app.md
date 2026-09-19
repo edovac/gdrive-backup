@@ -124,6 +124,16 @@ Last reviewed: 2026-09-19
   index (`archive_id` and `entry_name`, no `local_path`) and `file_events.archive_id`
   is always set. Existing `backup.db` files must be deleted (no migration tool).
 
+- [x] Self-describing manifests (streaming work, slice 2): every manifest is
+  written in the documented `format_version` 1 shape (see **Manifest format**).
+  A full manifest lists every listed file and folder; an incremental lists each
+  file the run touched with its resulting name, parents, mime type, trashed
+  state and, when its bytes are included, revision, entry, size and export
+  format, plus `removed` records. Chain links use `base_sequence_number`. A file
+  first seen in a run (for example a new folder) now produces a delta archive
+  even with no event and no content, because an archives-only merge needs it.
+  Manifests written before this slice are not readable.
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
@@ -131,19 +141,13 @@ Last reviewed: 2026-09-19
 
 ### Not started
 
-- [ ] **Stream content straight into archives, remaining slices (P1).** The
-  streaming session, buffered commit and from-scratch full are done (see
-  Completed). Still to do: (2) self-describing manifests — each delta records
-  `name`, `parents`, `mime_type`, `trashed` (and the export mime type) for
-  every file it touched, and a full manifest does the same for every live file
-  and folder, so the tree can be rebuilt from the archives alone; (3) the merge
-  engine that builds a full archive from a base full plus every incremental
-  without touching Drive or `backup.db` file metadata (adds `archive_sources`).
-  Google-native files report no `headRevisionId`, so their Drive `version`
-  (recorded as `v<version>`) stands in as the content revision; Forms,
-  shortcuts and other native types with no export are recorded as metadata
-  only. `version` also moves on metadata-only edits, so a rename of a Doc can
-  re-export it and log a `content` event alongside the `rename`.
+- [ ] **Build a full archive from a complete incremental set (P1, slice 3 of
+  the streaming work).** The merge engine: fold the manifests of a base full
+  plus every incremental (see **Manifest format**), refuse on a chain gap, and
+  stream the surviving content from the archives into a `MERGED_FULL` without
+  touching Drive or `backup.db` file metadata (adds `archive_sources`). The UI,
+  optional deletion and new-root wiring belong to the Archive operations item
+  below.
 - [ ] Archive operations (manual, per drive, from the Archive manager): the
   **merge** operation (base full plus all current incrementals into one
   `MERGED_FULL`, which becomes the chain's new root so incremental backups
@@ -298,7 +302,8 @@ Windows packaging.
     archive's manifest likewise records name, parents and mime type for every
     live file **and every folder** (folders are needed to resolve ancestor names
     and are not otherwise present in the ZIP).
-  - An incremental run whose changes feed returned nothing produces **no
+  - An incremental run that saw no event, no content change, no removal and no
+    file appearing for the first time (a new folder counts) produces **no
     archive at all**, and the UI says so explicitly rather than presenting a
     completed backup whose archive is missing.
 
