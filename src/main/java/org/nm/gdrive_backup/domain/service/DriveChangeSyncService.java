@@ -192,8 +192,11 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		}
 
 		private boolean shouldBackUpContent(Optional<StoredFile> previous, StoredFile current) {
+			// An untrashed file is re-captured even at an unchanged revision: a full run leaves trashed files out of
+			// its archive, so the chain being written may not hold their bytes although an older archive does.
 			return FileContentStreamingService.hasBackableContent(current)
 					&& previous.map(file -> !Objects.equals(file.headRevisionId(), current.headRevisionId())
+							|| file.trashed() && !current.trashed()
 							|| file.currentVersionId() == null && !contentFileIds.contains(current.fileId()))
 							.orElse(true);
 		}

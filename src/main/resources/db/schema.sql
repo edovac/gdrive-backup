@@ -24,6 +24,12 @@ CREATE TABLE IF NOT EXISTS archives (
     cancelled INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS archive_sources (
+    archive_id INTEGER NOT NULL REFERENCES archives(id),
+    source_archive_id INTEGER NOT NULL REFERENCES archives(id),
+    PRIMARY KEY (archive_id, source_archive_id)
+);
+
 CREATE TABLE IF NOT EXISTS files (
     file_id TEXT PRIMARY KEY,
     owner_scope TEXT NOT NULL,

@@ -25,7 +25,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-19
+Last reviewed: 2026-09-20
 
 ### Completed
 
@@ -134,6 +134,21 @@ Last reviewed: 2026-09-19
   even with no event and no content, because an archives-only merge needs it.
   Manifests written before this slice are not readable.
 
+- [x] Merge engine (streaming work, slice 3): `ArchiveMergeService` builds a
+  `MERGED_FULL` from a drive's current chain using only its archives. It finds
+  the chain by following `base_archive_id` from the latest archive, refuses on a
+  missing link or unreadable archive (`ArchiveChainException`), checks every
+  manifest against its database row and neighbour, folds the manifests (see
+  **Manifest format**), resolves the tree with the same flat-tree rules as a
+  from-scratch full, and streams the bytes from the archives that hold them,
+  checking each size against its manifest. The merged full commits with its
+  `archive_sources` rows and no `sync_state` change, and the next incremental
+  chains onto it. An end-to-end test proves a merge extracts to the same tree as
+  a from-scratch full of the same Drive, also with the file tables emptied.
+  There is no UI, deletion, progress or cancellation yet (see Archive
+  operations). Existing `backup.db` files must be recreated (new
+  `archive_sources` table).
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
@@ -141,22 +156,14 @@ Last reviewed: 2026-09-19
 
 ### Not started
 
-- [ ] **Build a full archive from a complete incremental set (P1, slice 3 of
-  the streaming work).** The merge engine: fold the manifests of a base full
-  plus every incremental (see **Manifest format**), refuse on a chain gap, and
-  stream the surviving content from the archives into a `MERGED_FULL` without
-  touching Drive or `backup.db` file metadata (adds `archive_sources`). The UI,
-  optional deletion and new-root wiring belong to the Archive operations item
-  below.
 - [ ] Archive operations (manual, per drive, from the Archive manager): the
-  **merge** operation (base full plus all current incrementals into one
-  `MERGED_FULL`, which becomes the chain's new root so incremental backups
-  continue after it) with an optional, verified and confirmed deletion of the
-  superseded partial archives, plus chain-gap detection and starting a new
-  chain when a from-scratch full backup runs on a scope that already has one
-  (today's `sequence_number` is monotonic per scope, not per chain). Merge
-  reads only archives, never Drive. See **Archive operations** under Core
-  requirements.
+  UI around the merge engine (see Completed), an optional, verified and
+  confirmed deletion of the superseded partial archives (including re-pointing
+  `file_captures` and `file_events` at the merged full), chain-gap warnings,
+  progress and cancellation for a merge, refusing a merge while a backup of the
+  same drive runs, and starting a new chain when a from-scratch full backup runs
+  on a scope that already has one (today's `sequence_number` is monotonic per
+  scope, not per chain). See **Archive operations** under Core requirements.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -595,7 +602,10 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
      distinguish the two.
    - `file.trashed` flips `false → true` → `file_events`: `trash` (keep the
      captured copy; don't hard-delete data).
-   - `file.trashed` flips `true → false` → `file_events`: `untrash`.
+   - `file.trashed` flips `true → false` → `file_events`: `untrash`, and the
+     file's content is captured again even at an unchanged revision: a full run
+     leaves trashed files out of its archive, so the chain being written may
+     not hold their bytes.
    - `name` differs from stored → `file_events`: `rename`.
    - `parents` (or `drive_id`, if moved across Shared Drives) differs →
      `file_events`: `move`.

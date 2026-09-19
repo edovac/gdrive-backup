@@ -28,14 +28,18 @@ public class SqliteSyncCommitAdapter implements SyncCommitPort {
 
 	@Override
 	public Archive commit(PendingCommit commit) {
-		if (commit.archiveOrNull() == null && (!commit.events().isEmpty() || !commit.captures().isEmpty())) {
-			throw new IllegalArgumentException("Events and captures need an archive to belong to");
+		if (commit.archiveOrNull() == null && (!commit.events().isEmpty() || !commit.captures().isEmpty()
+				|| !commit.sourceArchiveIds().isEmpty())) {
+			throw new IllegalArgumentException("Events, captures and source archives need an archive to belong to");
 		}
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
 				Archive saved = insertArchive(connection, commit.archiveOrNull());
 				Long archiveId = saved == null ? null : saved.id();
+				for (Long sourceArchiveId : commit.sourceArchiveIds()) {
+					insertSource(connection, archiveId, sourceArchiveId);
+				}
 				for (StoredFile file : commit.files()) {
 					upsertFile(connection, file);
 				}
@@ -145,6 +149,15 @@ public class SqliteSyncCommitAdapter implements SyncCommitPort {
 				}
 				return keys.getLong(1);
 			}
+		}
+	}
+
+	private static void insertSource(Connection connection, Long archiveId, long sourceArchiveId) throws SQLException {
+		try (var statement = connection.prepareStatement(
+				"INSERT INTO archive_sources(archive_id, source_archive_id) VALUES (?, ?)")) {
+			statement.setLong(1, archiveId);
+			statement.setLong(2, sourceArchiveId);
+			statement.executeUpdate();
 		}
 	}
 

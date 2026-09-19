@@ -138,4 +138,65 @@ class SqliteSyncCommitAdapterTest {
 	private static StoredFile file(String id, String name, String revision) {
 		return new StoredFile(id, "user@example.com", name, "", null, "application/pdf", false, revision, null);
 	}
+
+	@Test
+	void writesTheSourceArchivesOfAMergedFullWithoutMovingTheCursor() throws Exception {
+		new SqliteSyncStateAdapter(database).save(new SyncState("user@example.com", "cursor"));
+		Archive full = adapter.commit(new PendingCommit(archive(1, ArchiveMode.FULL, null), List.of(), List.of(), List.of(),
+				null));
+		Archive incremental = adapter.commit(new PendingCommit(archive(2, ArchiveMode.INCREMENTAL, full.id()), List.of(),
+				List.of(), List.of(), null));
+
+		Archive merged = adapter.commit(new PendingCommit(archive(3, ArchiveMode.MERGED_FULL, null), List.of(), List.of(),
+				List.of(), null, List.of(full.id(), incremental.id())));
+
+		assertEquals(List.of(full.id(), incremental.id()), sourcesOf(merged.id()));
+		assertEquals("cursor", new SqliteSyncStateAdapter(database).findByScopeKey("user@example.com").orElseThrow()
+				.pageToken());
+	}
+
+	@Test
+	void aFailedCommitLeavesNoSourceRows() throws Exception {
+		Archive full = adapter.commit(new PendingCommit(archive(1, ArchiveMode.FULL, null), List.of(), List.of(), List.of(),
+				null));
+		// A capture with no entry name fails after the source rows were written, so the rollback has work to do.
+		PendingCommit commit = new PendingCommit(archive(2, ArchiveMode.MERGED_FULL, null),
+				List.of(file("file-1", "A.pdf", "r1")), List.of(),
+				List.of(new FileCapture(null, "file-1", "r1", NOW, null, null, 1)), null, List.of(full.id()));
+
+		assertThrows(IllegalStateException.class, () -> adapter.commit(commit));
+
+		assertEquals(0, countRows("archive_sources"));
+	}
+
+	@Test
+	void sourceArchivesWithoutAnArchiveAreRejected() {
+		PendingCommit commit = new PendingCommit(null, List.of(), List.of(), List.of(), null, List.of(1L));
+
+		assertThrows(IllegalArgumentException.class, () -> adapter.commit(commit));
+	}
+
+	private List<Long> sourcesOf(long archiveId) throws Exception {
+		try (var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + database.path());
+				var statement = connection.prepareStatement(
+						"SELECT source_archive_id FROM archive_sources WHERE archive_id = ? ORDER BY source_archive_id")) {
+			statement.setLong(1, archiveId);
+			try (var result = statement.executeQuery()) {
+				List<Long> ids = new java.util.ArrayList<>();
+				while (result.next()) {
+					ids.add(result.getLong(1));
+				}
+				return ids;
+			}
+		}
+	}
+
+	private int countRows(String table) throws Exception {
+		try (var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + database.path());
+				var statement = connection.createStatement();
+				var result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+			result.next();
+			return result.getInt(1);
+		}
+	}
 }

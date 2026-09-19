@@ -429,4 +429,22 @@ class DriveChangeSyncServiceTest {
 		assertNull(result.archive());
 		assertTrue(sessions.openedPaths.isEmpty());
 	}
+
+	@Test
+	void anUntrashedFileIsReCapturedEvenAtAnUnchangedRevision() throws Exception {
+		baseline("old-token");
+		StoredFile trashed = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", true,
+				"revision-1", 5L);
+		StoredFile untrashed = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
+				"revision-1", null);
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(trashed));
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream("bytes".getBytes()));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, untrashed)), null, "new-token"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals("bytes", new String(sessions.entries.get("content/file-1")));
+		assertEquals(List.of("untrash"), commits.commits.getFirst().events().stream().map(FileEvent::eventType).toList());
+	}
 }

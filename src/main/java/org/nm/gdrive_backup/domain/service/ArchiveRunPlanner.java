@@ -24,6 +24,12 @@ public class ArchiveRunPlanner {
 		return plan(scope, scopeDisplayNameOrNull, ArchiveMode.FULL, nextSequenceNumber(existing), null, null);
 	}
 
+	/** A merged full is a new chain root: no base, numbered after everything the scope already has. */
+	public Plan planMergedFull(DriveScope scope, String scopeDisplayNameOrNull) {
+		List<Archive> existing = archivePort.findByScopeKey(scope.key());
+		return plan(scope, scopeDisplayNameOrNull, ArchiveMode.MERGED_FULL, nextSequenceNumber(existing), null, null);
+	}
+
 	public Plan planIncremental(DriveScope scope, String scopeDisplayNameOrNull) {
 		List<Archive> existing = archivePort.findByScopeKey(scope.key());
 		Archive base = existing.stream()

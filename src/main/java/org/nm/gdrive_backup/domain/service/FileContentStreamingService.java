@@ -92,6 +92,20 @@ public class FileContentStreamingService {
 		return Optional.ofNullable(EXPORT_FORMATS.get(mimeType)).map(ExportFormat::extension);
 	}
 
+	/** The extension a file exported as {@code exportMimeType} carries, or empty for a format we never export. */
+	static Optional<String> extensionForExportMimeType(String exportMimeType) {
+		if (exportMimeType == null) {
+			return Optional.empty();
+		}
+		if (PDF_FALLBACK.mimeType().equals(exportMimeType)) {
+			return Optional.of(PDF_FALLBACK.extension());
+		}
+		return EXPORT_FORMATS.values().stream()
+				.filter(format -> format.mimeType().equals(exportMimeType))
+				.map(ExportFormat::extension)
+				.findFirst();
+	}
+
 	private static String pdfEntryName(String entryName, String exportExtension, ArchiveSession session) {
 		String base = entryName.endsWith(exportExtension)
 				? entryName.substring(0, entryName.length() - exportExtension.length())
