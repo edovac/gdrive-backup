@@ -25,7 +25,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-16
+Last reviewed: 2026-09-19
 
 ### Completed
 
@@ -40,7 +40,7 @@ Last reviewed: 2026-09-16
 - [x] Make the user-selection and impersonated Drive-preview flow discoverable and usable in the JavaFX layout.
 - [x] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync backs up changed revisions and links them to the current file version. Expired page tokens trigger a full re-inventory without duplicating unchanged versions. Both flows now report per-item progress through `BackupProgressTracker`.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
-- [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names. Superseded by the no-revision-retention decision: the `revision` path segment and the accumulation of copies are being removed (see **Local storage layout**).
+- [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names. Superseded twice: first by the no-revision-retention decision (the `revision` path segment went away), then by the stream-to-archive decision, which removes the capture store altogether (see **Storage layout** and the **Stream content straight into archives** item under Not started).
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [x] Per-drive backup scope selection: let the admin choose which drive(s) — the
   personal drive and/or one or more specific Shared Drives — to include in a
@@ -53,16 +53,15 @@ Last reviewed: 2026-09-16
   backup root folder at runtime, applying the choice through
   configuration-backed ports rather than direct UI environment access. The
   backup history database (`backup.db`) always lives inside that root
-  alongside the archive output and the internal capture store — there is no
+  alongside the archive output (and, until the stream-to-archive rework lands, the interim capture store) — there is no
   separate database-location picker, so the database can never point
   somewhere other than the archives it describes (see **Backup root
   location**). The location is chosen only in the UI and lasts for the
   current session; every launch starts from `~/.gdrive-backup`. Changes are
-  refused while a backup runs. `file_captures.local_path` is stored relative
-  to the root (`CaptureStoragePort.store` returns a `StoredCapture` with a
-  relative path and size, computed by the adapter so the domain layer never
-  handles path resolution), so relocating the whole root needs no database
-  changes. This supersedes the earlier two-picker (destination + database)
+  refused while a backup runs. Paths recorded in the database are relative to
+  the root (in the interim implementation `CaptureStoragePort.store` returns a
+  `StoredCapture` with a relative path; `archives.archive_path` follows the
+  same rule), so relocating the whole root needs no database changes. This supersedes the earlier two-picker (destination + database)
   implementation.
 - [x] Interruptible backups and recovery policy: the admin can cancel a
   running backup from the progress panel. For a single-drive job, Cancel
@@ -112,7 +111,7 @@ Last reviewed: 2026-09-16
   instead of checking for `@` itself. `SyncStatePort`/`SyncState` stay keyed
   by the raw string, since persistence there doesn't branch on scope type.
 - [x] SQLite schema and persistence for users, drives, files, captures, events, archives, and sync state. Schema initialization and all metadata/history repositories are in place, including `ArchivePort`/`SqliteArchiveAdapter`, and sync orchestration now writes to `archives` as part of each run.
-- [x] Backup options and per-drive archive packaging: the admin picks full versus incremental mode in the UI before starting a sync; `INCREMENTAL` falls back to a full inventory when no baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories regardless of any saved cursor. After each scope's sync completes (and wasn't cancelled), `ArchivePackagingService` writes its ZIP archive: a full run materializes the live, non-trashed files into a real Drive-shaped folder tree (`FlatTreePathResolver`, with multi-parent flattening, collision suffixing, and a depth/cycle-safe walk of the id-based parent chains); an incremental run writes an id-keyed delta of the run's captured content plus its events, or produces no archive at all when nothing changed. `LocalArchiveWriterAdapter` stages each ZIP to a temp file and atomically publishes it, embedding `manifest.json` (Gson, adapter-side only) before the `archives` row is inserted, so a crash never leaves a DB row pointing at a missing file. Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies. `file_captures.archive_id`/`file_events.archive_id` backfill is deferred to the archive-operations item below, since nothing consumes it yet.
+- [x] Backup options and per-drive archive packaging: the admin picks full versus incremental mode in the UI before starting a sync; `INCREMENTAL` falls back to a full inventory when no baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories regardless of any saved cursor. After each scope's sync completes (and wasn't cancelled), `ArchivePackagingService` writes its ZIP archive: a full run materializes the live, non-trashed files into a real Drive-shaped folder tree (`FlatTreePathResolver`, with multi-parent flattening, collision suffixing, and a depth/cycle-safe walk of the id-based parent chains); an incremental run writes an id-keyed delta of the run's captured content plus its events, or produces no archive at all when nothing changed. `LocalArchiveWriterAdapter` stages each ZIP to a temp file and atomically publishes it, embedding `manifest.json` (Gson, adapter-side only) before the `archives` row is inserted, so a crash never leaves a DB row pointing at a missing file. Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies. The interim implementation still routes content through the capture store; the **Stream content straight into archives** item under Not started replaces that, and with it makes `file_captures.archive_id`/`file_events.archive_id` always populated instead of deferred.
 
 ### In progress
 
@@ -121,12 +120,29 @@ Last reviewed: 2026-09-16
 
 ### Not started
 
+- [ ] **Stream content straight into archives (P1, supersedes the capture store).**
+  The current implementation still downloads every changed file into an
+  id-keyed capture store under `backupRoot` and zips from it afterwards; the
+  decided design removes that store. Content streams from Drive
+  (`DriveContentPort.download`/`export`) directly into the archive ZIP being
+  written; the only files ever on disk are finished archives plus the one
+  temp ZIP being staged. Work: replace `CaptureStoragePort`/
+  `LocalCaptureStorageAdapter`/`StoredCapture` with a streaming archive
+  session (stage to temp, then commit or discard); change `file_captures` to
+  an archive content index (drop `local_path`, add `entry_name`, make
+  `archive_id` always set); make the sync services buffer their DB writes
+  (`files` metadata, `file_events`, `file_captures`, `sync_state`) and apply
+  them in one transaction only after the ZIP is published (see **Sync
+  algorithm**); build a full archive from scratch by re-downloading every file;
+  and build a full archive from a complete set of incremental archives
+  (base full plus every delta) without touching Drive. Requires recreating any
+  existing `backup.db`, since there is no migration tool.
 - [ ] Archive operations: squash consecutive deltas into a merged delta,
   collapse a chain into a flat uploadable tree, warn on chain gaps, and start a
   new chain when a full backup runs on a scope that already has one (today's
-  `sequence_number` is monotonic per scope, not per chain). Also backfill
-  `file_captures.archive_id`/`file_events.archive_id`, which the archive
-  writer deliberately leaves null until these operations exist to consume it.
+  `sequence_number` is monotonic per scope, not per chain). The collapse
+  operation is also how a full archive is built from a complete set of
+  incremental archives, with no Drive access.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -160,6 +176,10 @@ requirements below as the source of truth for expected behavior.
   rather than per chain, since nothing tracks separate chains yet — starting
   a genuinely new chain on a fresh full backup is still open, see the archive
   operations item below.
+- [ ] Stream content straight into archives, with no capture store: a full
+  archive is always built from scratch by streaming every file from Drive, and
+  can alternatively be built from a complete set of incremental archives
+  (base full plus every delta). See **Storage layout**.
 - Archive operations: squash consecutive deltas into one `MERGED_INCREMENTAL`
   delta, and collapse a full archive plus its deltas into a single flat
   `MERGED_FULL` tree that becomes the chain's new base. Both refuse to run on a
@@ -202,8 +222,8 @@ Windows packaging.
 - **Backup root location**: the admin chooses **one** local destination folder
   at runtime — `backupRoot` — that is the root for everything the app writes:
   the SQLite database (`backupRoot/backup.db`), the archive output
-  (`backupRoot/archives/...`), and the internal capture store
-  (`backupRoot/<ownerScope>/...`). There is no separate database-location
+  (`backupRoot/archives/...`), and nothing else — content is never staged
+  as loose files or folders (see **Storage layout**). There is no separate database-location
   picker; the database always lives inside the chosen root, so the chain
   metadata and the archives it describes can never be pointed at different
   places by the UI. The application validates that the root is writable and
@@ -221,8 +241,8 @@ Windows packaging.
   revision mode — `LATEST_ONLY` or a future `ALL_REVISIONS` — is chosen once,
   when the chain's full backup runs, and fixed for every archive added to that
   chain afterward. **`LATEST_ONLY` is the only mode implemented**: it never
-  calls Drive's `revisions.list`, and the local store holds exactly one current
-  copy per file, replaced when the content changes. There is no admin-facing
+  calls Drive's `revisions.list`, and each archive holds exactly the current
+  content of the files it carries. There is no admin-facing
   revision-mode picker yet — `revision_mode` already exists on the `archives`
   row so `ALL_REVISIONS` can be added later without reshaping the schema or
   restarting chains, but building it needs separate Google API/design
@@ -232,21 +252,27 @@ Windows packaging.
   **new chain** — the old one is left in place, untouched, just no longer
   extended; this is also the only way a scope would ever move to a different
   revision mode. File history under `LATEST_ONLY` lives entirely in the
-  **archive chain**, not in a stack of copies inside the local store.
+  **archive chain**; the app keeps no local copy of file content outside the
+  archives themselves.
 - **Archive output**: each completed backup job delivers archive output **per
   selected drive** — a personal drive and each Shared Drive get their own
   archive and manifest, never a single archive combining several drives. What
   an archive contains depends on the backup mode:
   - A **full** run produces a complete, self-contained archive shaped like the
     original Drive: real folder hierarchy, real filenames, so the admin can
-    upload it straight into a new Drive. The tree is materialized at export
-    from the local store (which stays id-keyed) plus the `files` metadata,
-    **not** from whatever that run happened to download: a full run re-lists
-    everything but skips re-downloading files whose `headRevisionId` is
-    unchanged, so packaging only what the run fetched would yield a nearly
-    empty archive on an already-synced scope.
+    upload it straight into a new Drive. A full archive is **always built from
+    scratch**: the run re-lists the scope, resolves the folder tree from the
+    listed metadata, and streams every live file's content from Drive
+    directly into the ZIP — a full run never reuses previously downloaded
+    content, so it re-downloads the whole scope each time (an accepted cost in
+    API quota and time). A full archive can **also be built from a complete
+    set of incremental archives** for the scope — its base full archive plus
+    every delta after it, with no gap — by applying each delta's content and
+    events in order, without contacting Google (the collapse operation; see
+    **Archive operations**).
   - An **incremental** run produces a **delta** archive: an id-keyed payload of
-    the content that changed, plus a manifest of that run's events (rename,
+    the content that changed, streamed from Drive straight into the ZIP as
+    it is fetched, plus a manifest of that run's events (rename,
     move, trash, untrash, delete). Deltas are consumed by the merge operations
     rather than browsed, so they are deliberately not Drive-shaped — a partial
     tree could not be uploaded anyway, and a moved file's new path would lose
@@ -274,9 +300,9 @@ Windows packaging.
     database and carried in delta archives, but never placed in the tree —
     re-uploading them would reinstate deleted content as if it were live.
   - **Real names preserved.** Only characters genuinely illegal on Windows
-    (`\ / : * ? " < > |`) are replaced. This needs a gentler sanitizer than the
-    internal store's, which reduces names to `[a-zA-Z0-9._@-]` and would mangle
-    every accented filename.
+    (`\ / : * ? " < > |`) are replaced, so accented and non-Latin filenames
+    survive intact (the interim capture store's stricter `[a-zA-Z0-9._@-]`
+    sanitizer must not be reused here).
   - **Collisions disambiguated.** Drive allows two files with the same name in
     one folder; a filesystem does not. Same-name siblings get a ` (2)`, ` (3)`
     suffix.
@@ -425,18 +451,17 @@ files
   mime_type
   trashed                  -- boolean
   head_revision_id         -- change detector only; no revision history is kept
-  current_version_id       -- FK -> file_captures; the one copy held locally
+  current_version_id       -- FK -> file_captures; the latest capture, i.e. where the
+                           -- current content lives (an archive entry, not a local file)
 
-file_captures              -- append-only log of content captures, one per download
+file_captures              -- append-only content index: which archive entry holds each captured revision
   id (PK)
   file_id (FK)
-  revision_id              -- the head revision this copy was taken from
+  revision_id              -- the head revision this content was taken from
   timestamp
-  local_path               -- relative to backupRoot; meaningful only for the current
-                           -- copy — superseded rows describe content that now lives
-                           -- only in an archive
+  archive_id               -- FK -> archives; the archive that carries this content (never null)
+  entry_name               -- the entry's path inside that archive's ZIP
   size_bytes
-  archive_id               -- FK -> archives; which archive carried this capture
 
 file_events                -- rename / move / trash / delete / content
   id (PK)
@@ -473,15 +498,18 @@ root to a new folder or drive needs no database changes; keeping the root
 intact as a unit when doing so is the administrator's responsibility (see
 Known limitations).
 
-`file_captures` replaces the earlier `file_versions` table. It is a log of what
-was captured and where it went, not a set of retained copies: under
-`LATEST_ONLY`, only the row pointed at by `files.current_version_id` has
-content in the local store; a future `ALL_REVISIONS` chain would retain more
-than one capture per file. `archive_id` on both `file_captures` and
-`file_events` is what lets the database locate which archive holds a file's
-content or a given event without opening every archive on the drive — this is
-a verification aid for the merge operations, not a substitute for reading the
-archives themselves (see **Archive operations**: merges are archive-authoritative).
+`file_captures` replaces the earlier `file_versions` table. Since the app keeps
+no loose copies of content, it is an **index into the archives**: one row per
+captured revision saying which archive and entry hold those bytes, with
+`files.current_version_id` pointing at the latest one. Together with
+`file_events` (the operation history: rename, move, trash, untrash, delete,
+content) and `archives`, the database tracks every delta and every operation
+the chain has seen, so it can locate any file's content or any event without
+opening every archive. `archive_id` on both tables is therefore always set,
+written in the same transaction that inserts the `archives` row. The index is
+a locator and verification aid, not a substitute for reading the archives
+themselves (see **Archive operations**: merges are archive-authoritative); if
+the database is lost, the manifests embedded in the archives rebuild it.
 
 `owner_scope` and `scope_key` both hold either a user's email or a Shared
 Drive's `drive_id`. Which of the two it is must be carried explicitly alongside
@@ -508,15 +536,29 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
    - `name` differs from stored → `file_events`: `rename`.
    - `parents` (or `drive_id`, if moved across Shared Drives) differs →
      `file_events`: `move`.
-   - `headRevisionId` differs → download/export content, **replacing** the
-     local copy, append a `file_captures` row, update `current_version_id`.
-     The superseded copy is not retained locally; it survives only in whichever
-     archive already carried it.
+   - `headRevisionId` differs → stream the file's content (download, or
+     export for Google-native files) from Drive straight into the delta ZIP
+     being staged, and record a `file_captures` index row pointing at that
+     entry once the archive is published. Superseded content survives only in
+     whichever earlier archive already carried it.
 4. Handle a stale/expired `page_token` (e.g. after a long offline period) as
    an explicit error path that falls back to a full resync for that scope,
    rather than failing silently.
 5. Shared Drives are synced **once per unique `drive_id`**, not once per user
    who can see them — avoid duplicate storage.
+6. **Commit protocol.** Because content lives only in the archive being
+   written, a run's database effects — `files` metadata updates, `file_events`,
+   `file_captures` index rows, the `archives` row, and the new `sync_state`
+   cursor — are held in memory and applied **in one transaction only after the
+   archive ZIP has been published** (temp file, then atomic move). The
+   sequence is: stage the ZIP, publish it, then commit the database. A crash
+   between the last two steps leaves an orphan ZIP (recoverable, and its
+   manifest says what it contains), never a database row pointing at a missing
+   file, and never an advanced cursor for changes whose content was discarded.
+   Consequently `sync_state` is **not** checkpointed per page: an interrupted
+   or cancelled run writes nothing and the next run replays the change feed
+   from the last committed cursor. A full run likewise commits its metadata
+   snapshot and baseline cursor only after its archive is published.
 
 ---
 
@@ -530,33 +572,28 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
 
 ---
 
-## Local storage layout
+## Storage layout
 
-Under `LATEST_ONLY` — the only revision mode built — the store is **id-keyed
-and holds current state only**, one copy per file, replaced when the content
-changes:
+`backupRoot` holds exactly two things: `backup.db` and the `archives/`
+subtree. **There is no capture store** — file content is never written to disk
+as loose files or as an id-keyed or Drive-shaped folder tree. Content streams
+from Drive (or, for a full archive built from deltas, from earlier archives)
+directly into the ZIP being written, so the only other thing ever on disk is
+the single temp ZIP being staged next to its final location.
 
-```
-backupRoot/<ownerScope>/<fileId>/<filename>
-```
-
-- `ownerScope` is a user email or a Shared Drive's `drive_id`; which kind it is
-  travels alongside the key rather than being inferred from the string.
-- There is no revision segment: the store never holds two copies of a file.
-  The `<revisionId>` level that used to sit here is gone under `LATEST_ONLY`.
-  A future `ALL_REVISIONS` chain would need its own layout, still a
-  placeholder (see Known limitations).
-- Renames and moves are database updates, not file moves on disk. Nothing in
-  the store's path depends on a file's name or its place in the Drive tree.
-- Retention applies to **archives**, not to this store. The store is
-  disposable: it can be rebuilt by a full sync, and what it cannot rebuild —
-  history — lives in the archive chain.
-
-The Drive-shaped folder tree is **materialized at export**, when a full archive
-is packaged, by joining this store with the `files` metadata. Keeping the
-risky part — rebuilding paths, resolving name collisions, dropping trashed
-files — in one place that runs at export time means it can be verified there,
-instead of every sync having to maintain a correct tree on disk.
+- A **full** archive gets its folder tree from the `files` metadata at the
+  moment the archive is written: real names, collision suffixes, live files
+  only (see **Flat-tree rules**). Building the tree is a pure function of that
+  metadata, so it is verified in one place rather than maintained on disk.
+- An **incremental** delta carries changed content keyed by file id
+  (`content/<fileId>`) plus its events manifest.
+- Renames and moves are database and manifest events, never file operations.
+- Retention applies to **archives**. The archive chain is the only history and
+  the only copy of content; nothing on disk can rebuild a lost archive except
+  re-downloading from Drive (for the current state) or a complete surviving
+  chain.
+- Peak extra disk use during a run is one temp ZIP, on the same volume as the
+  final archive so the publishing move stays atomic.
 
 The per-archive manifest identifies its scope (personal drive or a specific
 Shared Drive), backup mode, captured files and events, and its position in the
@@ -564,22 +601,19 @@ archive chain.
 
 ### Archive layout and naming
 
-Archives live in their own subtree, separate from the id-keyed store above,
-so the human-facing deliverable the admin browses and uploads never mixes
-with the disposable internal staging area. `backupRoot` is also where
+Archives live under `backupRoot/archives`. `backupRoot` is also where
 `backup.db` lives (see **Backup root location**), so the whole tree — the
-database, the archives, and the internal store — is one folder the admin can
-move as a single unit:
+database and the archives — is one folder the admin can move as a single
+unit:
 
 ```
 backupRoot/backup.db
 backupRoot/archives/<scopeFolder>/archive-<sequenceNumber>-<mode>.zip
 ```
 
-- `<scopeFolder>` identifies the chain. Unlike the id-keyed store's sanitizer
-  above (which reduces names to `[a-zA-Z0-9._@-]`), this uses the gentler
-  **flat-tree** sanitizer (only characters illegal on Windows — `\ / : * ? "
-  < > |` — are replaced), so folder names stay human-readable:
+- `<scopeFolder>` identifies the chain. It uses the **flat-tree** sanitizer
+  (only characters illegal on Windows — `\ / : * ? " < > |` — are replaced),
+  so folder names stay human-readable:
   - Personal drive: `My Drive (<email>)`, e.g. `My Drive (edoardo@example.com)`
     — the email is required, not optional, since an org-wide admin backs up
     more than one user's personal drive over time.
@@ -629,7 +663,8 @@ backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
   consecutive deltas, and collapse a chain into a flat uploadable tree — with a
   clear statement of what each one discards before it runs.
 - **History view**: query `file_events` + `file_captures` for a selected file
-  to show renames/moves/trashes and when its content was captured over time.
+  to show renames/moves/trashes and when its content was captured over time,
+  including which archive holds each capture.
 - **Layout follow-up (low priority)**: analyse and redesign the authenticated
   screen as three distinct columns/panels: user information and selection,
   Drive browsing/details, and quota/report details. Keep this separate from
@@ -674,10 +709,19 @@ backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
 - A delta archive cannot restore a drive on its own: it needs the full archive
   it descends from plus every delta in between, in order. The collapse
   operation is the reassembly tooling; programmatic restore stays out of scope.
-- **The archive chain is the only history.** The local store keeps one copy per
-  file, so deleting or losing an archive permanently destroys the states it
-  held — there is no local fallback. The app tracks the chain and warns about
-  gaps, but cannot recover them.
+- **The archive chain is the only history and the only copy.** The app keeps no
+  local content outside the archives, so deleting or losing an archive
+  permanently destroys the states it held — there is no local fallback (only a
+  fresh full run from Drive can recreate the *current* state). The app tracks
+  the chain and warns about gaps, but cannot recover them.
+- **Full archives re-download the whole scope.** Building a full archive from
+  scratch streams every file from Drive again, costing API quota and time
+  proportional to the Drive's size; building one from a complete set of
+  incremental archives avoids this but needs an unbroken chain.
+- **No per-page crash resume for incremental runs.** With content staged only
+  in a temp ZIP, `sync_state` advances only at commit (see **Sync algorithm**,
+  commit protocol), so an interrupted run replays its change feed from the last
+  committed cursor instead of resuming mid-feed.
 - A flat full archive cannot represent Drive faithfully, and re-uploading one
   loses: files that shared a name in a folder (renamed with a ` (2)` suffix),
   any file that had multiple parents, and Google-native fidelity — an exported
@@ -694,9 +738,10 @@ backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-incremental.zip
   `archives` row — the run leaves the chain exactly as it was before it
   started. For an incremental run this matters most: a partial delta would be
   worse than none, since the next delta would resume *after* the changes the
-  cancelled run dropped, silently losing them for good; `sync_state` is
-  already checkpointed per-page (see **Sync algorithm**), so no Drive changes
-  are lost even though no archive is produced for the cancelled portion. The
+  cancelled run dropped, silently losing them for good. Under the commit
+  protocol (see **Sync algorithm**), a cancelled run commits no `sync_state`,
+  metadata or events at all, so the next run replays from the last committed
+  cursor and no Drive changes are lost. The
   archive writer stages output in a temp file/directory and only moves it into
   the chosen backup destination — and only inserts the `archives` row — after
   the run completes without cancellation; on cancellation the temp output is
