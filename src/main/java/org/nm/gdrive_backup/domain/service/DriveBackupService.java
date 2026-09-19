@@ -11,7 +11,6 @@ import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
 import org.nm.gdrive_backup.domain.model.StoredDrive;
-import org.nm.gdrive_backup.domain.port.in.ArchivePackagingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
@@ -28,7 +27,6 @@ public class DriveBackupService implements DriveBackupUseCase {
 	private final DriveMetadataPort driveMetadataPort;
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
-	private final ArchivePackagingUseCase archivePackagingUseCase;
 
 	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity) {
@@ -54,14 +52,6 @@ public class DriveBackupService implements DriveBackupUseCase {
 			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
 			DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
 			BackupCancellation cancellation) {
-		this(syncStatePort, initialSyncUseCase, changeSyncUseCase, backupActivity, driveMetadataPort, progressTracker,
-				cancellation, null);
-	}
-
-	public DriveBackupService(SyncStatePort syncStatePort, InitialDriveSyncUseCase initialSyncUseCase,
-			DriveChangeSyncUseCase changeSyncUseCase, BackupActivity backupActivity,
-			DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
-			BackupCancellation cancellation, ArchivePackagingUseCase archivePackagingUseCase) {
 		this.syncStatePort = syncStatePort;
 		this.initialSyncUseCase = initialSyncUseCase;
 		this.changeSyncUseCase = changeSyncUseCase;
@@ -69,7 +59,6 @@ public class DriveBackupService implements DriveBackupUseCase {
 		this.driveMetadataPort = driveMetadataPort;
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
-		this.archivePackagingUseCase = archivePackagingUseCase;
 	}
 
 	@Override
@@ -110,33 +99,21 @@ public class DriveBackupService implements DriveBackupUseCase {
 
 	private BackupResult synchronizeScope(ServiceAccountAccess access, DriveScope scope, BackupMode mode,
 			String scopeDisplayName) {
-		if (mode == BackupMode.FULL) {
-			return runFullInventory(access, scope, scopeDisplayName);
-		}
-		if (syncStatePort.findByScopeKey(scope.key()).isEmpty()) {
+		if (mode == BackupMode.FULL || syncStatePort.findByScopeKey(scope.key()).isEmpty()) {
 			return runFullInventory(access, scope, scopeDisplayName);
 		}
 		try {
-			var result = changeSyncUseCase.synchronize(access, scope);
-			boolean cancelled = cancellation.isImmediateStopRequested();
-			if (!cancelled && archivePackagingUseCase != null) {
-				progressTracker.packaging();
-				archivePackagingUseCase.packageIncrementalArchive(scope, scopeDisplayName, result);
-			}
-			return new BackupResult(result.scope(), result.changeCount(), false, cancelled);
+			var result = changeSyncUseCase.synchronize(access, scope, scopeDisplayName);
+			return new BackupResult(result.scope(), result.changeCount(), false, result.cancelled());
 		} catch (StaleDrivePageTokenException exception) {
 			return runFullInventory(access, scope, scopeDisplayName);
 		}
 	}
 
+	// The existing sync_state row is deliberately kept: the full run replaces it in its own commit, so a
+	// failed or cancelled full run leaves the previous cursor (and the incremental chain) intact.
 	private BackupResult runFullInventory(ServiceAccountAccess access, DriveScope scope, String scopeDisplayName) {
-		syncStatePort.deleteByScopeKey(scope.key());
-		var result = initialSyncUseCase.synchronize(access, scope);
-		boolean cancelled = cancellation.isImmediateStopRequested();
-		if (!cancelled && archivePackagingUseCase != null) {
-			progressTracker.packaging();
-			archivePackagingUseCase.packageFullArchive(scope, scopeDisplayName);
-		}
-		return new BackupResult(result.scope(), result.fileCount(), true, cancelled);
+		var result = initialSyncUseCase.synchronize(access, scope, scopeDisplayName);
+		return new BackupResult(result.scope(), result.fileCount(), true, result.cancelled());
 	}
 }

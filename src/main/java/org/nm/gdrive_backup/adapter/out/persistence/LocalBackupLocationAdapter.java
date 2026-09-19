@@ -29,9 +29,9 @@ public class LocalBackupLocationAdapter implements BackupLocationPort {
 	private static final Set<String> HISTORY_TABLES = Set.of("users", "files");
 
 	private final SqliteDatabase database;
-	private final LocalCaptureStorageAdapter storage;
+	private final LocalBackupRoot storage;
 
-	public LocalBackupLocationAdapter(SqliteDatabase database, LocalCaptureStorageAdapter storage) {
+	public LocalBackupLocationAdapter(SqliteDatabase database, LocalBackupRoot storage) {
 		this.database = database;
 		this.storage = storage;
 	}

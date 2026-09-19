@@ -53,15 +53,13 @@ Last reviewed: 2026-09-19
   backup root folder at runtime, applying the choice through
   configuration-backed ports rather than direct UI environment access. The
   backup history database (`backup.db`) always lives inside that root
-  alongside the archive output (and, until the stream-to-archive rework lands, the interim capture store) — there is no
+  alongside the archive output — there is no
   separate database-location picker, so the database can never point
   somewhere other than the archives it describes (see **Backup root
   location**). The location is chosen only in the UI and lasts for the
   current session; every launch starts from `~/.gdrive-backup`. Changes are
   refused while a backup runs. Paths recorded in the database are relative to
-  the root (in the interim implementation `CaptureStoragePort.store` returns a
-  `StoredCapture` with a relative path; `archives.archive_path` follows the
-  same rule), so relocating the whole root needs no database changes. This supersedes the earlier two-picker (destination + database)
+  the root (`archives.archive_path` is stored relative to it), so relocating the whole root needs no database changes. This supersedes the earlier two-picker (destination + database)
   implementation.
 - [x] Interruptible backups and recovery policy: the admin can cancel a
   running backup from the progress panel. For a single-drive job, Cancel
@@ -111,7 +109,20 @@ Last reviewed: 2026-09-19
   instead of checking for `@` itself. `SyncStatePort`/`SyncState` stay keyed
   by the raw string, since persistence there doesn't branch on scope type.
 - [x] SQLite schema and persistence for users, drives, files, captures, events, archives, and sync state. Schema initialization and all metadata/history repositories are in place, including `ArchivePort`/`SqliteArchiveAdapter`, and sync orchestration now writes to `archives` as part of each run.
-- [x] Backup options and per-drive archive packaging: the admin picks full versus incremental mode in the UI before starting a sync; `INCREMENTAL` falls back to a full inventory when no baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories regardless of any saved cursor. After each scope's sync completes (and wasn't cancelled), `ArchivePackagingService` writes its ZIP archive: a full run materializes the live, non-trashed files into a real Drive-shaped folder tree (`FlatTreePathResolver`, with multi-parent flattening, collision suffixing, and a depth/cycle-safe walk of the id-based parent chains); an incremental run writes an id-keyed delta of the run's captured content plus its events, or produces no archive at all when nothing changed. `LocalArchiveWriterAdapter` stages each ZIP to a temp file and atomically publishes it, embedding `manifest.json` (Gson, adapter-side only) before the `archives` row is inserted, so a crash never leaves a DB row pointing at a missing file. Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies. The interim implementation still routes content through the capture store; the **Stream content straight into archives** item under Not started replaces that, and with it makes `file_captures.archive_id`/`file_events.archive_id` always populated instead of deferred.
+- [x] Backup options and per-drive archive packaging: the admin picks full versus incremental mode in the UI before starting a sync; `INCREMENTAL` falls back to a full inventory when no baseline exists yet or the saved cursor has expired, and `FULL` always re-inventories regardless of any saved cursor. Each scope's sync run produces its ZIP archive (unless it was cancelled): a full run materializes the live, non-trashed files into a real Drive-shaped folder tree (`FlatTreePathResolver`, with multi-parent flattening, collision suffixing, and a depth/cycle-safe walk of the id-based parent chains); an incremental run writes an id-keyed delta of the run's captured content plus its events, or produces no archive at all when nothing changed. `LocalArchiveSessionAdapter` stages each ZIP to a temp file and atomically publishes it, embedding `manifest.json` (Gson, adapter-side only) before the run's database effects are committed, so a crash never leaves a DB row pointing at a missing file. Only `LATEST_ONLY` revision mode is implemented; history lives in the archive chain instead of a stack of local copies.
+
+- [x] Stream content straight into archives (slice 1): there is no capture
+  store any more. `FileContentStreamingService` streams Drive content into an
+  `ArchiveSession` (`LocalArchiveSessionAdapter`: temp ZIP, manifest last,
+  atomic publish, discard on close). A full run always re-downloads every live
+  file into a Drive-shaped tree and fetches its baseline page token before
+  listing; an incremental run drains the change feed in memory and then streams
+  the changed content as `content/<fileId>`. Database effects are buffered in a
+  `PendingCommit` and applied by `SqliteSyncCommitAdapter` in one transaction
+  after the ZIP is published (cancelled or failed runs write nothing, and there
+  is no per-page cursor checkpoint). `file_captures` is now an archive content
+  index (`archive_id` and `entry_name`, no `local_path`) and `file_events.archive_id`
+  is always set. Existing `backup.db` files must be deleted (no migration tool).
 
 ### In progress
 
@@ -120,23 +131,17 @@ Last reviewed: 2026-09-19
 
 ### Not started
 
-- [ ] **Stream content straight into archives (P1, supersedes the capture store).**
-  The current implementation still downloads every changed file into an
-  id-keyed capture store under `backupRoot` and zips from it afterwards; the
-  decided design removes that store. Content streams from Drive
-  (`DriveContentPort.download`/`export`) directly into the archive ZIP being
-  written; the only files ever on disk are finished archives plus the one
-  temp ZIP being staged. Work: replace `CaptureStoragePort`/
-  `LocalCaptureStorageAdapter`/`StoredCapture` with a streaming archive
-  session (stage to temp, then commit or discard); change `file_captures` to
-  an archive content index (drop `local_path`, add `entry_name`, make
-  `archive_id` always set); make the sync services buffer their DB writes
-  (`files` metadata, `file_events`, `file_captures`, `sync_state`) and apply
-  them in one transaction only after the ZIP is published (see **Sync
-  algorithm**); build a full archive from scratch by re-downloading every file;
-  and build a full archive from a complete set of incremental archives
-  (base full plus every delta) without touching Drive. Requires recreating any
-  existing `backup.db`, since there is no migration tool.
+- [ ] **Stream content straight into archives, remaining slices (P1).** The
+  streaming session, buffered commit and from-scratch full are done (see
+  Completed). Still to do: (2) self-describing manifests — each delta records
+  `name`, `parents`, `mime_type`, `trashed` (and the export mime type) for
+  every file it touched, and a full manifest does the same for every live file
+  and folder, so the tree can be rebuilt from the archives alone; (3) the merge
+  engine that builds a full archive from a base full plus every incremental
+  without touching Drive or `backup.db` file metadata (adds `archive_sources`).
+  Known gap carried over: Google-native files report no `headRevisionId`, so
+  they are currently skipped by both run types and need their own
+  revision/eligibility rule.
 - [ ] Archive operations (manual, per drive, from the Archive manager): the
   **merge** operation (base full plus all current incrementals into one
   `MERGED_FULL`, which becomes the chain's new root so incremental backups
@@ -179,10 +184,10 @@ requirements below as the source of truth for expected behavior.
   rather than per chain, since nothing tracks separate chains yet — starting
   a genuinely new chain on a fresh full backup is still open, see the archive
   operations item below.
-- [ ] Stream content straight into archives, with no capture store: a full
-  archive is always built from scratch by streaming every file from Drive, and
-  can alternatively be built from a complete set of incremental archives
-  (base full plus every delta). See **Storage layout**.
+- [-] Stream content straight into archives, with no capture store: a full
+  archive is always built from scratch by streaming every file from Drive (done);
+  it can alternatively be built from a complete set of incremental archives
+  (base full plus every delta) (not started). See **Storage layout**.
 - Archive operations: the **merge** operation — a `MERGED_FULL` built from the
   base full plus all current incrementals, which becomes the chain's new root
   so incremental backups continue after it — with an option to delete the
@@ -314,7 +319,7 @@ Windows packaging.
     re-uploading them would reinstate deleted content as if it were live.
   - **Real names preserved.** Only characters genuinely illegal on Windows
     (`\ / : * ? " < > |`) are replaced, so accented and non-Latin filenames
-    survive intact (the interim capture store's stricter `[a-zA-Z0-9._@-]`
+    survive intact (the earlier capture store's stricter `[a-zA-Z0-9._@-]`
     sanitizer must not be reused here).
   - **Collisions disambiguated.** Drive allows two files with the same name in
     one folder; a filesystem does not. Same-name siblings get a ` (2)`, ` (3)`

@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -22,7 +21,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.nm.gdrive_backup.domain.model.BackupLocation;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
-import org.nm.gdrive_backup.domain.model.StoredCapture;
 import org.nm.gdrive_backup.domain.model.SyncState;
 
 class LocalBackupLocationAdapterTest {
@@ -31,7 +29,7 @@ class LocalBackupLocationAdapterTest {
 	Path temporaryDirectory;
 
 	private SqliteDatabase database;
-	private LocalCaptureStorageAdapter storage;
+	private LocalBackupRoot storage;
 	private LocalBackupLocationAdapter adapter;
 
 	@BeforeEach
@@ -39,7 +37,7 @@ class LocalBackupLocationAdapterTest {
 		Path activeDirectory = Files.createDirectories(temporaryDirectory.resolve("active"));
 		database = new SqliteDatabase(activeDirectory.resolve("backup.db"));
 		database.initialize();
-		storage = new LocalCaptureStorageAdapter(activeDirectory);
+		storage = new LocalBackupRoot(activeDirectory);
 		adapter = new LocalBackupLocationAdapter(database, storage);
 	}
 
@@ -128,18 +126,16 @@ class LocalBackupLocationAdapterTest {
 	}
 
 	@Test
-	void applyingRootRedirectsPersistenceAndCaptures() throws Exception {
+	void applyingRootRedirectsPersistenceAndArchives() throws Exception {
 		Path root = temporaryDirectory.resolve("other");
 
 		adapter.applyRoot(root);
 		new SqliteSyncStateAdapter(database).save(new SyncState("user@example.com", "token-1"));
-		StoredCapture stored = storage.store("user@example.com", "file-1", "Report.pdf",
-				new ByteArrayInputStream(new byte[] { 1 }));
 
 		Path normalizedRoot = root.toAbsolutePath().normalize();
 		assertEquals(normalizedRoot, adapter.activeLocation().root());
 		assertTrue(Files.exists(normalizedRoot.resolve("backup.db")));
-		assertTrue(Files.exists(normalizedRoot.resolve(stored.relativePath())));
+		assertEquals(normalizedRoot, storage.root());
 		try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalizedRoot.resolve("backup.db"));
 			var statement = connection.createStatement();
 			ResultSet result = statement.executeQuery(

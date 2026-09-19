@@ -41,9 +41,9 @@ CREATE TABLE IF NOT EXISTS file_captures (
     file_id TEXT NOT NULL REFERENCES files(file_id),
     revision_id TEXT NOT NULL,
     timestamp TEXT NOT NULL,
-    local_path TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
-    archive_id INTEGER REFERENCES archives(id)
+    archive_id INTEGER NOT NULL REFERENCES archives(id),
+    entry_name TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS file_events (
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS file_events (
     old_value TEXT,
     new_value TEXT,
     timestamp TEXT NOT NULL,
-    archive_id INTEGER REFERENCES archives(id)
+    archive_id INTEGER NOT NULL REFERENCES archives(id)
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (

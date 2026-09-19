@@ -6,5 +6,5 @@ import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 
 public interface InitialDriveSyncUseCase {
 
-	InitialSyncResult synchronize(ServiceAccountAccess access, DriveScope scope);
+	InitialSyncResult synchronize(ServiceAccountAccess access, DriveScope scope, String scopeDisplayNameOrNull);
 }

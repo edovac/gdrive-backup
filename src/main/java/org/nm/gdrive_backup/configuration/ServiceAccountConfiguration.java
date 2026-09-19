@@ -27,26 +27,23 @@ import org.nm.gdrive_backup.domain.service.DriveUsageQuotaService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUsageReportService;
 import org.nm.gdrive_backup.domain.service.CloudQuotaLimitService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
-import org.nm.gdrive_backup.domain.service.ArchivePackagingService;
 import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
-import org.nm.gdrive_backup.domain.service.FileContentBackupService;
+import org.nm.gdrive_backup.domain.service.FileContentStreamingService;
+import org.nm.gdrive_backup.domain.service.ArchiveRunPlanner;
 import org.nm.gdrive_backup.domain.service.InitialDriveSyncService;
 import org.nm.gdrive_backup.domain.service.DriveBackupService;
 import org.nm.gdrive_backup.domain.service.BackupActivity;
 import org.nm.gdrive_backup.domain.service.BackupProgressTracker;
 import org.nm.gdrive_backup.domain.service.BackupCancellation;
-import org.nm.gdrive_backup.domain.port.in.ArchivePackagingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.domain.port.out.ArchivePort;
-import org.nm.gdrive_backup.domain.port.out.ArchiveWriterPort;
+import org.nm.gdrive_backup.domain.port.out.ArchiveSessionPort;
+import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
-import org.nm.gdrive_backup.domain.port.out.FileEventPort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
-import org.nm.gdrive_backup.domain.port.out.FileCapturePort;
-import org.nm.gdrive_backup.domain.port.out.CaptureStoragePort;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -125,64 +122,63 @@ public class ServiceAccountConfiguration {
 	}
 
 	@Bean
+	ArchiveRunPlanner archiveRunPlanner(ArchivePort archivePort) {
+		return new ArchiveRunPlanner(archivePort);
+	}
+
+	@Bean
 	@ConditionalOnExpression("'${google.service-account.key:}'.trim().length() > 0")
-	FileContentBackupService fileContentBackupService(
-			@Qualifier("driveContentPort") DriveContentPort contentPort,
-			CaptureStoragePort storagePort, FileCapturePort fileCapturePort) {
-		return new FileContentBackupService(contentPort, storagePort, fileCapturePort);
+	FileContentStreamingService fileContentStreamingService(@Qualifier("driveContentPort") DriveContentPort contentPort) {
+		return new FileContentStreamingService(contentPort);
 	}
 
 	@Bean
 	DriveChangeSyncUseCase driveChangeSyncUseCase(
 			@Qualifier("driveChangePort") ObjectProvider<DriveChangePort> changePortProvider, SyncStatePort syncStatePort,
-			FileMetadataPort fileMetadataPort, FileEventPort fileEventPort,
-			ObjectProvider<FileContentBackupService> contentBackupProvider, BackupProgressTracker progressTracker,
-			BackupCancellation cancellation) {
+			FileMetadataPort fileMetadataPort, ObjectProvider<FileContentStreamingService> contentStreamingProvider,
+			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
+			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
-		if (changePort == null) {
-			return (access, scope) -> {
+		FileContentStreamingService contentStreamingService = contentStreamingProvider.getIfAvailable();
+		if (changePort == null || contentStreamingService == null) {
+			return (access, scope, scopeDisplayName) -> {
 				throw new GoogleOAuthException(
 						"Drive change synchronization is not configured. "
 								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
 			};
 		}
-		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, fileEventPort,
-				contentBackupProvider.getIfAvailable(), progressTracker, cancellation);
+		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, contentStreamingService,
+				archiveSessionPort, archiveRunPlanner, syncCommitPort, progressTracker, cancellation);
 	}
 
 	@Bean
 	InitialDriveSyncUseCase initialDriveSyncUseCase(
 			@Qualifier("driveFileListingPort") ObjectProvider<DriveFileListingPort> fileListingPortProvider,
 			@Qualifier("driveChangePort") ObjectProvider<DriveChangePort> changePortProvider,
-			FileMetadataPort fileMetadataPort,
-			SyncStatePort syncStatePort, ObjectProvider<FileContentBackupService> contentBackupProvider,
+			ObjectProvider<FileContentStreamingService> contentStreamingProvider,
+			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
 			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
 		DriveFileListingPort fileListingPort = fileListingPortProvider.getIfAvailable();
 		DriveChangePort changePort = changePortProvider.getIfAvailable();
-		if (fileListingPort == null || changePort == null) {
-			return (access, scope) -> {
+		FileContentStreamingService contentStreamingService = contentStreamingProvider.getIfAvailable();
+		if (fileListingPort == null || changePort == null || contentStreamingService == null) {
+			return (access, scope, scopeDisplayName) -> {
 				throw new GoogleOAuthException(
 						"Initial Drive synchronization is not configured. "
 								+ "Set GOOGLE_SERVICE_ACCOUNT_KEY to a service-account JSON path.");
 			};
 		}
-		return new InitialDriveSyncService(fileListingPort, changePort, fileMetadataPort, syncStatePort,
-				contentBackupProvider.getIfAvailable(), progressTracker, cancellation);
-	}
-
-	@Bean
-	ArchivePackagingUseCase archivePackagingUseCase(ArchivePort archivePort, ArchiveWriterPort archiveWriterPort,
-			FileMetadataPort fileMetadataPort, FileCapturePort fileCapturePort) {
-		return new ArchivePackagingService(archivePort, archiveWriterPort, fileMetadataPort, fileCapturePort);
+		return new InitialDriveSyncService(fileListingPort, changePort, contentStreamingService, archiveSessionPort,
+				archiveRunPlanner, syncCommitPort, progressTracker, cancellation);
 	}
 
 	@Bean
 	DriveBackupUseCase driveBackupUseCase(SyncStatePort syncStatePort,
 			InitialDriveSyncUseCase initialDriveSyncUseCase, DriveChangeSyncUseCase driveChangeSyncUseCase,
 			BackupActivity backupActivity, DriveMetadataPort driveMetadataPort, BackupProgressTracker progressTracker,
-			BackupCancellation cancellation, ArchivePackagingUseCase archivePackagingUseCase) {
+			BackupCancellation cancellation) {
 		return new DriveBackupService(syncStatePort, initialDriveSyncUseCase, driveChangeSyncUseCase,
-				backupActivity, driveMetadataPort, progressTracker, cancellation, archivePackagingUseCase);
+				backupActivity, driveMetadataPort, progressTracker, cancellation);
 	}
 
 	@Bean

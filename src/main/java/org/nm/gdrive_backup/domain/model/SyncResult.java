@@ -1,12 +1,5 @@
 package org.nm.gdrive_backup.domain.model;
 
-import java.util.List;
-
-public record SyncResult(
-		DriveScope scope,
-		int changeCount,
-		String fromPageToken,
-		String toPageToken,
-		List<FileEvent> events,
-		List<FileCapture> capturedContent) {
+/** Outcome of an incremental run; {@code archive} is null when nothing changed or the run was cancelled. */
+public record SyncResult(DriveScope scope, int changeCount, String pageToken, Archive archive, boolean cancelled) {
 }

@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 public class SqliteFileCaptureAdapter implements FileCapturePort {
 
 	private static final String SELECT_COLUMNS =
-			"SELECT id, file_id, revision_id, timestamp, local_path, size_bytes, archive_id FROM file_captures ";
+			"SELECT id, file_id, revision_id, timestamp, archive_id, entry_name, size_bytes FROM file_captures ";
 
 	private final SqliteDatabase database;
 
@@ -28,25 +28,25 @@ public class SqliteFileCaptureAdapter implements FileCapturePort {
 	public FileCapture save(FileCapture capture) {
 		try (var connection = database.openConnection();
 			var statement = connection.prepareStatement(
-					"INSERT INTO file_captures(file_id, revision_id, timestamp, local_path, size_bytes, archive_id) "
+					"INSERT INTO file_captures(file_id, revision_id, timestamp, archive_id, entry_name, size_bytes) "
 							+ "VALUES (?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
 			statement.setString(1, capture.fileId());
 			statement.setString(2, capture.revisionId());
 			statement.setString(3, capture.timestamp().toString());
-			statement.setString(4, capture.localPath());
-			statement.setLong(5, capture.sizeBytes());
 			if (capture.archiveId() == null) {
-				statement.setNull(6, java.sql.Types.INTEGER);
+				statement.setNull(4, java.sql.Types.INTEGER);
 			} else {
-				statement.setLong(6, capture.archiveId());
+				statement.setLong(4, capture.archiveId());
 			}
+			statement.setString(5, capture.entryName());
+			statement.setLong(6, capture.sizeBytes());
 			statement.executeUpdate();
 			try (ResultSet keys = statement.getGeneratedKeys()) {
 				if (!keys.next()) {
 					throw new IllegalStateException("SQLite did not return a file capture id");
 				}
 				return new FileCapture(keys.getLong(1), capture.fileId(), capture.revisionId(),
-						capture.timestamp(), capture.localPath(), capture.sizeBytes(), capture.archiveId());
+						capture.timestamp(), capture.archiveId(), capture.entryName(), capture.sizeBytes());
 			}
 		} catch (SQLException exception) {
 			throw new IllegalStateException("Unable to write SQLite file capture", exception);
@@ -91,7 +91,7 @@ public class SqliteFileCaptureAdapter implements FileCapturePort {
 		Long archiveId = result.wasNull() ? null : rawArchiveId;
 		return new FileCapture(
 				result.getLong("id"), result.getString("file_id"), result.getString("revision_id"),
-				Instant.parse(result.getString("timestamp")), result.getString("local_path"),
-				result.getLong("size_bytes"), archiveId);
+				Instant.parse(result.getString("timestamp")), archiveId, result.getString("entry_name"),
+				result.getLong("size_bytes"));
 	}
 }
