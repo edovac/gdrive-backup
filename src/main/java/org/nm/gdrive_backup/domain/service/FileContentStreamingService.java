@@ -23,6 +23,7 @@ public class FileContentStreamingService {
 				new ExportFormat("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
 			"application/vnd.google-apps.presentation",
 				new ExportFormat("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"));
+	private static final String NATIVE_MIME_PREFIX = "application/vnd.google-apps.";
 	private static final ExportFormat PDF_FALLBACK = new ExportFormat("application/pdf", ".pdf");
 
 	private final DriveContentPort contentPort;
@@ -68,6 +69,19 @@ public class FileContentStreamingService {
 			long size = session.writeEntry(entryName, content);
 			return new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(), null, entryName, size);
 		}
+	}
+
+	/**
+	 * Whether the file has content this service can put in an archive: a content revision to record, and either
+	 * ordinary bytes or a native type Drive can export. Folders, shortcuts, Forms and other native types with
+	 * no export are recorded as metadata only.
+	 */
+	static boolean hasBackableContent(StoredFile file) {
+		if (file.headRevisionId() == null || file.headRevisionId().isBlank()) {
+			return false;
+		}
+		String mimeType = file.mimeType();
+		return mimeType == null || !mimeType.startsWith(NATIVE_MIME_PREFIX) || EXPORT_FORMATS.containsKey(mimeType);
 	}
 
 	/** The extension Drive's export adds to a native file's name, if the mime type is exportable. */

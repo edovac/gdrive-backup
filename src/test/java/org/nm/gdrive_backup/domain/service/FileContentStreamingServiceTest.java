@@ -135,6 +135,17 @@ class FileContentStreamingServiceTest {
 		assertTrue(FileContentStreamingService.exportExtensionFor("application/pdf").isEmpty());
 	}
 
+	@Test
+	void onlyFilesWithARevisionAndBackableContentAreBackable() {
+		assertTrue(FileContentStreamingService.hasBackableContent(file("f", "n", "application/pdf")));
+		assertTrue(FileContentStreamingService.hasBackableContent(file("f", "n", "application/vnd.google-apps.document")));
+		assertTrue(!FileContentStreamingService.hasBackableContent(file("f", "n", "application/vnd.google-apps.folder")));
+		assertTrue(!FileContentStreamingService.hasBackableContent(file("f", "n", "application/vnd.google-apps.form")));
+		assertTrue(!FileContentStreamingService.hasBackableContent(file("f", "n", "application/vnd.google-apps.shortcut")));
+		assertTrue(!FileContentStreamingService.hasBackableContent(
+				new StoredFile("f", "u", "n", "", null, "application/pdf", false, null, null)));
+	}
+
 	private static StoredFile file(String id, String name, String mimeType) {
 		return new StoredFile(id, "user@example.com", name, "", null, mimeType, false, "revision-1", null);
 	}

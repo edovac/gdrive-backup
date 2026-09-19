@@ -9,6 +9,7 @@ import java.util.List;
 import com.google.api.services.drive.model.File;
 import org.junit.jupiter.api.Test;
 import org.nm.gdrive_backup.domain.model.DriveItem;
+import org.nm.gdrive_backup.domain.model.StoredFile;
 
 class GoogleDriveAdapterTest {
 
@@ -35,5 +36,43 @@ class GoogleDriveAdapterTest {
 		assertTrue(items.getFirst().folder());
 		assertEquals("Budget.xlsx", items.get(1).name());
 		assertFalse(items.get(1).folder());
+	}
+
+	@Test
+	void aBinaryFileKeepsItsHeadRevisionIdAsTheContentRevision() {
+		File pdf = file("file-1", "application/pdf");
+		pdf.setHeadRevisionId("head-7");
+		pdf.setVersion(42L);
+
+		StoredFile stored = GoogleDriveAdapter.mapStoredFile(pdf, "user@example.com");
+
+		assertEquals("head-7", stored.headRevisionId());
+	}
+
+	@Test
+	void aGoogleNativeFileWithoutAHeadRevisionUsesItsVersionInstead() {
+		File doc = file("file-2", "application/vnd.google-apps.document");
+		doc.setVersion(42L);
+
+		StoredFile stored = GoogleDriveAdapter.mapStoredFile(doc, "user@example.com");
+
+		assertEquals("v42", stored.headRevisionId());
+	}
+
+	@Test
+	void aFileWithNeitherHasNoContentRevision() {
+		StoredFile stored = GoogleDriveAdapter.mapStoredFile(file("folder-1", "application/vnd.google-apps.folder"),
+				"user@example.com");
+
+		org.junit.jupiter.api.Assertions.assertNull(stored.headRevisionId());
+	}
+
+	private static File file(String id, String mimeType) {
+		File file = new File();
+		file.setId(id);
+		file.setName(id);
+		file.setMimeType(mimeType);
+		file.setTrashed(false);
+		return file;
 	}
 }

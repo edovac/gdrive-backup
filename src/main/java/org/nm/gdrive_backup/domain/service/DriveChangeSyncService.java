@@ -143,10 +143,6 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 				.toList();
 	}
 
-	private static boolean isFolder(StoredFile file) {
-		return "application/vnd.google-apps.folder".equals(file.mimeType());
-	}
-
 	/** In-memory overlay over the database: later changes to a file diff against what earlier ones in this run produced. */
 	private final class PendingChanges {
 
@@ -176,7 +172,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		}
 
 		private boolean shouldBackUpContent(Optional<StoredFile> previous, StoredFile current) {
-			return !isFolder(current) && current.headRevisionId() != null && !current.headRevisionId().isBlank()
+			return FileContentStreamingService.hasBackableContent(current)
 					&& previous.map(file -> !Objects.equals(file.headRevisionId(), current.headRevisionId())
 							|| file.currentVersionId() == null && !contentFileIds.contains(current.fileId()))
 							.orElse(true);

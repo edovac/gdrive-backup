@@ -114,7 +114,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setSpaces("drive")
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true)
-					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId)),"
+					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId,version)),"
 							+ "nextPageToken,newStartPageToken");
 			configureDriveScope(request, scope);
 			var response = request.execute();
@@ -148,7 +148,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 						.setSpaces("drive")
 						.setSupportsAllDrives(true)
 						.setIncludeItemsFromAllDrives(true)
-						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId),nextPageToken");
+						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId,version),nextPageToken");
 				configureFileScope(request, scope);
 				var response = request.execute();
 				if (response.getFiles() != null) {
@@ -222,13 +222,27 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		}
 	}
 
-	private static StoredFile mapStoredFile(File file, String ownerScope) {
+	/** {@code headRevisionId} of the resulting StoredFile is the file's content revision marker: see {@link #contentRevisionOf}. */
+	static StoredFile mapStoredFile(File file, String ownerScope) {
 		if (file == null) {
 			return null;
 		}
 		String parents = file.getParents() == null ? "" : String.join(",", file.getParents());
 		return new StoredFile(file.getId(), ownerScope, file.getName(), parents, file.getDriveId(),
-				file.getMimeType(), Boolean.TRUE.equals(file.getTrashed()), file.getHeadRevisionId(), null);
+				file.getMimeType(), Boolean.TRUE.equals(file.getTrashed()), contentRevisionOf(file), null);
+	}
+
+	/**
+	 * Drive only reports headRevisionId for binary files. Google-native files (Docs, Sheets, Slides) have none,
+	 * so their monotonic {@code version} stands in for it; it also moves on metadata-only edits, which at worst
+	 * re-exports a file that did not change.
+	 */
+	private static String contentRevisionOf(File file) {
+		String headRevisionId = file.getHeadRevisionId();
+		if (headRevisionId != null && !headRevisionId.isBlank()) {
+			return headRevisionId;
+		}
+		return file.getVersion() == null ? null : "v" + file.getVersion();
 	}
 
 	private Drive drive(ServiceAccountAccess access) throws IOException, GeneralSecurityException {

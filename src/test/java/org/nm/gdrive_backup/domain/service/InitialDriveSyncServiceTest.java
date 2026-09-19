@@ -151,6 +151,23 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
+	void backsUpNativeFilesButNotFormsOrShortcuts() throws Exception {
+		StoredFile doc = file("file-1", "Notes", "", "application/vnd.google-apps.document", "v3");
+		StoredFile form = file("file-2", "Survey", "", "application/vnd.google-apps.form", "v1");
+		StoredFile shortcut = file("file-3", "Link", "", "application/vnd.google-apps.shortcut", "v1");
+		stubDrive("token", doc, form, shortcut);
+		when(contentPort.export(ACCESS, "file-1",
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(Set.of("Notes.docx"), sessions.entries.keySet());
+		assertEquals("v3", commits.commits.getFirst().captures().getFirst().revisionId());
+		assertEquals(3, commits.commits.getFirst().files().size());
+	}
+
+	@Test
 	void reportsEnumerationTotalThenPerFileProgressThenPackaging() throws Exception {
 		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"),
 				file("file-2", "B.pdf", "", "application/pdf", "r1"));

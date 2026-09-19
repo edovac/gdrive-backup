@@ -307,4 +307,29 @@ class DriveChangeSyncServiceTest {
 		assertEquals(List.of("open", "discard"), log);
 		assertTrue(commits.commits.isEmpty());
 	}
+
+	@Test
+	void aNewVersionOfANativeFileIsReExportedAndAFormIsRecordedWithoutContent() throws Exception {
+		baseline("old-token");
+		StoredFile previousDoc = new StoredFile("doc-1", "user@example.com", "Notes", "", null,
+				"application/vnd.google-apps.document", false, "v2", 5L);
+		StoredFile currentDoc = new StoredFile("doc-1", "user@example.com", "Notes", "", null,
+				"application/vnd.google-apps.document", false, "v3", null);
+		StoredFile form = new StoredFile("form-1", "user@example.com", "Survey", "", null,
+				"application/vnd.google-apps.form", false, "v1", null);
+		when(metadataPort.findByFileId("doc-1")).thenReturn(Optional.of(previousDoc));
+		when(metadataPort.findByFileId("form-1")).thenReturn(Optional.empty());
+		when(contentPort.export(ACCESS, "doc-1",
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+				List.of(new DriveChange("doc-1", false, currentDoc), new DriveChange("form-1", false, form)), null,
+				"new-token"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(Set.of("content/doc-1"), sessions.entries.keySet());
+		assertEquals("v3", commits.commits.getFirst().captures().getFirst().revisionId());
+		assertEquals(2, commits.commits.getFirst().files().size());
+	}
 }

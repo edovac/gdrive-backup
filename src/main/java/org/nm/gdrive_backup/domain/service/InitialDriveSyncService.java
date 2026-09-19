@@ -31,8 +31,6 @@ import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
  */
 public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 
-	private static final String FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
-
 	private final DriveFileListingPort fileListingPort;
 	private final DriveChangePort changePort;
 	private final FileContentStreamingService contentStreamingService;
@@ -95,8 +93,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	}
 
 	private static boolean isEligible(StoredFile file) {
-		return !FOLDER_MIME_TYPE.equals(file.mimeType()) && !file.trashed() && file.headRevisionId() != null
-				&& !file.headRevisionId().isBlank();
+		return !file.trashed() && FileContentStreamingService.hasBackableContent(file);
 	}
 
 	/** Native files are exported with an extension, so that is the name their siblings must not collide with. */

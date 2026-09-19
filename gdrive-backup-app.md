@@ -139,9 +139,11 @@ Last reviewed: 2026-09-19
   and folder, so the tree can be rebuilt from the archives alone; (3) the merge
   engine that builds a full archive from a base full plus every incremental
   without touching Drive or `backup.db` file metadata (adds `archive_sources`).
-  Known gap carried over: Google-native files report no `headRevisionId`, so
-  they are currently skipped by both run types and need their own
-  revision/eligibility rule.
+  Google-native files report no `headRevisionId`, so their Drive `version`
+  (recorded as `v<version>`) stands in as the content revision; Forms,
+  shortcuts and other native types with no export are recorded as metadata
+  only. `version` also moves on metadata-only edits, so a rename of a Doc can
+  re-export it and log a `content` event alongside the `rename`.
 - [ ] Archive operations (manual, per drive, from the Archive manager): the
   **merge** operation (base full plus all current incrementals into one
   `MERGED_FULL`, which becomes the chain's new root so incremental backups
