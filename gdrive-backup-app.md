@@ -548,7 +548,8 @@ manifest records the net-effect events it superseded), so the operation history
 stays complete.
 
 Each archive's manifest mirrors its `archives` row so the chain can be checked
-and trusted from the archive alone. The database now lives inside the same
+and trusted from the archive alone (see **Manifest format**; it links to its
+base by `sequence_number`, since database ids do not survive a rebuild). The database now lives inside the same
 `backupRoot` as the archives (see **Backup root location**), and every stored
 path is relative to that root rather than absolute, so relocating the whole
 root to a new folder or drive needs no database changes; keeping the root
@@ -599,8 +600,9 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
      entry once the archive is published. Superseded content survives only in
      whichever earlier archive already carried it.
    - Whatever the change, add the file's resulting `name`, `parents`,
-     `mime_type` and `trashed` state to the delta manifest's file list, so the
-     manifest is self-describing (see **Archive output**).
+     `mime_type` and `trashed` state (or a `removed` marker) to the delta
+     manifest's file list, so the manifest is self-describing (see **Manifest
+     format**).
 4. Handle a stale/expired `page_token` (e.g. after a long offline period) as
    an explicit error path that falls back to a full resync for that scope,
    rather than failing silently.
@@ -765,8 +767,9 @@ the single temp ZIP being staged next to its final location.
   final archive so the publishing move stays atomic.
 
 The per-archive manifest identifies its scope (personal drive or a specific
-Shared Drive), backup mode, captured files and events, and its position in the
-archive chain.
+Shared Drive), backup mode, the files it touched (with enough metadata to place
+each in the tree) and events, and its position in the archive chain. Its exact
+shape is under **Manifest format**.
 
 ### Archive layout and naming
 
@@ -816,6 +819,102 @@ verification and confirmation, what remains is:
 backupRoot/archives/Finance (0AIJ4kZ...)/archive-0004-merged-full.zip
 backupRoot/archives/Finance (0AIJ4kZ...)/archive-0005-incremental.zip
 ```
+
+### Manifest format
+
+Every archive embeds `manifest.json` at the ZIP root, written last. It is UTF-8
+JSON with snake_case keys. A key whose value would be null is omitted, and
+timestamps are ISO-8601 UTC strings. The manifest is the archive's own record:
+it must be enough to place every file in the folder tree, to verify the
+archive, and to re-link it into its chain, without `backup.db`.
+
+**Top-level fields**
+
+| Key | Meaning |
+|---|---|
+| `format_version` | Manifest schema version, currently `1`. A reader refuses versions it does not know. |
+| `scope_key`, `scope_type` | The drive: a user's email or a Shared Drive's `drive_id`, and `PERSONAL` or `SHARED_DRIVE`. |
+| `mode` | `FULL`, `INCREMENTAL` or `MERGED_FULL`. |
+| `revision_mode` | `LATEST_ONLY` (the only mode implemented). |
+| `sequence_number` | The archive's number within the drive's archive folder; matches the `NNNN` in its filename. |
+| `base_sequence_number` | The archive this one chains onto (an incremental's predecessor). Absent for a chain root (`FULL`, `MERGED_FULL`). It is a sequence number, not the database id, because ids do not survive a rebuild of the database from the archives. |
+| `created_at` | When the archive was built. |
+| `from_page_token`, `to_page_token` | The change-feed range an incremental covers. `to_page_token` on a `MERGED_FULL` is the last merged incremental's. Absent on a from-scratch `FULL`. |
+| `source_archives` | `MERGED_FULL` only: the `sequence_number` and filename of every archive it was built from. |
+| `files` | One record per file, below. |
+| `events` | The run's events, below. Empty for a full. |
+
+**File record** (`files[]`)
+
+| Key | Meaning |
+|---|---|
+| `file_id` | Drive file id. |
+| `removed` | `true` for a file Drive reported as removed; the record then carries only `file_id`. |
+| `name` | The file's name in Drive (unsanitized, without any export extension). |
+| `parents` | Array of parent ids in Drive's order. The first parent places the file in the tree; the rest are the accepted lossy flattening. |
+| `drive_id` | Shared Drive id, when the file is in one. |
+| `mime_type` | The file's Drive mime type. |
+| `trashed` | Whether the file is in the trash. |
+| `revision_id` | The content revision this archive holds: `headRevisionId`, or `v<version>` for a Google-native file. Present only when the archive contains the file's bytes. |
+| `entry` | The ZIP entry holding the bytes: the Drive-shaped path in a full (`Docs/Report.docx`), `content/<file_id>` in an incremental. Absent when the archive holds no bytes for the file. |
+| `size_bytes` | Size of that entry. |
+| `export_mime_type` | For a Google-native file, the format it was exported in (docx, xlsx, pptx, or `application/pdf` after the export-size fallback), which fixes its extension when a merge names it. |
+
+What `files` lists depends on the mode:
+
+- **Full**: every file and folder the listing returned. Folders and files with
+  no backable content (Forms, shortcuts) have no `entry`; they are listed so
+  ancestor names resolve and nothing is silently dropped.
+- **Incremental**: one record per file **touched** by the run, whatever the
+  change (new content, rename, move, trash, untrash), carrying its resulting
+  metadata. A record has an `entry` only if its content changed in this run. A
+  file Drive reported as removed gets a `removed` record.
+- **Merged full**: the same shape as a full, describing the merged state.
+
+**Event record** (`events[]`): `file_id`, `event_type` (`rename`, `move`,
+`trash`, `untrash`, `delete`, `content`), `old_value`, `new_value`, `timestamp`.
+
+Example, an incremental that renamed a folder's file and updated a Doc:
+
+```json
+{
+  "format_version": 1,
+  "scope_key": "edoardo@example.com",
+  "scope_type": "PERSONAL",
+  "mode": "INCREMENTAL",
+  "revision_mode": "LATEST_ONLY",
+  "sequence_number": 2,
+  "base_sequence_number": 1,
+  "created_at": "2026-09-20T08:15:00Z",
+  "from_page_token": "1041",
+  "to_page_token": "1077",
+  "files": [
+    { "file_id": "1AbC", "name": "Budget 2026", "parents": ["0Fold"],
+      "mime_type": "application/vnd.google-apps.spreadsheet", "trashed": false,
+      "revision_id": "v58", "entry": "content/1AbC", "size_bytes": 20480,
+      "export_mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    { "file_id": "1XyZ", "name": "Contract (final).pdf", "parents": ["0Fold"],
+      "mime_type": "application/pdf", "trashed": false },
+    { "file_id": "1Gone", "removed": true }
+  ],
+  "events": [
+    { "file_id": "1XyZ", "event_type": "rename", "old_value": "Contract.pdf",
+      "new_value": "Contract (final).pdf", "timestamp": "2026-09-19T17:02:11Z" },
+    { "file_id": "1AbC", "event_type": "content", "old_value": "v57",
+      "new_value": "v58", "timestamp": "2026-09-19T17:40:03Z" },
+    { "file_id": "1Gone", "event_type": "delete", "timestamp": "2026-09-19T18:00:40Z" }
+  ]
+}
+```
+
+**Folding a chain** (used by the merge, and to rebuild the database from the
+archives): read the chain in `sequence_number` order, starting from its root.
+For each `file_id`, the **latest record** gives its metadata, and the **latest
+record that has an `entry`** gives its content (archive and entry). A
+`removed` record deletes the file. Files whose latest record is `trashed` are
+kept as metadata but left out of a full's tree. Names for the tree come from
+`name` plus the export extension implied by `export_mime_type`, resolved with
+the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
 
 ---
 
