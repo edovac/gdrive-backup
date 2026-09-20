@@ -72,4 +72,18 @@ public class SqliteFileEventAdapter implements FileEventPort {
 			throw new IllegalStateException("Unable to read SQLite file events", exception);
 		}
 	}
+
+	@Override
+	public int countByArchiveId(long archiveId) {
+		try (var connection = database.openConnection();
+			var statement = connection.prepareStatement("SELECT COUNT(*) FROM file_events WHERE archive_id = ?")) {
+			statement.setLong(1, archiveId);
+			try (ResultSet result = statement.executeQuery()) {
+				result.next();
+				return result.getInt(1);
+			}
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Unable to count SQLite file events", exception);
+		}
+	}
 }

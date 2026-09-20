@@ -9,4 +9,6 @@ public interface FileEventPort {
 	FileEvent save(FileEvent event);
 
 	List<FileEvent> findByFileId(String fileId);
+
+	int countByArchiveId(long archiveId);
 }

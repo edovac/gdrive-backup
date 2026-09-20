@@ -32,6 +32,9 @@ import org.nm.gdrive_backup.domain.service.FileContentStreamingService;
 import org.nm.gdrive_backup.domain.service.ArchiveRunPlanner;
 import org.nm.gdrive_backup.domain.service.ArchiveMergeService;
 import org.nm.gdrive_backup.domain.service.ArchiveCatalogService;
+import org.nm.gdrive_backup.domain.service.ArchiveDeletionService;
+import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
+import org.nm.gdrive_backup.domain.port.out.ArchiveDeletionCommitPort;
 import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
 import org.nm.gdrive_backup.domain.port.out.ArchiveStoragePort;
 import org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase;
@@ -50,6 +53,8 @@ import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
+import org.nm.gdrive_backup.domain.port.out.FileCapturePort;
+import org.nm.gdrive_backup.domain.port.out.FileEventPort;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -135,6 +140,15 @@ public class ServiceAccountConfiguration {
 	@Bean
 	ArchiveCatalogUseCase archiveCatalogUseCase(ArchivePort archivePort, ArchiveStoragePort archiveStoragePort) {
 		return new ArchiveCatalogService(archivePort, archiveStoragePort);
+	}
+
+	@Bean
+	ArchiveDeletionUseCase archiveDeletionUseCase(ArchivePort archivePort, ArchiveReaderPort archiveReaderPort,
+			ArchiveStoragePort archiveStoragePort, FileCapturePort fileCapturePort, FileEventPort fileEventPort,
+			FileMetadataPort fileMetadataPort, ArchiveDeletionCommitPort deletionCommitPort,
+			BackupActivity backupActivity, BackupProgressTracker progressTracker, BackupCancellation cancellation) {
+		return new ArchiveDeletionService(archivePort, archiveReaderPort, archiveStoragePort, fileCapturePort,
+				fileEventPort, fileMetadataPort, deletionCommitPort, backupActivity, progressTracker, cancellation);
 	}
 
 	/** Archive-only, so it needs no Google credentials and is always wired. */

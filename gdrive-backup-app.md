@@ -162,6 +162,24 @@ Last reviewed: 2026-09-20
   cancel button, and returns `MergeResult` (cancelled writes nothing). Existing
   `backup.db` files must be recreated (new `scope_type` column).
 
+- [x] Verified deletion of obsolete archives: `ArchiveDeletionUseCase`.
+  `prepare` changes nothing: it re-reads the merged full completely (every entry
+  streamed and its size compared with the manifest, so a corrupt ZIP is caught),
+  checks the manifest against its record, and works out the index changes. It
+  reports progress, honors cancel, and returns a plan listing the obsolete
+  archives with sizes, how many capture rows will be re-pointed at the merged
+  full or removed, how many events are kept, and the **content that will be lost**
+  (a trashed or Drive-deleted file whose bytes exist only in an obsolete
+  archive). `execute` refuses a plan with verification problems or one that no
+  longer matches the chain, updates the database in one transaction first
+  (re-point carried captures, remove the rest and clear a removed capture from
+  `files.current_version_id` so an untrash re-captures the file, re-point events,
+  drop the archives and their `archive_sources` rows), then removes the files
+  newest first; a file that cannot be removed is reported, not fatal. Like a
+  merge it is an exclusive operation. Tested end to end, including that the
+  merged full, index and event history survive, backups continue, a later merge
+  still equals a from-scratch full, and a corrupted merged full blocks it.
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
@@ -169,12 +187,10 @@ Last reviewed: 2026-09-20
 
 ### Not started
 
-- [ ] Archive operations, remaining (manual, per drive, from the Archive manager):
-  an optional, verified and confirmed deletion of the archives a merge made
-  obsolete (including re-pointing `file_captures` and `file_events` at the merged
-  full, and warning about content that exists only in an obsolete archive, such
-  as a trashed file's bytes), and the Archive manager UI over the catalog, merge
-  and deletion. See **Archive operations** under Core requirements.
+- [ ] Archive manager UI: a panel over the catalog, merge and deletion use
+  cases (scope picker, archive table with states and warnings, Merge and Delete
+  buttons with confirmation dialogs, progress through the existing panel). See
+  **Archive operations** and **Archive manager** below.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.

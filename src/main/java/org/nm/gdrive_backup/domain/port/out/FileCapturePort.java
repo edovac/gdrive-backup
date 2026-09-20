@@ -12,4 +12,6 @@ public interface FileCapturePort {
 	List<FileCapture> findByFileId(String fileId);
 
 	Optional<FileCapture> findById(Long id);
+
+	List<FileCapture> findByArchiveId(long archiveId);
 }

@@ -47,10 +47,10 @@ public class ArchiveCatalogService implements ArchiveCatalogUseCase {
 		Archive any = ordered.getFirst();
 		DriveScope scope = new DriveScope(any.scopeKey(), any.scopeType());
 
-		ArchiveChainResolver.Chain chain = ArchiveChainResolver.chainOf(ordered);
-		Set<Long> chainIds = new HashSet<>();
-		chain.archives().forEach(archive -> chainIds.add(archive.id()));
-		Set<Long> obsoleteIds = obsoleteArchives(chain.archives(), ordered, chainIds);
+		ArchiveChainInspector inspection = ArchiveChainInspector.inspect(ordered, archivePort);
+		ArchiveChainResolver.Chain chain = inspection.chain();
+		Set<Long> chainIds = inspection.chainIds();
+		Set<Long> obsoleteIds = inspection.obsoleteIds();
 
 		List<String> warnings = new ArrayList<>();
 		if (chain.problem() != null) {
@@ -71,27 +71,6 @@ public class ArchiveCatalogService implements ArchiveCatalogUseCase {
 		boolean rooted = chain.problem() == null && isRoot(chain.archives().getFirst());
 		boolean canMerge = rooted && chain.archives().size() > 1 && warnings.isEmpty();
 		return new ScopeArchives(scope, labelOf(any), views, warnings, canMerge, !obsoleteIds.isEmpty());
-	}
-
-	/** Archives consumed by a merge in the current chain, followed transitively down through earlier merges. */
-	private Set<Long> obsoleteArchives(List<Archive> chain, List<Archive> all, Set<Long> chainIds) {
-		Set<Long> existing = new HashSet<>();
-		all.forEach(archive -> existing.add(archive.id()));
-		Set<Long> obsolete = new HashSet<>();
-		List<Long> pending = new ArrayList<>();
-		for (Archive archive : chain) {
-			pending.addAll(archivePort.findSourceArchiveIds(archive.id()));
-		}
-		Set<Long> visited = new HashSet<>();
-		while (!pending.isEmpty()) {
-			Long id = pending.removeLast();
-			if (!visited.add(id) || chainIds.contains(id) || !existing.contains(id)) {
-				continue;
-			}
-			obsolete.add(id);
-			pending.addAll(archivePort.findSourceArchiveIds(id));
-		}
-		return obsolete;
 	}
 
 	private static ArchiveState stateOf(Archive archive, List<Archive> chain, Set<Long> chainIds, Set<Long> obsoleteIds) {

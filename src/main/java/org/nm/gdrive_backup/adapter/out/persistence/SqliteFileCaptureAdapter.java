@@ -71,6 +71,23 @@ public class SqliteFileCaptureAdapter implements FileCapturePort {
 	}
 
 	@Override
+	public List<FileCapture> findByArchiveId(long archiveId) {
+		try (var connection = database.openConnection();
+			var statement = connection.prepareStatement(SELECT_COLUMNS + "WHERE archive_id = ? ORDER BY id")) {
+			statement.setLong(1, archiveId);
+			try (ResultSet result = statement.executeQuery()) {
+				List<FileCapture> captures = new ArrayList<>();
+				while (result.next()) {
+					captures.add(readCapture(result));
+				}
+				return captures;
+			}
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Unable to read SQLite file captures", exception);
+		}
+	}
+
+	@Override
 	public Optional<FileCapture> findById(Long id) {
 		try (var connection = database.openConnection();
 			var statement = connection.prepareStatement(SELECT_COLUMNS + "WHERE id = ?")) {
