@@ -1,8 +1,5 @@
 package org.nm.gdrive_backup;
 
-import javafx.animation.Animation;
-import javafx.animation.KeyFrame;
-import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
@@ -14,7 +11,6 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
-import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.cell.CheckBoxListCell;
 import javafx.scene.layout.BorderPane;
@@ -36,6 +32,7 @@ import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
+import org.nm.gdrive_backup.adapter.in.javafx.OperationProgressPanel;
 import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase;
@@ -43,9 +40,6 @@ import org.nm.gdrive_backup.domain.port.in.BackupCancellationUseCase;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
-import org.nm.gdrive_backup.domain.model.BackupPhase;
-import org.nm.gdrive_backup.domain.model.BackupProgress;
-import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.DriveScopeType;
@@ -92,7 +86,7 @@ public class JavaFxApplication extends Application {
 	private static ArchiveDeletionUseCase archiveDeletionUseCase;
 
 	private LocationsPanel locationsPanel;
-	private ProgressPanel progressPanel;
+	private OperationProgressPanel progressPanel;
 	private ArchiveManagerPanel archiveManagerPanel;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
@@ -256,7 +250,8 @@ public class JavaFxApplication extends Application {
 		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, drives,
 				driveSelections, driveStatus));
 		locationsPanel = new LocationsPanel(syncNow);
-		progressPanel = new ProgressPanel();
+		progressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
+				"Starting synchronization...");
 		archiveManagerPanel = new ArchiveManagerPanel(archiveCatalogUseCase, archiveMergeUseCase,
 				archiveDeletionUseCase, () -> {
 					progressPanel.start();
@@ -831,146 +826,6 @@ public class JavaFxApplication extends Application {
 			return kernelVersion.contains("Microsoft") || kernelVersion.contains("microsoft");
 		} catch (IOException exception) {
 			return false;
-		}
-	}
-
-	/** Shows live progress for a running backup job: current operation, drive position, and elapsed/remaining time. */
-	private final class ProgressPanel {
-
-		private final ProgressBar progressBar = new ProgressBar(0);
-		private final Label operationLabel = new Label();
-		private final Label driveJobLabel = new Label();
-		private final Label timeLabel = new Label();
-		private final Button cancelButton = new Button("Cancel");
-		private final VBox root;
-		private Timeline timeline;
-
-		ProgressPanel() {
-			progressBar.setMaxWidth(Double.MAX_VALUE);
-			operationLabel.getStyleClass().add("status");
-			operationLabel.setWrapText(true);
-			driveJobLabel.getStyleClass().add("scope");
-			timeLabel.getStyleClass().add("scope");
-			cancelButton.getStyleClass().add("secondary-button");
-			cancelButton.setOnAction(event -> handleCancelClick());
-			root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel, cancelButton);
-			root.setAlignment(Pos.CENTER);
-			hide();
-		}
-
-		Node node() {
-			return root;
-		}
-
-		void start() {
-			root.setVisible(true);
-			root.setManaged(true);
-			progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
-			operationLabel.setText("Starting synchronization...");
-			driveJobLabel.setText("");
-			timeLabel.setText("");
-			cancelButton.setDisable(backupCancellationUseCase == null);
-			timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(250), event -> refresh()));
-			timeline.setCycleCount(Animation.INDEFINITE);
-			timeline.play();
-		}
-
-		void stop() {
-			if (timeline != null) {
-				timeline.stop();
-				timeline = null;
-			}
-			hide();
-		}
-
-		private void handleCancelClick() {
-			if (backupCancellationUseCase == null) {
-				return;
-			}
-			int totalDrives = backupProgressPort == null ? 1
-					: backupProgressPort.latest().map(BackupProgress::totalDrives).orElse(1);
-			if (totalDrives <= 1) {
-				requestStop(BackupStopMode.IMMEDIATE);
-				return;
-			}
-			Alert prompt = new Alert(Alert.AlertType.CONFIRMATION);
-			prompt.setTitle("Cancel synchronization");
-			prompt.setHeaderText("Stop the running backup?");
-			prompt.setContentText("This job covers multiple drives. You can stop right away, "
-					+ "or let the drive currently syncing finish first.");
-			ButtonType stopNow = new ButtonType("Stop now");
-			ButtonType finishCurrent = new ButtonType("Finish current drive, then stop");
-			ButtonType keepGoing = new ButtonType("Keep going", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
-			prompt.getButtonTypes().setAll(stopNow, finishCurrent, keepGoing);
-			prompt.getDialogPane().setMinWidth(520);
-			ButtonType choice = prompt.showAndWait().orElse(keepGoing);
-			if (choice == stopNow) {
-				requestStop(BackupStopMode.IMMEDIATE);
-			} else if (choice == finishCurrent) {
-				requestStop(BackupStopMode.AFTER_CURRENT_DRIVE);
-			}
-		}
-
-		private void requestStop(BackupStopMode mode) {
-			backupCancellationUseCase.requestStop(mode);
-			cancelButton.setDisable(true);
-		}
-
-		private void hide() {
-			root.setVisible(false);
-			root.setManaged(false);
-		}
-
-		private void refresh() {
-			if (backupProgressPort == null) {
-				return;
-			}
-			backupProgressPort.latest().ifPresent(progress -> {
-				progressBar.setProgress(progress.totalItems() == null
-						? ProgressBar.INDETERMINATE_PROGRESS
-						: (double) progress.processedItems() / Math.max(1, progress.totalItems()));
-				operationLabel.setText(operationText(progress));
-				driveJobLabel.setText(progress.totalDrives() > 1 ? multiDriveText(progress) : "");
-				timeLabel.setText(timeText(progress));
-			});
-		}
-
-		private String operationText(BackupProgress progress) {
-			String item = progress.currentItem() == null ? "" : " — " + progress.currentItem();
-			if (progress.phase() == BackupPhase.ENUMERATING) {
-				return "Enumerating " + progress.driveName() + "...";
-			}
-			if (progress.phase() == BackupPhase.FINISHED) {
-				return "Finishing...";
-			}
-			return progress.totalItems() != null
-					? "Backing up " + progress.processedItems() + " of " + progress.totalItems() + item
-					: progress.processedItems() + " changes processed" + item;
-		}
-
-		private String multiDriveText(BackupProgress progress) {
-			return progress.driveName() + " — drive " + progress.driveNumber() + " of " + progress.totalDrives()
-					+ ", " + progress.completedDrives() + " completed.";
-		}
-
-		private String timeText(BackupProgress progress) {
-			java.time.Duration driveElapsed = java.time.Duration.between(progress.driveStartedAt(), java.time.Instant.now());
-			String driveText = "this drive: " + formatDuration(driveElapsed) + " elapsed"
-					+ (progress.driveRemaining() == null ? "" : ", ~" + formatDuration(progress.driveRemaining()) + " left");
-			if (progress.totalDrives() <= 1) {
-				return driveText;
-			}
-			java.time.Duration jobElapsed = java.time.Duration.between(progress.jobStartedAt(), java.time.Instant.now());
-			String jobText = "whole job: " + formatDuration(jobElapsed) + " elapsed"
-					+ (progress.jobRemaining() == null ? "" : ", ~" + formatDuration(progress.jobRemaining()) + " left");
-			return driveText + " — " + jobText;
-		}
-
-		private String formatDuration(java.time.Duration duration) {
-			long totalSeconds = Math.max(0, duration.getSeconds());
-			long minutes = totalSeconds / 60;
-			long seconds = totalSeconds % 60;
-			return minutes > 0 ? minutes + "m " + seconds + "s" : seconds + "s";
 		}
 	}
 
