@@ -207,7 +207,7 @@ Last reviewed: 2026-09-20
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
-- [-] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common session header (selected Workspace user, connection status, sign-out) above three tabs — Backup, Archives, Technical info. Steps: (1) `TechnicalInfoText`/`TechnicalInfoPanel` (Drive storage, Workspace usage report, Cloud API quota as on-demand cards); (2) extract a reusable `OperationProgressPanel`; (3) `SessionHeaderPanel`; (4) rewire `JavaFxApplication` and give the Archives tab its own progress bar; (5) docs.
+- [x] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common `SessionHeaderPanel` (selected Workspace user, status, sign-out) above three tabs — Backup, Archives (own `OperationProgressPanel`), Technical info (`TechnicalInfoPanel`, on-demand cards). Compiles, unit tests pass and the app boots; sign-in flows still to be checked by hand against a real account.
 
 This section is the working roadmap. Update the status markers and the
 `Last reviewed` date as each vertical slice is completed; keep the detailed

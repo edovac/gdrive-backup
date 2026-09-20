@@ -2,6 +2,7 @@ package org.nm.gdrive_backup;
 
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -12,6 +13,8 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.cell.CheckBoxListCell;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
@@ -22,8 +25,6 @@ import javafx.beans.property.SimpleBooleanProperty;
 import javafx.util.StringConverter;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
-import org.nm.gdrive_backup.domain.model.DriveUsageQuota;
-import org.nm.gdrive_backup.domain.model.CloudQuotaLimit;
 import org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveUsageQuotaUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUsageReportUseCase;
@@ -33,6 +34,8 @@ import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.OperationProgressPanel;
+import org.nm.gdrive_backup.adapter.in.javafx.SessionHeaderPanel;
+import org.nm.gdrive_backup.adapter.in.javafx.TechnicalInfoPanel;
 import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase;
@@ -44,7 +47,6 @@ import org.nm.gdrive_backup.domain.model.DriveItem;
 import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
-import org.nm.gdrive_backup.domain.model.WorkspaceUser;
 import org.nm.gdrive_backup.domain.model.BackupResult;
 import org.nm.gdrive_backup.domain.model.BackupMode;
 import org.nm.gdrive_backup.domain.model.BackupLocation;
@@ -85,8 +87,25 @@ public class JavaFxApplication extends Application {
 	private static ArchiveMergeUseCase archiveMergeUseCase;
 	private static ArchiveDeletionUseCase archiveDeletionUseCase;
 
+	private final Button signIn = new Button("Sign in with Google");
+	private final Label connectionStatus = new Label();
+	private final Label driveStatus = new Label();
+	private final Label drivesLabel = new Label("Select the drive(s) to back up:");
+	private final Map<AvailableDrive, BooleanProperty> driveSelections = new HashMap<>();
+	private final ListView<AvailableDrive> drives = new ListView<>();
+	private final ListView<DriveItem> driveItems = new ListView<>();
+	private final ComboBox<BackupMode> backupModeCombo = new ComboBox<>();
+	private final Button syncNow = new Button("Sync selected drives");
+	private final TabPane tabs = new TabPane();
+
+	private BorderPane root;
+	private Node loginView;
+	private GoogleLoginSession session;
+	private SessionHeaderPanel header;
+	private TechnicalInfoPanel technicalInfoPanel;
 	private LocationsPanel locationsPanel;
 	private OperationProgressPanel progressPanel;
+	private OperationProgressPanel archiveProgressPanel;
 	private ArchiveManagerPanel archiveManagerPanel;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
@@ -132,75 +151,85 @@ public class JavaFxApplication extends Application {
 
 	@Override
 	public void start(Stage stage) {
-		BorderPane root = new BorderPane();
-		root.setCenter(loginView());
+		root = new BorderPane();
+		buildMainView();
+		showLoginView();
 		root.setStyle("-fx-background-color: #f7f8fa;");
-		Scene scene = new Scene(root, 640, 400);
+		Scene scene = new Scene(root, 900, 680);
 		scene.getStylesheets().add("/login.css");
 		stage.setScene(scene);
-		stage.setMinWidth(640);
-		stage.setMinHeight(400);
+		stage.setMinWidth(720);
+		stage.setMinHeight(480);
 		stage.setResizable(true);
 		stage.setOnCloseRequest(event -> Platform.exit());
 		stage.show();
 	}
 
-	private Node loginView() {
+	private void showLoginView() {
+		root.setTop(null);
+		root.setCenter(loginView);
+	}
+
+	private void showMainView() {
+		root.setTop(header.node());
+		root.setCenter(tabs);
+	}
+
+	/** The signed-out screen: just the sign-in button and its connection status. */
+	private Node buildLoginView() {
 		Label title = new Label("Google Drive Backup");
 		title.getStyleClass().add("title");
 		Label subtitle = new Label("Sign in to continue");
 		subtitle.getStyleClass().add("subtitle");
 		Label scope = new Label("Read-only access to Google Drive");
 		scope.getStyleClass().add("scope");
-		Label connectionStatus = new Label();
 		connectionStatus.getStyleClass().add("status");
-		Label driveStatus = new Label();
-		driveStatus.getStyleClass().add("status");
-		Button signIn = new Button("Sign in with Google");
+		connectionStatus.setWrapText(true);
+		connectionStatus.setMaxWidth(540);
 		signIn.getStyleClass().add("primary-button");
-		Button signOut = new Button("Sign out");
-		Label quotaTitle = new Label("Drive storage usage");
-		quotaTitle.getStyleClass().add("subtitle");
-		Label quotaStatus = new Label();
-		quotaStatus.getStyleClass().add("status");
-		ListView<String> quotaDetails = new ListView<>();
-		quotaDetails.setPlaceholder(new Label("No quota data loaded"));
-		quotaDetails.setVisible(false);
-		quotaDetails.setManaged(false);
-		Button refreshQuota = new Button("Refresh usage");
-		refreshQuota.setVisible(false);
-		refreshQuota.setManaged(false);
-		Label reportTitle = new Label("Workspace usage report");
-		reportTitle.getStyleClass().add("subtitle");
-		Label reportStatus = new Label();
-		reportStatus.getStyleClass().add("status");
-		ListView<String> reportDetails = new ListView<>();
-		reportDetails.setPlaceholder(new Label("No Workspace report loaded"));
-		reportDetails.setVisible(false);
-		reportDetails.setManaged(false);
-		Button refreshReport = new Button("Refresh report");
-		refreshReport.setVisible(false);
-		refreshReport.setManaged(false);
-		Label cloudQuotaTitle = new Label("Cloud API quota limits");
-		cloudQuotaTitle.getStyleClass().add("subtitle");
-		Label cloudQuotaStatus = new Label();
-		cloudQuotaStatus.getStyleClass().add("status");
-		ListView<String> cloudQuotaDetails = new ListView<>();
-		cloudQuotaDetails.setPlaceholder(new Label("No Cloud quota limits loaded"));
-		cloudQuotaDetails.setVisible(false);
-		cloudQuotaDetails.setManaged(false);
-		Button refreshCloudQuota = new Button("Refresh API limits");
-		refreshCloudQuota.setVisible(false);
-		refreshCloudQuota.setManaged(false);
-		Label drivesLabel = new Label("Select the drive(s) to back up:");
+		signIn.setOnAction(event -> authenticate());
+		VBox box = new VBox(12, title, subtitle, signIn, scope, connectionStatus);
+		box.setAlignment(Pos.CENTER);
+		return box;
+	}
+
+	/** Builds the signed-in window: the common header above the Backup, Archives and Technical info tabs. */
+	private void buildMainView() {
+		loginView = buildLoginView();
+		header = new SessionHeaderPanel(user -> reloadForSelectedUser(), this::signOut);
+		technicalInfoPanel = new TechnicalInfoPanel(serviceAccountUseCase, driveUsageQuotaUseCase,
+				workspaceUsageReportUseCase, cloudQuotaLimitUseCase, this::selectedUserEmail);
+
+		locationsPanel = new LocationsPanel(syncNow);
+		progressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
+				"Starting synchronization...");
+		archiveProgressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
+				"Starting archive operation...");
+		archiveManagerPanel = new ArchiveManagerPanel(archiveCatalogUseCase, archiveMergeUseCase,
+				archiveDeletionUseCase, () -> {
+					archiveProgressPanel.start();
+					syncNow.setDisable(true);
+					locationsPanel.setChangesDisabled(true);
+				}, () -> {
+					archiveProgressPanel.stop();
+					syncNow.setDisable(false);
+					locationsPanel.setChangesDisabled(false);
+				});
+
+		tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+		tabs.getTabs().addAll(new Tab("Backup", scrollable(buildBackupTab())),
+				new Tab("Archives", scrollable(buildArchivesTab())),
+				new Tab("Technical info", scrollable(technicalInfoPanel.node())));
+	}
+
+	private Node buildBackupTab() {
+		driveStatus.getStyleClass().add("status");
+		driveStatus.setWrapText(true);
+		driveStatus.setMaxWidth(540);
 		drivesLabel.getStyleClass().add("scope");
-		drivesLabel.setVisible(false);
-		drivesLabel.setManaged(false);
-		Map<AvailableDrive, BooleanProperty> driveSelections = new HashMap<>();
-		ListView<AvailableDrive> drives = new ListView<>();
+		hide(drivesLabel);
 		drives.setPlaceholder(new Label("No drives loaded"));
-		drives.setVisible(false);
-		drives.setManaged(false);
+		hide(drives);
 		drives.setCellFactory(CheckBoxListCell.forListView(
 				drive -> driveSelections.computeIfAbsent(drive, key -> new SimpleBooleanProperty(false)),
 				new StringConverter<AvailableDrive>() {
@@ -214,10 +243,8 @@ public class JavaFxApplication extends Application {
 						return null;
 					}
 				}));
-		ListView<DriveItem> driveItems = new ListView<>();
 		driveItems.setPlaceholder(new Label("No items loaded"));
-		driveItems.setVisible(false);
-		driveItems.setManaged(false);
+		hide(driveItems);
 		driveItems.setCellFactory(view -> new javafx.scene.control.ListCell<>() {
 			@Override
 			protected void updateItem(DriveItem item, boolean empty) {
@@ -225,136 +252,45 @@ public class JavaFxApplication extends Application {
 				setText(empty || item == null ? null : (item.folder() ? "[Folder] " : "") + item.name());
 			}
 		});
-		ComboBox<WorkspaceUser> userPicker = new ComboBox<>();
-		userPicker.setPromptText("Select Workspace user");
-		userPicker.setVisible(false);
-		userPicker.setManaged(false);
-		userPicker.setOnAction(event -> {
-			if (userPicker.getValue() != null) {
-				loadDrives(drives, drivesLabel, driveSelections, driveStatus, userPicker, driveItems);
-				loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
-				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
-			}
-		});
-		ComboBox<BackupMode> backupModeCombo = new ComboBox<>();
 		backupModeCombo.getItems().setAll(BackupMode.INCREMENTAL, BackupMode.FULL);
 		backupModeCombo.setValue(BackupMode.INCREMENTAL);
 		backupModeCombo.setCellFactory(view -> backupModeCell());
 		backupModeCombo.setButtonCell(backupModeCell());
-		backupModeCombo.setVisible(false);
-		backupModeCombo.setManaged(false);
-		Button syncNow = new Button("Sync selected drives");
+		hide(backupModeCombo);
 		syncNow.getStyleClass().add("primary-button");
-		syncNow.setVisible(false);
-		syncNow.setManaged(false);
-		syncNow.setOnAction(event -> synchronizeSelectedUser(userPicker, backupModeCombo, syncNow, drives,
-				driveSelections, driveStatus));
-		locationsPanel = new LocationsPanel(syncNow);
-		progressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
-				"Starting synchronization...");
-		archiveManagerPanel = new ArchiveManagerPanel(archiveCatalogUseCase, archiveMergeUseCase,
-				archiveDeletionUseCase, () -> {
-					progressPanel.start();
-					syncNow.setDisable(true);
-					locationsPanel.setChangesDisabled(true);
-				}, () -> {
-					progressPanel.stop();
-					syncNow.setDisable(false);
-					locationsPanel.setChangesDisabled(false);
-				});
-		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
-		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
-		refreshCloudQuota.setOnAction(event -> loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota));
-		signOut.getStyleClass().add("secondary-button");
-		signOut.setVisible(false);
-		signOut.setManaged(false);
+		hide(syncNow);
+		syncNow.setOnAction(event -> synchronizeSelectedUser());
 
 		drives.setOnMouseClicked(event -> {
 			AvailableDrive selected = drives.getSelectionModel().getSelectedItem();
 			if (selected != null && event.getClickCount() >= 1) {
-				loadDriveContents(selectedUserEmailFor(userPicker, previewUserEmail), selected, driveItems, driveStatus);
+				loadDriveContents(selectedUserEmail(), selected);
 			}
 		});
 		driveItems.setOnMouseClicked(event -> {
 			DriveItem selected = driveItems.getSelectionModel().getSelectedItem();
 			if (selected != null && event.getClickCount() >= 2 && selected.folder()) {
-				loadFolderContents(selectedUserEmailFor(userPicker, previewUserEmail), selected, driveItems, driveStatus);
+				loadFolderContents(selectedUserEmail(), selected);
 			}
 		});
 
-		signIn.setOnAction(event -> authenticate(signIn, signOut, connectionStatus, driveStatus,
-				drives, drivesLabel, driveSelections, userPicker, driveItems, quotaStatus, quotaDetails, refreshQuota,
-				reportStatus, reportDetails, refreshReport, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota,
-				backupModeCombo, syncNow));
-		signOut.setOnAction(event -> {
-			GoogleLoginSession session = (GoogleLoginSession) signOut.getUserData();
-			loginUseCase.logout(session);
-			signOut.setUserData(null);
-			signOut.setVisible(false);
-			signOut.setManaged(false);
-			signIn.setVisible(true);
-			signIn.setManaged(true);
-			subtitle.setText("Sign in to continue");
-			connectionStatus.setText("");
-			driveStatus.setText("");
-			userPicker.getItems().clear();
-			userPicker.setValue(null);
-			userPicker.setVisible(false);
-			userPicker.setManaged(false);
-			syncNow.setVisible(false);
-			syncNow.setManaged(false);
-			backupModeCombo.setVisible(false);
-			backupModeCombo.setManaged(false);
-			backupModeCombo.setValue(BackupMode.INCREMENTAL);
-			driveItems.getItems().clear();
-			driveItems.setVisible(false);
-			driveItems.setManaged(false);
-			quotaStatus.setText("");
-			quotaDetails.getItems().clear();
-			quotaDetails.setVisible(false);
-			quotaDetails.setManaged(false);
-			refreshQuota.setVisible(false);
-			refreshQuota.setManaged(false);
-			reportStatus.setText("");
-			reportDetails.getItems().clear();
-			reportDetails.setVisible(false);
-			reportDetails.setManaged(false);
-			refreshReport.setVisible(false);
-			refreshReport.setManaged(false);
-			cloudQuotaStatus.setText("");
-			cloudQuotaDetails.getItems().clear();
-			cloudQuotaDetails.setVisible(false);
-			cloudQuotaDetails.setManaged(false);
-			refreshCloudQuota.setVisible(false);
-			refreshCloudQuota.setManaged(false);
-			driveSelections.clear();
-			drives.getItems().clear();
-			drives.setVisible(false);
-			drives.setManaged(false);
-			drivesLabel.setVisible(false);
-			drivesLabel.setManaged(false);
-			locationsPanel.hide();
-			archiveManagerPanel.hide();
-		});
-
-		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(),
-				drivesLabel, drives, backupModeCombo, syncNow, progressPanel.node(), archiveManagerPanel.node(),
-				driveStatus, driveItems,
-				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
-				reportTitle, reportStatus, reportDetails, refreshReport);
-		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
+		VBox content = new VBox(12, locationsPanel.node(), drivesLabel, drives, backupModeCombo, syncNow,
+				progressPanel.node(), driveStatus, driveItems);
 		content.setAlignment(Pos.CENTER);
 		content.setMaxWidth(560);
-		connectionStatus.setMaxWidth(540);
-		quotaStatus.setMaxWidth(540);
-		reportStatus.setMaxWidth(540);
-		cloudQuotaStatus.setMaxWidth(540);
-		driveStatus.setMaxWidth(540);
-		connectionStatus.setWrapText(true);
-		quotaStatus.setWrapText(true);
-		reportStatus.setWrapText(true);
-		cloudQuotaStatus.setWrapText(true);
-		driveStatus.setWrapText(true);
+		content.setPadding(new Insets(12));
+		return content;
+	}
+
+	private Node buildArchivesTab() {
+		VBox content = new VBox(12, archiveManagerPanel.node(), archiveProgressPanel.node());
+		content.setAlignment(Pos.CENTER);
+		content.setMaxWidth(560);
+		content.setPadding(new Insets(12));
+		return content;
+	}
+
+	private static Node scrollable(Node content) {
 		ScrollPane scrollPane = new ScrollPane(content);
 		scrollPane.setFitToWidth(true);
 		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
@@ -362,97 +298,104 @@ public class JavaFxApplication extends Application {
 		return scrollPane;
 	}
 
-	private void authenticate(Button signIn, Button signOut, Label connectionStatus,
-			Label driveStatus, ListView<AvailableDrive> drives, Label drivesLabel,
-			Map<AvailableDrive, BooleanProperty> driveSelections, ComboBox<WorkspaceUser> userPicker,
-			ListView<DriveItem> driveItems, Label quotaStatus, ListView<String> quotaDetails,
-			Button refreshQuota, Label reportStatus, ListView<String> reportDetails, Button refreshReport,
-			Label cloudQuotaStatus, ListView<String> cloudQuotaDetails, Button refreshCloudQuota,
-			ComboBox<BackupMode> backupModeCombo, Button syncNow) {
+	private static void hide(Node node) {
+		node.setVisible(false);
+		node.setManaged(false);
+	}
+
+	private static void show(Node node) {
+		node.setVisible(true);
+		node.setManaged(true);
+	}
+
+	private void authenticate() {
 		signIn.setDisable(true);
 		connectionStatus.setText("Waiting for Google sign-in...");
 		driveStatus.setText("");
 		CompletableFuture.supplyAsync(() -> loginUseCase.login(this::requestAuthorization))
-				.whenComplete((session, error) -> Platform.runLater(() -> {
+				.whenComplete((loginSession, error) -> Platform.runLater(() -> {
 					signIn.setDisable(false);
 					if (error != null) {
 						connectionStatus.setText(messageFor(error));
 						return;
 					}
-					signIn.setVisible(false);
-					signIn.setManaged(false);
-					signOut.setUserData(session);
-					signOut.setVisible(true);
-					signOut.setManaged(true);
-					connectionStatus.setText("Google connected");
+					session = loginSession;
+					connectionStatus.setText("");
+					header.show();
+					header.setStatus("Google connected");
+					showMainView();
 					locationsPanel.show();
 					archiveManagerPanel.show();
-					loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
-					loadWorkspaceUsers(drives, drivesLabel, driveSelections, userPicker, driveItems, driveStatus,
-							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport,
-							backupModeCombo, syncNow);
+					loadWorkspaceUsers();
 				}));
 	}
 
-	private void loadWorkspaceUsers(ListView<AvailableDrive> drives, Label drivesLabel,
-			Map<AvailableDrive, BooleanProperty> driveSelections, ComboBox<WorkspaceUser> userPicker,
-			ListView<DriveItem> driveItems, Label status, Label quotaStatus,
-			ListView<String> quotaDetails, Button refreshQuota, Label reportStatus,
-			ListView<String> reportDetails, Button refreshReport, ComboBox<BackupMode> backupModeCombo,
-			Button syncNow) {
+	private void signOut() {
+		if (session != null) {
+			loginUseCase.logout(session);
+			session = null;
+		}
+		header.hide();
+		driveStatus.setText("");
+		hide(syncNow);
+		hide(backupModeCombo);
+		backupModeCombo.setValue(BackupMode.INCREMENTAL);
+		driveItems.getItems().clear();
+		hide(driveItems);
+		driveSelections.clear();
+		drives.getItems().clear();
+		hide(drives);
+		hide(drivesLabel);
+		locationsPanel.hide();
+		archiveManagerPanel.hide();
+		technicalInfoPanel.hide();
+		tabs.getSelectionModel().selectFirst();
+		showLoginView();
+	}
+
+	/** The Workspace user every view works on: the header's selection, else the configured user. */
+	private String selectedUserEmail() {
+		return header.selectedEmail(previewUserEmail);
+	}
+
+	/** The selected user changed (or was first chosen): reload their drives and drop their stale technical data. */
+	private void reloadForSelectedUser() {
+		loadDrives();
+		technicalInfoPanel.onUserChanged();
+	}
+
+	private void loadWorkspaceUsers() {
 		if (serviceAccountUseCase == null || workspaceUserListingUseCase == null || previewUserEmail == null
 				|| previewUserEmail.isBlank()) {
-			userPicker.setVisible(false);
-			userPicker.setManaged(false);
-			loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
-			loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
-			loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
+			header.showFixedUser(previewUserEmail);
+			reloadForSelectedUser();
 			return;
 		}
-		status.setText("Loading Workspace users...");
+		driveStatus.setText("Loading Workspace users...");
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(previewUserEmail);
 			return workspaceUserListingUseCase.listUsers(access);
 		}).whenComplete((users, error) -> Platform.runLater(() -> {
 			if (error != null) {
-				status.setText("Google connected, user selection unavailable: " + messageFor(error));
-				userPicker.setVisible(false);
-				userPicker.setManaged(false);
-				loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
-				loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
-				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
+				driveStatus.setText("Google connected, user selection unavailable: " + messageFor(error));
+				header.showFixedUser(previewUserEmail);
+				reloadForSelectedUser();
 				return;
 			}
-			userPicker.getItems().setAll(users);
-			if (users.isEmpty()) {
-				userPicker.setVisible(false);
-				userPicker.setManaged(false);
-				loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
-				loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
-				loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
-				return;
+			header.setUsers(users, previewUserEmail);
+			if (!users.isEmpty()) {
+				if (driveBackupUseCase != null) {
+					show(syncNow);
+					show(backupModeCombo);
+				}
 			}
-			WorkspaceUser selected = users.stream()
-					.filter(user -> user.email().equalsIgnoreCase(previewUserEmail))
-					.findFirst()
-					.orElse(users.getFirst());
-			userPicker.setValue(selected);
-			userPicker.setVisible(true);
-			userPicker.setManaged(true);
-			syncNow.setVisible(driveBackupUseCase != null);
-			syncNow.setManaged(driveBackupUseCase != null);
-			backupModeCombo.setVisible(driveBackupUseCase != null);
-			backupModeCombo.setManaged(driveBackupUseCase != null);
-			loadDrives(drives, drivesLabel, driveSelections, status, userPicker, driveItems);
-			loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota);
-			loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport);
+			reloadForSelectedUser();
 		}));
 	}
 
-	private void synchronizeSelectedUser(ComboBox<WorkspaceUser> userPicker, ComboBox<BackupMode> backupModeCombo,
-			Button syncNow, ListView<AvailableDrive> drives, Map<AvailableDrive, BooleanProperty> driveSelections,
-			Label status) {
-		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
+	private void synchronizeSelectedUser() {
+		Label status = driveStatus;
+		String selectedUserEmail = selectedUserEmail();
 		if (driveBackupUseCase == null || serviceAccountUseCase == null
 				|| selectedUserEmail == null || selectedUserEmail.isBlank()) {
 			status.setText("Sync unavailable. Select a Workspace user and configure service-account access.");
@@ -533,151 +476,9 @@ public class JavaFxApplication extends Application {
 		};
 	}
 
-	private void loadQuota(ComboBox<WorkspaceUser> userPicker, Label status,
-			ListView<String> details, Button refreshButton) {
-		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
-		if (serviceAccountUseCase == null || driveUsageQuotaUseCase == null
-				|| selectedUserEmail == null || selectedUserEmail.isBlank()) {
-			status.setText("Drive storage usage unavailable. Configure service-account access.");
-			details.getItems().clear();
-			details.setVisible(false);
-			details.setManaged(false);
-			refreshButton.setVisible(false);
-			refreshButton.setManaged(false);
-			return;
-		}
-		status.setText("Loading Drive storage usage for " + selectedUserEmail + "...");
-		refreshButton.setDisable(true);
-		CompletableFuture.supplyAsync(() -> {
-			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
-			return driveUsageQuotaUseCase.getUsageQuota(access);
-		}).whenComplete((quota, error) -> Platform.runLater(() -> {
-			refreshButton.setDisable(false);
-			if (error != null) {
-				status.setText("Drive storage usage unavailable: " + messageFor(error));
-				details.getItems().clear();
-				details.setVisible(false);
-				details.setManaged(false);
-				refreshButton.setVisible(true);
-				refreshButton.setManaged(true);
-				return;
-			}
-			details.getItems().setAll(formatQuota(quota));
-			details.setVisible(true);
-			details.setManaged(true);
-			refreshButton.setVisible(true);
-			refreshButton.setManaged(true);
-			status.setText("Drive storage usage for " + quota.userEmail());
-		}));
-	}
-
-	private static List<String> formatQuota(DriveUsageQuota quota) {
-		return List.of(
-				"Used: " + formatBytes(quota.usageBytes()),
-				"Limit: " + formatBytes(quota.limitBytes()),
-				"Drive: " + formatBytes(quota.driveUsageBytes()),
-				"Trash: " + formatBytes(quota.trashUsageBytes()));
-	}
-
-	private static String formatBytes(Long bytes) {
-		if (bytes == null) {
-			return "Not reported";
-		}
-		if (bytes < 1024 * 1024) {
-			return bytes + " bytes";
-		}
-		return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-	}
-
-	private void loadCloudQuota(Label status, ListView<String> details, Button refreshButton) {
-		if (cloudQuotaLimitUseCase == null) {
-			status.setText("Cloud API quota limits unavailable. Configure project quota access.");
-			details.getItems().clear();
-			details.setVisible(false);
-			details.setManaged(false);
-			refreshButton.setVisible(false);
-			refreshButton.setManaged(false);
-			return;
-		}
-		status.setText("Loading Cloud API quota limits...");
-		refreshButton.setDisable(true);
-		CompletableFuture.supplyAsync(cloudQuotaLimitUseCase::listQuotaLimits)
-				.whenComplete((limits, error) -> Platform.runLater(() -> {
-					refreshButton.setDisable(false);
-					if (error != null) {
-						status.setText("Cloud API quota limits unavailable: " + messageFor(error));
-						details.getItems().clear();
-						details.setVisible(false);
-						details.setManaged(false);
-						refreshButton.setVisible(true);
-						refreshButton.setManaged(true);
-						return;
-					}
-					details.getItems().setAll(limits.stream().map(JavaFxApplication::formatCloudLimit).toList());
-					details.setVisible(true);
-					details.setManaged(true);
-					refreshButton.setVisible(true);
-					refreshButton.setManaged(true);
-					status.setText("Cloud API quota limits from the configured project");
-				}));
-	}
-
-	private static String formatCloudLimit(CloudQuotaLimit limit) {
-		String name = limit.displayName() == null || limit.displayName().isBlank()
-				? limit.metric() : limit.displayName();
-		return limit.service() + " | " + name + " | default: "
-				+ valueOrNotReported(limit.defaultLimit()) + " | max: " + valueOrNotReported(limit.maxLimit())
-				+ " | unit: " + valueOrNotReported(limit.unit());
-	}
-
-	private static String valueOrNotReported(Object value) {
-		return value == null ? "Not reported" : value.toString();
-	}
-
-	private void loadWorkspaceReport(ComboBox<WorkspaceUser> userPicker, Label status,
-			ListView<String> details, Button refreshButton) {
-		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
-		if (serviceAccountUseCase == null || workspaceUsageReportUseCase == null
-				|| selectedUserEmail == null || selectedUserEmail.isBlank()) {
-			status.setText("Workspace usage report unavailable. Authorize the Reports scope.");
-			details.getItems().clear();
-			details.setVisible(false);
-			details.setManaged(false);
-			refreshButton.setVisible(false);
-			refreshButton.setManaged(false);
-			return;
-		}
-		status.setText("Loading Workspace usage report...");
-		refreshButton.setDisable(true);
-		CompletableFuture.supplyAsync(() -> {
-			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
-			return workspaceUsageReportUseCase.getLatestReport(access);
-		}).whenComplete((report, error) -> Platform.runLater(() -> {
-			refreshButton.setDisable(false);
-			if (error != null) {
-				status.setText("Workspace usage report unavailable: " + messageFor(error));
-				details.getItems().clear();
-				details.setVisible(false);
-				details.setManaged(false);
-				refreshButton.setVisible(true);
-				refreshButton.setManaged(true);
-				return;
-			}
-			details.getItems().setAll(report.metrics().stream()
-					.map(metric -> metric.name() + ": " + metric.value())
-					.toList());
-			details.setVisible(true);
-			details.setManaged(true);
-			refreshButton.setVisible(true);
-			refreshButton.setManaged(true);
-			status.setText("Workspace usage report for " + report.date() + " (latest available)");
-		}));
-	}
-
-	private void loadDrives(ListView<AvailableDrive> drives, Label drivesLabel,
-			Map<AvailableDrive, BooleanProperty> driveSelections, Label status, ComboBox<WorkspaceUser> userPicker,
-			ListView<DriveItem> driveItems) {
-		String selectedUserEmail = selectedUserEmailFor(userPicker, previewUserEmail);
+	private void loadDrives() {
+		Label status = driveStatus;
+		String selectedUserEmail = selectedUserEmail();
 		if (serviceAccountUseCase == null || driveReadPort == null || selectedUserEmail == null
 				|| selectedUserEmail.isBlank()) {
 			driveItems.getItems().clear();
@@ -711,8 +512,8 @@ public class JavaFxApplication extends Application {
 		}));
 	}
 
-	private void loadDriveContents(String userEmail, AvailableDrive selectedDrive, ListView<DriveItem> driveItems,
-			Label status) {
+	private void loadDriveContents(String userEmail, AvailableDrive selectedDrive) {
+		Label status = driveStatus;
 		if (selectedDrive == null || serviceAccountUseCase == null || driveReadPort == null) {
 			return;
 		}
@@ -735,8 +536,8 @@ public class JavaFxApplication extends Application {
 		}));
 	}
 
-	private void loadFolderContents(String userEmail, DriveItem selectedItem, ListView<DriveItem> driveItems,
-			Label status) {
+	private void loadFolderContents(String userEmail, DriveItem selectedItem) {
+		Label status = driveStatus;
 		if (selectedItem == null || serviceAccountUseCase == null || driveReadPort == null) {
 			return;
 		}
@@ -757,13 +558,6 @@ public class JavaFxApplication extends Application {
 			driveItems.setManaged(true);
 			status.setText("Folder contents: " + selectedItem.name());
 		}));
-	}
-
-	private static String selectedUserEmailFor(ComboBox<WorkspaceUser> userPicker, String fallbackEmail) {
-		if (userPicker != null && userPicker.getValue() != null) {
-			return userPicker.getValue().email();
-		}
-		return fallbackEmail;
 	}
 
 	private static String messageFor(Throwable error) {
