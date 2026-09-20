@@ -202,7 +202,7 @@ Scheduled unattended backups are out of scope: every backup is started manually 
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If any one scope fails the whole run stops. An org-wide sweep across every Workspace user and partial-failure handling with a completion summary remain.
+- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If one selected drive fails, the run records the failure and continues with the remaining drives, and the completion summary names each failed drive with its reason and any drive never started after a cancel (each drive commits independently, so a failed one replays from its last cursor). An org-wide sweep across every Workspace user remains.
 
 ### Not started
 
@@ -249,7 +249,9 @@ requirements below as the source of truth for expected behavior.
   refuses to run on a chain with a missing link.
 - Chain-gap detection and warnings, since deleting an archive now permanently
   destroys the history it held.
-- Partial-failure handling and a completion summary for organization-wide runs.
+- [-] Partial-failure handling and a completion summary: done for the drives
+  selected for one user (a failing drive no longer stops the others); the
+  organization-wide sweep across every Workspace user is still to do.
 
 **P2 — operational improvements**
 

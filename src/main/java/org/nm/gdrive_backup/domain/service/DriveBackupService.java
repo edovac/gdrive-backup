@@ -79,22 +79,38 @@ public class DriveBackupService implements DriveBackupUseCase {
 			progressTracker.jobStarted(selectedDrives);
 			cancellation.begin();
 			List<BackupResult> results = new ArrayList<>();
-			for (AvailableDrive drive : selectedDrives) {
-				if (cancellation.isStopRequested()) {
-					break;
+			try {
+				for (AvailableDrive drive : selectedDrives) {
+					if (cancellation.isStopRequested()) {
+						break;
+					}
+					DriveScope scope = drive.shared() ? DriveScope.sharedDrive(drive.id())
+							: DriveScope.personal(access.impersonatedUserEmail());
+					progressTracker.driveStarted(drive);
+					// One failing drive must not stop the others: each scope commits on its own, and a failed
+					// one wrote nothing, so it simply replays from its last cursor on the next run.
+					try {
+						results.add(synchronizeScope(access, scope, mode, drive.name()));
+					} catch (RuntimeException exception) {
+						results.add(BackupResult.failed(scope, failureMessage(exception)));
+						progressTracker.driveFailed();
+						continue;
+					}
+					progressTracker.driveCompleted();
+					if (drive.shared() && driveMetadataPort != null) {
+						driveMetadataPort.save(new StoredDrive(drive.id(), drive.name(), Instant.now()));
+					}
 				}
-				DriveScope scope = drive.shared() ? DriveScope.sharedDrive(drive.id())
-						: DriveScope.personal(access.impersonatedUserEmail());
-				progressTracker.driveStarted(drive);
-				results.add(synchronizeScope(access, scope, mode, drive.name()));
-				progressTracker.driveCompleted();
-				if (drive.shared() && driveMetadataPort != null) {
-					driveMetadataPort.save(new StoredDrive(drive.id(), drive.name(), Instant.now()));
-				}
+			} finally {
+				progressTracker.jobFinished();
 			}
-			progressTracker.jobFinished();
 			return results;
 		});
+	}
+
+	private static String failureMessage(RuntimeException exception) {
+		String message = exception.getMessage();
+		return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
 	}
 
 	private BackupResult synchronizeScope(ServiceAccountAccess access, DriveScope scope, BackupMode mode,

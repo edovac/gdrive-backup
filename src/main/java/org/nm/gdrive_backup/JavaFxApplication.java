@@ -33,6 +33,7 @@ import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
+import org.nm.gdrive_backup.adapter.in.javafx.BackupSummaryText;
 import org.nm.gdrive_backup.adapter.in.javafx.OperationProgressPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.SessionHeaderPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.TechnicalInfoPanel;
@@ -44,8 +45,6 @@ import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.DriveItem;
-import org.nm.gdrive_backup.domain.model.DriveScope;
-import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.BackupResult;
 import org.nm.gdrive_backup.domain.model.BackupMode;
@@ -433,33 +432,8 @@ public class JavaFxApplication extends Application {
 			}
 			boolean cancelled = results.size() < selectedDrives.size()
 					|| results.stream().anyMatch(BackupResult::cancelled);
-			status.setText(syncMessage(results, selectedDrives, cancelled));
+			status.setText(BackupSummaryText.summary(results, selectedDrives, cancelled));
 		}));
-	}
-
-	private static String syncMessage(List<BackupResult> results, List<AvailableDrive> knownDrives,
-			boolean cancelled) {
-		String prefix = cancelled ? "Synchronization cancelled. " : "Synchronization complete. ";
-		return results.stream()
-				.map(result -> scopeLabel(result.scope(), knownDrives) + ": " + itemSummary(result))
-				.collect(java.util.stream.Collectors.joining("; ", prefix, ""));
-	}
-
-	private static String itemSummary(BackupResult result) {
-		String activity = result.initialSync() ? "files inventoried" : "changes processed";
-		String suffix = result.cancelled() ? " (cancelled)" : "";
-		return result.processedItemCount() + " " + activity + suffix;
-	}
-
-	private static String scopeLabel(DriveScope scope, List<AvailableDrive> knownDrives) {
-		if (scope.type() == DriveScopeType.PERSONAL) {
-			return "My Drive (" + scope.key() + ")";
-		}
-		return knownDrives.stream()
-				.filter(drive -> drive.id().equals(scope.key()))
-				.findFirst()
-				.map(drive -> "Shared: " + drive.name())
-				.orElse("Shared drive " + scope.key());
 	}
 
 	private static String modeLabel(BackupMode mode) {

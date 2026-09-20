@@ -60,6 +60,20 @@ class BackupProgressTrackerTest {
 	}
 
 	@Test
+	void aFailedDriveStillCountsAsCompleted() {
+		tracker.jobStarted(List.of(PERSONAL, SHARED));
+		tracker.driveStarted(PERSONAL);
+		tracker.driveFailed();
+		tracker.driveStarted(SHARED);
+
+		ArgumentCaptor<BackupProgress> captor = ArgumentCaptor.forClass(BackupProgress.class);
+		verify(port, atLeastOnce()).report(captor.capture());
+		BackupProgress last = captor.getAllValues().get(captor.getAllValues().size() - 1);
+		assertEquals(2, last.driveNumber());
+		assertEquals(1, last.completedDrives());
+	}
+
+	@Test
 	void reportsPackagingPhase() {
 		tracker.jobStarted(List.of(PERSONAL));
 		tracker.driveStarted(PERSONAL);

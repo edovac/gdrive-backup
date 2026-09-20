@@ -272,6 +272,56 @@ class DriveBackupServiceTest {
 	}
 
 	@Test
+	void keepsGoingAfterADriveFailsAndReportsIt() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		DriveChangeSyncUseCase changeSync = mock(DriveChangeSyncUseCase.class);
+		DriveMetadataPort driveMetadataPort = mock(DriveMetadataPort.class);
+		BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
+		DriveScope otherShared = DriveScope.sharedDrive("drive-2");
+		when(statePort.findByScopeKey(anyString())).thenReturn(Optional.empty());
+		when(initialSync.synchronize(ACCESS, PERSONAL_SCOPE, "My Drive"))
+				.thenReturn(new InitialSyncResult(PERSONAL_SCOPE, 4, "token", null, false));
+		when(initialSync.synchronize(ACCESS, SHARED_SCOPE, "Finance"))
+				.thenThrow(new IllegalStateException("No access"));
+		when(initialSync.synchronize(ACCESS, otherShared, "Marketing"))
+				.thenReturn(new InitialSyncResult(otherShared, 1, "token-2", null, false));
+		List<AvailableDrive> selection = List.of(
+				new AvailableDrive("root", "My Drive", false),
+				new AvailableDrive("drive-1", "Finance", true),
+				new AvailableDrive("drive-2", "Marketing", true));
+
+		List<BackupResult> results = new DriveBackupService(statePort, initialSync, changeSync,
+				new BackupActivity(), driveMetadataPort, progressTracker)
+				.synchronizeSelectedDrives(ACCESS, selection, BackupMode.FULL);
+
+		assertEquals(List.of(
+				new BackupResult(PERSONAL_SCOPE, 4, true, false),
+				BackupResult.failed(SHARED_SCOPE, "No access"),
+				new BackupResult(otherShared, 1, true, false)), results);
+		verify(driveMetadataPort, never()).save(argThat(drive -> drive.driveId().equals("drive-1")));
+		verify(driveMetadataPort).save(argThat(drive -> drive.driveId().equals("drive-2")));
+		verify(progressTracker).driveFailed();
+		verify(progressTracker, times(2)).driveCompleted();
+		verify(progressTracker).jobFinished();
+	}
+
+	@Test
+	void reportsEveryDriveAsFailedWhenAllOfThemFail() {
+		SyncStatePort statePort = mock(SyncStatePort.class);
+		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);
+		when(statePort.findByScopeKey(anyString())).thenReturn(Optional.empty());
+		when(initialSync.synchronize(any(), any(), any())).thenThrow(new IllegalStateException());
+
+		List<BackupResult> results = new DriveBackupService(statePort, initialSync,
+				mock(DriveChangeSyncUseCase.class), new BackupActivity())
+				.synchronizeSelectedDrives(ACCESS, List.of(new AvailableDrive("root", "My Drive", false)),
+						BackupMode.FULL);
+
+		assertEquals(List.of(BackupResult.failed(PERSONAL_SCOPE, "IllegalStateException")), results);
+	}
+
+	@Test
 	void stopsBeforeTheNextDriveWhenImmediateStopIsRequestedDuringTheFirst() {
 		SyncStatePort statePort = mock(SyncStatePort.class);
 		InitialDriveSyncUseCase initialSync = mock(InitialDriveSyncUseCase.class);

@@ -93,6 +93,11 @@ public class BackupProgressTracker {
 		report();
 	}
 
+	/** A drive that threw still counts as done for the job's progress and time estimate. */
+	public void driveFailed() {
+		driveCompleted();
+	}
+
 	public void jobFinished() {
 		phase = BackupPhase.FINISHED;
 		report();
