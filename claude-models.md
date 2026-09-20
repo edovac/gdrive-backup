@@ -85,7 +85,7 @@ Legend:
 
 | Task | Model | Rationale |
 |---|---|---|
-| **History view (`file_events` + `file_versions`)** | 🟢 | Read-only queries against an existing schema plus a list/detail view; well specified in the requirements. |
+| **History view (`file_events` + `file_captures`)** | 🟢 | Read-only queries against an existing schema plus a list/detail view; well specified in the requirements. |
 
 ### P3 — delivery and UX refinements
 

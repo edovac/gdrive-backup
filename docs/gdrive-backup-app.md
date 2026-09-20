@@ -199,6 +199,8 @@ Scheduled unattended backups are out of scope: every backup is started manually 
   `MERGED_INCREMENTAL` archive mode left over from the dropped snapshot
   operation was removed.
 
+- [x] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common `SessionHeaderPanel` (selected Workspace user, status, sign-out) above four tabs — Backup, Archives (own `OperationProgressPanel`), History (`FileHistoryPanel`), Technical info (`TechnicalInfoPanel`, on-demand cards). Unit tests pass and the flows were checked by hand against a real account.
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
@@ -207,7 +209,6 @@ Scheduled unattended backups are out of scope: every backup is started manually 
 ### Not started
 
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
-- [x] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common `SessionHeaderPanel` (selected Workspace user, status, sign-out) above three tabs — Backup, Archives (own `OperationProgressPanel`), Technical info (`TechnicalInfoPanel`, on-demand cards). Unit tests pass and the flows were checked by hand against a real account.
 
 This section is the working roadmap. Update the status markers and the
 `Last reviewed` date as each vertical slice is completed; keep the detailed
@@ -222,8 +223,8 @@ requirements below as the source of truth for expected behavior.
 - [x] Per-drive backup scope selection (personal drive and/or specific Shared
   Drives), replacing automatic inclusion of every visible Shared Drive.
 - [x] Interruptible backups with defined database and archive recovery behavior
-  (archive recovery deferred to the P1 archive-packaging item, since no
-  archive writer exists yet).
+  (a cancelled or failed run writes no archive and commits nothing; see the
+  P1 archive items).
 - [x] Progress bar with concise current-operation status, elapsed time, and
   estimated remaining time.
 
@@ -263,7 +264,7 @@ requirements below as the source of truth for expected behavior.
 **P3 — delivery and UX refinements**
 
 - [x] Tabbed authenticated-screen redesign (see **Main window layout**).
-- Windows installer and clean-machine verification.
+- [ ] Windows installer and clean-machine verification.
 
 Implementation sequence: runtime location selection; backup-job options and
 state; drive scope selection; progress/cancellation/recovery; per-drive archive
