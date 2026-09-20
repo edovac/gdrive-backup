@@ -238,17 +238,19 @@ requirements below as the source of truth for expected behavior.
   archive folder, not per chain: chains are found by their base links, so a
   from-scratch full simply starts a new chain, which the Archive manager shows
   as the current one and lists the older one as an earlier chain.
-- [-] Stream content straight into archives, with no capture store: a full
-  archive is always built from scratch by streaming every file from Drive (done);
-  it can alternatively be built from a complete set of incremental archives
-  (base full plus every delta) (not started). See **Storage layout**.
-- Archive operations: the **merge** operation — a `MERGED_FULL` built from the
+- [x] Stream content straight into archives, with no capture store: a full
+  archive is built from scratch by streaming every file from Drive, or from a
+  complete set of incremental archives (base full plus every delta) through the
+  merge below. See **Storage layout**.
+- [x] Archive operations: the **merge** operation — a `MERGED_FULL` built from the
   base full plus all current incrementals, which becomes the chain's new root
   so incremental backups continue after it — with an option to delete the
   superseded partial archives. Manual, per drive, reads only archives, and
-  refuses to run on a chain with a missing link.
-- Chain-gap detection and warnings, since deleting an archive now permanently
-  destroys the history it held.
+  refuses to run on a chain with a missing link. Done: merge engine, catalog,
+  verified deletion and the Archive manager UI (see the Completed list).
+- [x] Chain-gap detection and warnings, since deleting an archive now permanently
+  destroys the history it held. `ArchiveCatalogService` reports gap warnings,
+  shown in the Archive manager.
 - [-] Partial-failure handling and a completion summary: done for the drives
   selected for one user (a failing drive no longer stops the others); the
   organization-wide sweep across every Workspace user is still to do.
@@ -259,7 +261,7 @@ requirements below as the source of truth for expected behavior.
 
 **P3 — delivery and UX refinements**
 
-- Tabbed authenticated-screen redesign (see **Main window layout**).
+- [x] Tabbed authenticated-screen redesign (see **Main window layout**).
 - Windows installer and clean-machine verification.
 
 Implementation sequence: runtime location selection; backup-job options and
