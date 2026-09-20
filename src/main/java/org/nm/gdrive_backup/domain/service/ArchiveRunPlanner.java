@@ -57,7 +57,7 @@ public class ArchiveRunPlanner {
 			Integer baseSequenceNumber, String relativeTargetPath) {
 
 		public Archive toArchive(Instant createdAt, String fromPageToken, String toPageToken) {
-			return new Archive(null, scope.key(), sequenceNumber, baseArchiveId, mode, RevisionMode.LATEST_ONLY,
+			return new Archive(null, scope.key(), scope.type(), sequenceNumber, baseArchiveId, mode, RevisionMode.LATEST_ONLY,
 					createdAt, relativeTargetPath, fromPageToken, toPageToken, false);
 		}
 	}

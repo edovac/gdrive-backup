@@ -11,6 +11,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.RevisionMode;
@@ -69,7 +70,7 @@ class SqliteFileHistoryAdapterTest {
 	}
 
 	private static long saveArchive(SqliteDatabase database) {
-		return new SqliteArchiveAdapter(database).save(new Archive(null, "user@example.com", 1, null,
+		return new SqliteArchiveAdapter(database).save(new Archive(null, "user@example.com", DriveScopeType.PERSONAL, 1, null,
 				ArchiveMode.FULL, RevisionMode.LATEST_ONLY, Instant.parse("2026-09-12T09:00:00Z"),
 				"archives/x/archive-0001-full.zip", null, null, false)).id();
 	}

@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveChainException;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
@@ -69,7 +70,7 @@ class ArchiveChainResolverTest {
 	}
 
 	private static Archive archive(long id, int sequenceNumber, Long baseId, ArchiveMode mode) {
-		return new Archive(id, "user@example.com", sequenceNumber, baseId, mode, RevisionMode.LATEST_ONLY, Instant.now(),
+		return new Archive(id, "user@example.com", DriveScopeType.PERSONAL, sequenceNumber, baseId, mode, RevisionMode.LATEST_ONLY, Instant.now(),
 				"archives/x/archive-000" + sequenceNumber + ".zip", null, null, false);
 	}
 }

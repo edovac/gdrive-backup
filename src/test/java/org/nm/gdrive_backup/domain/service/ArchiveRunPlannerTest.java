@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.DriveScope;
@@ -80,12 +81,12 @@ class ArchiveRunPlannerTest {
 
 		Archive archive = planner.planIncremental(SCOPE, null).toArchive(now, "from", "to");
 
-		assertEquals(new Archive(null, "user@example.com", 2, 10L, ArchiveMode.INCREMENTAL, RevisionMode.LATEST_ONLY,
+		assertEquals(new Archive(null, "user@example.com", DriveScopeType.PERSONAL, 2, 10L, ArchiveMode.INCREMENTAL, RevisionMode.LATEST_ONLY,
 				now, "archives/My Drive (user@example.com)/archive-0002-incremental.zip", "from", "to", false), archive);
 	}
 
 	private static Archive archive(int sequenceNumber, long id) {
-		return new Archive(id, "user@example.com", sequenceNumber, null, ArchiveMode.FULL, RevisionMode.LATEST_ONLY,
+		return new Archive(id, "user@example.com", DriveScopeType.PERSONAL, sequenceNumber, null, ArchiveMode.FULL, RevisionMode.LATEST_ONLY,
 				Instant.now(), "archives/x.zip", null, null, false);
 	}
 }

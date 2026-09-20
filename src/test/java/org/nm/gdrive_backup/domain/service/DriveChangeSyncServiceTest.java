@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
@@ -65,7 +66,7 @@ class DriveChangeSyncServiceTest {
 	private void baseline(String token) {
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(new SyncState("user@example.com", token)));
 		when(archivePort.findByScopeKey("user@example.com")).thenReturn(List.of(
-				new Archive(7L, "user@example.com", 1, null, ArchiveMode.FULL, RevisionMode.LATEST_ONLY,
+				new Archive(7L, "user@example.com", DriveScopeType.PERSONAL, 1, null, ArchiveMode.FULL, RevisionMode.LATEST_ONLY,
 						Instant.now(), "archives/x.zip", null, null, false)));
 	}
 

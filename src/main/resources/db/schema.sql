@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS drives (
 CREATE TABLE IF NOT EXISTS archives (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     scope_key TEXT NOT NULL,
+    scope_type TEXT NOT NULL,
     sequence_number INTEGER NOT NULL,
     base_archive_id INTEGER REFERENCES archives(id),
     mode TEXT NOT NULL,

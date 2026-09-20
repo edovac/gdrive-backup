@@ -72,25 +72,26 @@ public class SqliteSyncCommitAdapter implements SyncCommitPort {
 			return null;
 		}
 		try (var statement = connection.prepareStatement(
-				"INSERT INTO archives(scope_key, sequence_number, base_archive_id, mode, revision_mode, "
+				"INSERT INTO archives(scope_key, scope_type, sequence_number, base_archive_id, mode, revision_mode, "
 						+ "created_at, archive_path, from_page_token, to_page_token, cancelled) "
-						+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
+						+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
 			statement.setString(1, archive.scopeKey());
-			statement.setInt(2, archive.sequenceNumber());
-			setNullableLong(statement, 3, archive.baseArchiveId());
-			statement.setString(4, archive.mode().name());
-			statement.setString(5, archive.revisionMode().name());
-			statement.setString(6, archive.createdAt().toString());
-			statement.setString(7, archive.archivePath());
-			statement.setString(8, archive.fromPageToken());
-			statement.setString(9, archive.toPageToken());
-			statement.setBoolean(10, archive.cancelled());
+			statement.setString(2, archive.scopeType().name());
+			statement.setInt(3, archive.sequenceNumber());
+			setNullableLong(statement, 4, archive.baseArchiveId());
+			statement.setString(5, archive.mode().name());
+			statement.setString(6, archive.revisionMode().name());
+			statement.setString(7, archive.createdAt().toString());
+			statement.setString(8, archive.archivePath());
+			statement.setString(9, archive.fromPageToken());
+			statement.setString(10, archive.toPageToken());
+			statement.setBoolean(11, archive.cancelled());
 			statement.executeUpdate();
 			try (ResultSet keys = statement.getGeneratedKeys()) {
 				if (!keys.next()) {
 					throw new IllegalStateException("SQLite did not return an archive id");
 				}
-				return new Archive(keys.getLong(1), archive.scopeKey(), archive.sequenceNumber(),
+				return new Archive(keys.getLong(1), archive.scopeKey(), archive.scopeType(), archive.sequenceNumber(),
 						archive.baseArchiveId(), archive.mode(), archive.revisionMode(), archive.createdAt(),
 						archive.archivePath(), archive.fromPageToken(), archive.toPageToken(), archive.cancelled());
 			}

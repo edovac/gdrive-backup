@@ -149,6 +149,19 @@ Last reviewed: 2026-09-20
   operations). Existing `backup.db` files must be recreated (new
   `archive_sources` table).
 
+- [x] Archive operations foundations: `archives.scope_type` (an archive row can
+  be turned back into a drive scope), `ArchiveStoragePort` (size and guarded
+  deletion under `archives/`), and `ArchiveCatalogUseCase`, which lists each
+  drive's archives as chain root, incremental, obsolete (consumed by a merge in
+  the current chain, transitively) or earlier chain, with warnings for a broken
+  base link or a missing file and `canMerge`/`hasObsolete` flags. A merge is an
+  **exclusive operation** (`BackupActivity.duringExclusiveOperation`): it
+  refuses to start beside a backup or another operation and backups refuse to
+  start beside it, since progress and cancellation are shared. A merge reports
+  progress as a one-drive job through the backup progress tracker, honors the
+  cancel button, and returns `MergeResult` (cancelled writes nothing). Existing
+  `backup.db` files must be recreated (new `scope_type` column).
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
@@ -156,14 +169,12 @@ Last reviewed: 2026-09-20
 
 ### Not started
 
-- [ ] Archive operations (manual, per drive, from the Archive manager): the
-  UI around the merge engine (see Completed), an optional, verified and
-  confirmed deletion of the superseded partial archives (including re-pointing
-  `file_captures` and `file_events` at the merged full), chain-gap warnings,
-  progress and cancellation for a merge, refusing a merge while a backup of the
-  same drive runs, and starting a new chain when a from-scratch full backup runs
-  on a scope that already has one (today's `sequence_number` is monotonic per
-  scope, not per chain). See **Archive operations** under Core requirements.
+- [ ] Archive operations, remaining (manual, per drive, from the Archive manager):
+  an optional, verified and confirmed deletion of the archives a merge made
+  obsolete (including re-pointing `file_captures` and `file_events` at the merged
+  full, and warning about content that exists only in an obsolete archive, such
+  as a trashed file's bytes), and the Archive manager UI over the catalog, merge
+  and deletion. See **Archive operations** under Core requirements.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
@@ -193,10 +204,10 @@ requirements below as the source of truth for expected behavior.
   uploadable tree for a full run, an id-keyed delta for an incremental one,
   none when an incremental run finds no changes. Each archive is a ZIP file
   with its manifest embedded at the root; a cancelled run writes no archive
-  and no chain entry. `sequence_number` is currently monotonic per scope
-  rather than per chain, since nothing tracks separate chains yet — starting
-  a genuinely new chain on a fresh full backup is still open, see the archive
-  operations item below.
+  and no chain entry. `sequence_number` counts across the drive's whole
+  archive folder, not per chain: chains are found by their base links, so a
+  from-scratch full simply starts a new chain, which the Archive manager shows
+  as the current one and lists the older one as an earlier chain.
 - [-] Stream content straight into archives, with no capture store: a full
   archive is always built from scratch by streaming every file from Drive (done);
   it can alternatively be built from a complete set of incremental archives
@@ -318,7 +329,7 @@ Windows packaging.
   full archive it descends from and every delta in between, so the chain is
   tracked in SQLite (`archives`) as the source of truth and mirrored in each
   archive's own manifest, letting an archive be checked and trusted without the
-  database. Each archive records its `sequence_number` within its chain, and
+  database. Each archive records its `sequence_number` within its drive's archive folder, and
   archive filenames include it so related archives are identifiable at a
   glance. **Decided:** each archive is a single ZIP file (native Explorer
   support on Windows, easy to move to an external drive as one unit); its
@@ -534,7 +545,8 @@ sync_state
 archives                   -- one row per archive written; the chain's source of truth
   id (PK)
   scope_key                -- user email or drive_id
-  sequence_number          -- ordinal within the chain, for naming/display
+  scope_type               -- 'PERSONAL' | 'SHARED_DRIVE'
+  sequence_number          -- ordinal within the drive's archive folder, for naming/display
   base_archive_id          -- FK -> archives; null for a chain's root, which is a FULL or a
                            -- MERGED_FULL archive; incrementals point at their predecessor
   mode                     -- 'FULL' | 'INCREMENTAL' | 'MERGED_FULL' (result of a merge)

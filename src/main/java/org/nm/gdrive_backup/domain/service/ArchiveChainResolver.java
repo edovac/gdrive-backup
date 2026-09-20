@@ -18,11 +18,15 @@ final class ArchiveChainResolver {
 	private ArchiveChainResolver() {
 	}
 
-	/** The current chain, root first. Needs at least one incremental on top of the root to be worth merging. */
-	static List<Archive> currentChain(List<Archive> all) {
-		if (all.isEmpty()) {
-			throw new ArchiveChainException("This drive has no archives yet");
-		}
+	/**
+	 * The chain found by walking base links down from the latest archive, root first, and what stopped the walk
+	 * short of a root ({@code problem}, or null when it reached one).
+	 */
+	record Chain(List<Archive> archives, String problem) {
+	}
+
+	/** Walks the links without throwing, so a catalog can still show a broken chain. {@code all} must not be empty. */
+	static Chain chainOf(List<Archive> all) {
 		Map<Long, Archive> byId = new HashMap<>();
 		for (Archive archive : all) {
 			byId.put(archive.id(), archive);
@@ -30,11 +34,12 @@ final class ArchiveChainResolver {
 		Archive tip = all.stream().max(Comparator.comparingInt(Archive::sequenceNumber)).orElseThrow();
 		List<Archive> chain = new ArrayList<>();
 		Set<Long> seen = new HashSet<>();
+		String problem = null;
 		Archive current = tip;
 		while (true) {
 			if (!seen.add(current.id())) {
-				throw new ArchiveChainException("Archive chain loops back on itself at archive "
-						+ current.sequenceNumber());
+				problem = "Archive chain loops back on itself at archive " + current.sequenceNumber();
+				break;
 			}
 			chain.add(current);
 			if (current.baseArchiveId() == null) {
@@ -42,16 +47,29 @@ final class ArchiveChainResolver {
 			}
 			Archive base = byId.get(current.baseArchiveId());
 			if (base == null) {
-				throw new ArchiveChainException("Archive " + current.sequenceNumber() + " chains onto archive id "
-						+ current.baseArchiveId() + ", which is missing from the archive records");
+				problem = "Archive " + current.sequenceNumber() + " chains onto archive id " + current.baseArchiveId()
+						+ ", which is missing from the archive records";
+				break;
 			}
 			current = base;
 		}
 		Collections.reverse(chain);
-		if (chain.size() == 1) {
-			throw new ArchiveChainException("Nothing to merge: the current chain (archive "
-					+ tip.sequenceNumber() + ") has no incremental archives");
+		return new Chain(chain, problem);
+	}
+
+	/** The current chain, root first. Needs at least one incremental on top of the root to be worth merging. */
+	static List<Archive> currentChain(List<Archive> all) {
+		if (all.isEmpty()) {
+			throw new ArchiveChainException("This drive has no archives yet");
 		}
-		return chain;
+		Chain chain = chainOf(all);
+		if (chain.problem() != null) {
+			throw new ArchiveChainException(chain.problem());
+		}
+		if (chain.archives().size() == 1) {
+			throw new ArchiveChainException("Nothing to merge: the current chain (archive "
+					+ chain.archives().getFirst().sequenceNumber() + ") has no incremental archives");
+		}
+		return chain.archives();
 	}
 }

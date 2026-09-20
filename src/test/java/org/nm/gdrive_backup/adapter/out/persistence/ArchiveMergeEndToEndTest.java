@@ -83,7 +83,7 @@ class ArchiveMergeEndToEndTest {
 				new SqliteFileMetadataAdapter(database), streaming, sessions, planner, commit,
 				BackupProgressTracker.NO_OP, new BackupCancellation());
 		merge = new ArchiveMergeService(archives, new LocalArchiveReaderAdapter(root), sessions, planner, commit,
-				new BackupActivity());
+				new BackupActivity(), BackupProgressTracker.NO_OP, new BackupCancellation());
 	}
 
 	private void buildInitialDrive() {
@@ -119,7 +119,7 @@ class ArchiveMergeEndToEndTest {
 		buildInitialDrive();
 		changeTheDriveTwiceAndBackUpIncrementally();
 
-		Archive merged = merge.merge(SCOPE, null);
+		Archive merged = merge.merge(SCOPE, null).archive();
 		Archive scratch = full.synchronize(ACCESS, SCOPE, null).archive();
 
 		Map<String, String> expected = new TreeMap<>(Map.of(
@@ -146,7 +146,7 @@ class ArchiveMergeEndToEndTest {
 			statement.executeUpdate("DELETE FROM files");
 		}
 
-		Archive merged = merge.merge(SCOPE, null);
+		Archive merged = merge.merge(SCOPE, null).archive();
 
 		assertEquals(Map.of("Docs/a.pdf", "A2", "Docs/Notes.docx", "N2", "Archive/old.pdf", "O1",
 				"New/new.pdf", "W2"), extract(merged));
@@ -156,7 +156,7 @@ class ArchiveMergeEndToEndTest {
 	void incrementalBackupsContinueAfterAMergeAndCanBeMergedAgain() throws Exception {
 		buildInitialDrive();
 		changeTheDriveTwiceAndBackUpIncrementally();
-		Archive merged = merge.merge(SCOPE, null);
+		Archive merged = merge.merge(SCOPE, null).archive();
 
 		drive.edit("a", "A3");
 		drive.create("extra", "extra.pdf", "folder-docs", PDF, "X1");
@@ -166,7 +166,7 @@ class ArchiveMergeEndToEndTest {
 		assertEquals(5, next.sequenceNumber());
 		assertEquals(merged.id(), next.baseArchiveId());
 
-		Archive mergedAgain = merge.merge(SCOPE, null);
+		Archive mergedAgain = merge.merge(SCOPE, null).archive();
 		Archive scratch = full.synchronize(ACCESS, SCOPE, null).archive();
 
 		assertEquals(6, mergedAgain.sequenceNumber());
@@ -187,7 +187,7 @@ class ArchiveMergeEndToEndTest {
 		drive.untrash("later");
 		incremental.synchronize(ACCESS, SCOPE, null);
 
-		Archive merged = merge.merge(SCOPE, null);
+		Archive merged = merge.merge(SCOPE, null).archive();
 
 		assertEquals(Map.of("keep.pdf", "K1", "later.pdf", "L1"), extract(merged));
 	}

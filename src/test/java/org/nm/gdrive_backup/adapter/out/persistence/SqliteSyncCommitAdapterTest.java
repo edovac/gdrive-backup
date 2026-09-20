@@ -13,6 +13,7 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.FileCapture;
@@ -131,7 +132,7 @@ class SqliteSyncCommitAdapterTest {
 	}
 
 	private static Archive archive(int sequenceNumber, ArchiveMode mode, Long baseArchiveId) {
-		return new Archive(null, "user@example.com", sequenceNumber, baseArchiveId, mode, RevisionMode.LATEST_ONLY, NOW,
+		return new Archive(null, "user@example.com", DriveScopeType.PERSONAL, sequenceNumber, baseArchiveId, mode, RevisionMode.LATEST_ONLY, NOW,
 				"archives/x/archive-000" + sequenceNumber + ".zip", null, null, false);
 	}
 

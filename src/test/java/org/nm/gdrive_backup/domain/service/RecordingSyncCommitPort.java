@@ -22,7 +22,7 @@ class RecordingSyncCommitPort implements SyncCommitPort {
 		commits.add(commit);
 		log.add("commit");
 		Archive archive = commit.archiveOrNull();
-		return archive == null ? null : new Archive(100L, archive.scopeKey(), archive.sequenceNumber(),
+		return archive == null ? null : new Archive(100L, archive.scopeKey(), archive.scopeType(), archive.sequenceNumber(),
 				archive.baseArchiveId(), archive.mode(), archive.revisionMode(), archive.createdAt(),
 				archive.archivePath(), archive.fromPageToken(), archive.toPageToken(), archive.cancelled());
 	}

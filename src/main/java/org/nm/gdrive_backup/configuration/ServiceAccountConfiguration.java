@@ -31,6 +31,9 @@ import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
 import org.nm.gdrive_backup.domain.service.FileContentStreamingService;
 import org.nm.gdrive_backup.domain.service.ArchiveRunPlanner;
 import org.nm.gdrive_backup.domain.service.ArchiveMergeService;
+import org.nm.gdrive_backup.domain.service.ArchiveCatalogService;
+import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
+import org.nm.gdrive_backup.domain.port.out.ArchiveStoragePort;
 import org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase;
 import org.nm.gdrive_backup.domain.port.out.ArchiveReaderPort;
 import org.nm.gdrive_backup.domain.service.InitialDriveSyncService;
@@ -129,13 +132,18 @@ public class ServiceAccountConfiguration {
 		return new ArchiveRunPlanner(archivePort);
 	}
 
+	@Bean
+	ArchiveCatalogUseCase archiveCatalogUseCase(ArchivePort archivePort, ArchiveStoragePort archiveStoragePort) {
+		return new ArchiveCatalogService(archivePort, archiveStoragePort);
+	}
+
 	/** Archive-only, so it needs no Google credentials and is always wired. */
 	@Bean
 	ArchiveMergeUseCase archiveMergeUseCase(ArchivePort archivePort, ArchiveReaderPort archiveReaderPort,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupActivity backupActivity) {
+			BackupActivity backupActivity, BackupProgressTracker progressTracker, BackupCancellation cancellation) {
 		return new ArchiveMergeService(archivePort, archiveReaderPort, archiveSessionPort, archiveRunPlanner,
-				syncCommitPort, backupActivity);
+				syncCommitPort, backupActivity, progressTracker, cancellation);
 	}
 
 	@Bean

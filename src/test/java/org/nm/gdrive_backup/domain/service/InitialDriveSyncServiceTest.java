@@ -22,6 +22,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
@@ -280,7 +281,7 @@ class InitialDriveSyncServiceTest {
 	}
 
 	private static Archive previousArchive(int sequenceNumber, long id) {
-		return new Archive(id, "user@example.com", sequenceNumber, null, ArchiveMode.FULL, RevisionMode.LATEST_ONLY,
+		return new Archive(id, "user@example.com", DriveScopeType.PERSONAL, sequenceNumber, null, ArchiveMode.FULL, RevisionMode.LATEST_ONLY,
 				Instant.now(), "archives/x.zip", null, null, false);
 	}
 }

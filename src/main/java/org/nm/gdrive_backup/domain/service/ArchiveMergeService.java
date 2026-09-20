@@ -9,6 +9,9 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import org.nm.gdrive_backup.domain.model.Archive;
+import org.nm.gdrive_backup.domain.model.AvailableDrive;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
+import org.nm.gdrive_backup.domain.model.MergeResult;
 import org.nm.gdrive_backup.domain.model.ArchiveChainException;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest.ManifestFile;
@@ -39,24 +42,43 @@ public class ArchiveMergeService implements ArchiveMergeUseCase {
 	private final ArchiveRunPlanner archiveRunPlanner;
 	private final SyncCommitPort syncCommitPort;
 	private final BackupActivity backupActivity;
+	private final BackupProgressTracker progressTracker;
+	private final BackupCancellation cancellation;
 
 	public ArchiveMergeService(ArchivePort archivePort, ArchiveReaderPort archiveReaderPort,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupActivity backupActivity) {
+			BackupActivity backupActivity, BackupProgressTracker progressTracker, BackupCancellation cancellation) {
 		this.archivePort = archivePort;
 		this.archiveReaderPort = archiveReaderPort;
 		this.archiveSessionPort = archiveSessionPort;
 		this.archiveRunPlanner = archiveRunPlanner;
 		this.syncCommitPort = syncCommitPort;
 		this.backupActivity = backupActivity;
+		this.progressTracker = progressTracker;
+		this.cancellation = cancellation;
 	}
 
 	@Override
-	public Archive merge(DriveScope scope, String scopeDisplayNameOrNull) {
-		return backupActivity.duringBackup(() -> mergeChain(scope, scopeDisplayNameOrNull));
+	public MergeResult merge(DriveScope scope, String scopeDisplayNameOrNull) {
+		return backupActivity.duringExclusiveOperation(() -> {
+			AvailableDrive drive = new AvailableDrive(scope.key(),
+					scopeDisplayNameOrNull != null ? scopeDisplayNameOrNull : scope.key(),
+					scope.type() == DriveScopeType.SHARED_DRIVE);
+			cancellation.begin();
+			progressTracker.jobStarted(List.of(drive));
+			progressTracker.driveStarted(drive);
+			try {
+				MergeResult result = mergeChain(scope, scopeDisplayNameOrNull);
+				progressTracker.driveCompleted();
+				return result;
+			} finally {
+				progressTracker.jobFinished();
+			}
+		});
 	}
 
-	private Archive mergeChain(DriveScope scope, String scopeDisplayNameOrNull) {
+	private MergeResult mergeChain(DriveScope scope, String scopeDisplayNameOrNull) {
+		progressTracker.enumerating();
 		List<Archive> chain = ArchiveChainResolver.currentChain(archivePort.findByScopeKey(scope.key()));
 		List<ArchiveReader> readers = new ArrayList<>();
 		try {
@@ -73,11 +95,17 @@ public class ArchiveMergeService implements ArchiveMergeUseCase {
 
 			ArchiveRunPlanner.Plan plan = archiveRunPlanner.planMergedFull(scope, scopeDisplayNameOrNull);
 			Archive tip = chain.getLast();
+			progressTracker.enumerated(folded.size());
 			try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 				List<ManifestFile> records = new ArrayList<>();
 				for (Map.Entry<String, FoldedFile> entry : folded.entrySet()) {
+					if (cancellation.isImmediateStopRequested()) {
+						return new MergeResult(null, true);
+					}
+					progressTracker.itemProcessed(entry.getValue().metadata().name());
 					records.add(writeFile(session, readers, chain, resolver, named.get(entry.getKey()), entry.getValue()));
 				}
+				progressTracker.packaging();
 				Instant createdAt = Instant.now();
 				List<ManifestSource> sources = chain.stream()
 						.map(archive -> new ManifestSource(archive.sequenceNumber(), fileName(archive)))
@@ -85,8 +113,8 @@ public class ArchiveMergeService implements ArchiveMergeUseCase {
 				session.publish(new ArchiveManifest(scope, plan.mode(), RevisionMode.LATEST_ONLY,
 						plan.sequenceNumber(), null, createdAt, null, tip.toPageToken(), sources, records, List.of()));
 				Archive archive = plan.toArchive(createdAt, null, tip.toPageToken());
-				return syncCommitPort.commit(new PendingCommit(archive, List.of(), List.of(), List.of(), null,
-						chain.stream().map(Archive::id).toList()));
+				return new MergeResult(syncCommitPort.commit(new PendingCommit(archive, List.of(), List.of(), List.of(),
+						null, chain.stream().map(Archive::id).toList())), false);
 			} catch (IOException exception) {
 				throw new IllegalStateException("Unable to write archive " + plan.relativeTargetPath(), exception);
 			}

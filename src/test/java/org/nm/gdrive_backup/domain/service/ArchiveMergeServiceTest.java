@@ -15,6 +15,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveChainException;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
@@ -41,8 +42,11 @@ class ArchiveMergeServiceTest {
 	private final FakeArchiveReaderPort readers = new FakeArchiveReaderPort();
 	private final RecordingArchiveSessionPort sessions = new RecordingArchiveSessionPort(log);
 	private final RecordingSyncCommitPort commits = new RecordingSyncCommitPort(log);
+	private final BackupActivity activity = new BackupActivity();
+	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
+	private final BackupCancellation cancellation = new BackupCancellation();
 	private final ArchiveMergeService service = new ArchiveMergeService(archivePort, readers, sessions,
-			new ArchiveRunPlanner(archivePort), commits, new BackupActivity());
+			new ArchiveRunPlanner(archivePort), commits, activity, progressTracker, cancellation);
 
 	private Archive full;
 	private Archive first;
@@ -77,7 +81,7 @@ class ArchiveMergeServiceTest {
 
 	@Test
 	void foldsTheChainIntoAFlatTreeReadingOnlyArchives() {
-		Archive merged = service.merge(SCOPE, null);
+		Archive merged = service.merge(SCOPE, null).archive();
 
 		assertEquals(Set.of("Docs/a.pdf", "b-renamed.pdf", "Notes.docx"), sessions.entries.keySet());
 		assertEquals("A22", new String(sessions.entries.get("Docs/a.pdf")));
@@ -208,8 +212,58 @@ class ArchiveMergeServiceTest {
 		assertTrue(commits.commits.isEmpty());
 	}
 
+	@Test
+	void reportsProgressAsAOneDriveJobInTheBackupOrder() {
+		service.merge(SCOPE, "My Drive");
+
+		var order = org.mockito.Mockito.inOrder(progressTracker);
+		order.verify(progressTracker).jobStarted(List.of(new org.nm.gdrive_backup.domain.model.AvailableDrive(
+				"user@example.com", "My Drive", false)));
+		order.verify(progressTracker).driveStarted(new org.nm.gdrive_backup.domain.model.AvailableDrive(
+				"user@example.com", "My Drive", false));
+		order.verify(progressTracker).enumerating();
+		order.verify(progressTracker).enumerated(4);
+		order.verify(progressTracker).itemProcessed("Docs");
+		order.verify(progressTracker).packaging();
+		order.verify(progressTracker).driveCompleted();
+		order.verify(progressTracker).jobFinished();
+	}
+
+	@Test
+	void anImmediateStopDiscardsTheMergeAndCommitsNothing() {
+		org.mockito.Mockito.doAnswer(invocation -> {
+			cancellation.requestStop(org.nm.gdrive_backup.domain.model.BackupStopMode.IMMEDIATE);
+			return null;
+		}).when(progressTracker).itemProcessed("a.pdf");
+
+		var result = service.merge(SCOPE, null);
+
+		assertTrue(result.cancelled());
+		assertNull(result.archive());
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
+		org.mockito.Mockito.verify(progressTracker).jobFinished();
+	}
+
+	@Test
+	void aFailureStillFinishesTheProgressJob() {
+		Archive lost = row(3, 3, 2L, ArchiveMode.INCREMENTAL, "archives/missing.zip", "t3");
+		when(archivePort.findByScopeKey("user@example.com")).thenReturn(List.of(full, first, lost));
+
+		assertThrows(ArchiveChainException.class, () -> service.merge(SCOPE, null));
+
+		org.mockito.Mockito.verify(progressTracker).jobFinished();
+	}
+
+	@Test
+	void refusesToRunWhileABackupIsRunning() {
+		assertThrows(IllegalStateException.class, () -> activity.duringBackup(() -> service.merge(SCOPE, null)));
+
+		assertTrue(log.isEmpty());
+	}
+
 	private static Archive row(long id, int sequenceNumber, Long baseId, ArchiveMode mode, String path, String toToken) {
-		return new Archive(id, "user@example.com", sequenceNumber, baseId, mode, RevisionMode.LATEST_ONLY, Instant.now(),
+		return new Archive(id, "user@example.com", DriveScopeType.PERSONAL, sequenceNumber, baseId, mode, RevisionMode.LATEST_ONLY, Instant.now(),
 				path, null, toToken, false);
 	}
 

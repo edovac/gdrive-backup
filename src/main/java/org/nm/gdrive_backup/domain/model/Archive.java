@@ -5,6 +5,7 @@ import java.time.Instant;
 public record Archive(
 		Long id,
 		String scopeKey,
+		DriveScopeType scopeType,
 		int sequenceNumber,
 		Long baseArchiveId,
 		ArchiveMode mode,
