@@ -35,6 +35,10 @@ import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
+import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
+import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
+import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
+import org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase;
 import org.nm.gdrive_backup.domain.port.in.BackupCancellationUseCase;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
@@ -83,9 +87,13 @@ public class JavaFxApplication extends Application {
 	private static BackupLocationUseCase backupLocationUseCase;
 	private static BackupProgressPort backupProgressPort;
 	private static BackupCancellationUseCase backupCancellationUseCase;
+	private static ArchiveCatalogUseCase archiveCatalogUseCase;
+	private static ArchiveMergeUseCase archiveMergeUseCase;
+	private static ArchiveDeletionUseCase archiveDeletionUseCase;
 
 	private LocationsPanel locationsPanel;
 	private ProgressPanel progressPanel;
+	private ArchiveManagerPanel archiveManagerPanel;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
 		springContext = context;
@@ -105,6 +113,13 @@ public class JavaFxApplication extends Application {
 
 	static void setBackupCancellation(BackupCancellationUseCase cancellationUseCase) {
 		backupCancellationUseCase = cancellationUseCase;
+	}
+
+	static void setArchiveServices(ArchiveCatalogUseCase catalogUseCase, ArchiveMergeUseCase mergeUseCase,
+			ArchiveDeletionUseCase deletionUseCase) {
+		archiveCatalogUseCase = catalogUseCase;
+		archiveMergeUseCase = mergeUseCase;
+		archiveDeletionUseCase = deletionUseCase;
 	}
 
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
@@ -242,6 +257,16 @@ public class JavaFxApplication extends Application {
 				driveSelections, driveStatus));
 		locationsPanel = new LocationsPanel(syncNow);
 		progressPanel = new ProgressPanel();
+		archiveManagerPanel = new ArchiveManagerPanel(archiveCatalogUseCase, archiveMergeUseCase,
+				archiveDeletionUseCase, () -> {
+					progressPanel.start();
+					syncNow.setDisable(true);
+					locationsPanel.setChangesDisabled(true);
+				}, () -> {
+					progressPanel.stop();
+					syncNow.setDisable(false);
+					locationsPanel.setChangesDisabled(false);
+				});
 		refreshQuota.setOnAction(event -> loadQuota(userPicker, quotaStatus, quotaDetails, refreshQuota));
 		refreshReport.setOnAction(event -> loadWorkspaceReport(userPicker, reportStatus, reportDetails, refreshReport));
 		refreshCloudQuota.setOnAction(event -> loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota));
@@ -314,10 +339,12 @@ public class JavaFxApplication extends Application {
 			drivesLabel.setVisible(false);
 			drivesLabel.setManaged(false);
 			locationsPanel.hide();
+			archiveManagerPanel.hide();
 		});
 
 		VBox content = new VBox(12, title, subtitle, signIn, signOut, scope, userPicker, locationsPanel.node(),
-				drivesLabel, drives, backupModeCombo, syncNow, progressPanel.node(), driveStatus, driveItems,
+				drivesLabel, drives, backupModeCombo, syncNow, progressPanel.node(), archiveManagerPanel.node(),
+				driveStatus, driveItems,
 				connectionStatus, quotaTitle, quotaStatus, quotaDetails, refreshQuota,
 				reportTitle, reportStatus, reportDetails, refreshReport);
 		content.getChildren().addAll(cloudQuotaTitle, cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
@@ -364,6 +391,7 @@ public class JavaFxApplication extends Application {
 					signOut.setManaged(true);
 					connectionStatus.setText("Google connected");
 					locationsPanel.show();
+					archiveManagerPanel.show();
 					loadCloudQuota(cloudQuotaStatus, cloudQuotaDetails, refreshCloudQuota);
 					loadWorkspaceUsers(drives, drivesLabel, driveSelections, userPicker, driveItems, driveStatus,
 							quotaStatus, quotaDetails, refreshQuota, reportStatus, reportDetails, refreshReport,
@@ -446,6 +474,7 @@ public class JavaFxApplication extends Application {
 		syncNow.setDisable(true);
 		backupModeCombo.setDisable(true);
 		locationsPanel.setChangesDisabled(true);
+		archiveManagerPanel.setExternallyBusy(true);
 		String destination = backupLocationUseCase == null ? ""
 				: " into " + backupLocationUseCase.currentLocation().root();
 		status.setText("Synchronizing " + modeLabel(mode).toLowerCase() + " backup for " + selectedUserEmail
@@ -458,6 +487,7 @@ public class JavaFxApplication extends Application {
 			syncNow.setDisable(false);
 			backupModeCombo.setDisable(false);
 			locationsPanel.setChangesDisabled(false);
+			archiveManagerPanel.setExternallyBusy(false);
 			progressPanel.stop();
 			if (error != null) {
 				status.setText("Synchronization failed: " + messageFor(error));

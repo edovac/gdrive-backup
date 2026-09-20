@@ -180,6 +180,23 @@ Last reviewed: 2026-09-20
   merged full, index and event history survive, backups continue, a later merge
   still equals a from-scratch full, and a corrupted merged full blocks it.
 
+- [x] Archive manager UI: `ArchiveManagerPanel` (the first class in the new
+  `adapter.in.javafx` package, kept out of `JavaFxApplication`) is shown after
+  sign-in. A drive picker feeds a table of its archives (number, kind, created,
+  size, state; obsolete and earlier-chain rows greyed, a missing file in red) and
+  a warnings area, with **Merge into a full backup...** (confirmation, then the
+  shared progress panel with its Cancel button), **Delete obsolete archives...**
+  (progress while verifying, then a review dialog with the verification result,
+  the exact archive files and sizes, the database changes and the content that
+  will be lost; blocking when verification fails; **Delete** to confirm) and
+  **Refresh**. A finished merge offers to continue straight into the deletion
+  review. Buttons are disabled while an operation or a backup runs. The wording
+  and formatting live in a JavaFX-free `ArchiveManagerText` with unit tests; the
+  panel was checked by rendering it against canned data and by launching the app,
+  and the dialogs have not been exercised against real archives yet. The unused
+  `MERGED_INCREMENTAL` archive mode left over from the dropped snapshot
+  operation was removed.
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
@@ -187,10 +204,6 @@ Last reviewed: 2026-09-20
 
 ### Not started
 
-- [ ] Archive manager UI: a panel over the catalog, merge and deletion use
-  cases (scope picker, archive table with states and warnings, Merge and Delete
-  buttons with confirmation dialogs, progress through the existing panel). See
-  **Archive operations** and **Archive manager** below.
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.

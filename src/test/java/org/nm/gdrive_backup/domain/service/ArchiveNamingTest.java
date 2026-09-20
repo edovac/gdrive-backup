@@ -43,8 +43,6 @@ class ArchiveNamingTest {
 	void archiveFileNameUsesKebabCaseForEveryMode() {
 		assertEquals("archive-0001-full.zip", ArchiveNaming.archiveFileName(1, ArchiveMode.FULL));
 		assertEquals("archive-0001-incremental.zip", ArchiveNaming.archiveFileName(1, ArchiveMode.INCREMENTAL));
-		assertEquals("archive-0001-merged-incremental.zip",
-				ArchiveNaming.archiveFileName(1, ArchiveMode.MERGED_INCREMENTAL));
 		assertEquals("archive-0001-merged-full.zip", ArchiveNaming.archiveFileName(1, ArchiveMode.MERGED_FULL));
 	}
 
