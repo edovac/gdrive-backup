@@ -207,7 +207,7 @@ Last reviewed: 2026-09-20
 - [ ] History view for file events and captures.
 - [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
-- [ ] Low-priority authenticated-screen UX analysis and a three-column layout for user, Drive, and quota/report information.
+- [-] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common session header (selected Workspace user, connection status, sign-out) above three tabs — Backup, Archives, Technical info. Steps: (1) `TechnicalInfoText`/`TechnicalInfoPanel` (Drive storage, Workspace usage report, Cloud API quota as on-demand cards); (2) extract a reusable `OperationProgressPanel`; (3) `SessionHeaderPanel`; (4) rewire `JavaFxApplication` and give the Archives tab its own progress bar; (5) docs.
 
 This section is the working roadmap. Update the status markers and the
 `Last reviewed` date as each vertical slice is completed; keep the detailed
@@ -257,7 +257,7 @@ requirements below as the source of truth for expected behavior.
 
 **P3 — delivery and UX refinements**
 
-- Authenticated-screen three-column layout redesign.
+- Tabbed authenticated-screen redesign (see **Main window layout**).
 - Windows installer and clean-machine verification.
 
 Implementation sequence: runtime location selection; backup-job options and
@@ -1002,10 +1002,27 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
 - **History view**: query `file_events` + `file_captures` for a selected file
   to show renames/moves/trashes and when its content was captured over time,
   including which archive holds each capture.
-- **Layout follow-up (low priority)**: analyse and redesign the authenticated
-  screen as three distinct columns/panels: user information and selection,
-  Drive browsing/details, and quota/report details. Keep this separate from
-  the backup-progress area so the primary task remains legible.
+- **Main window layout**: after sign-in the window shows a common header
+  above a tab bar.
+  - **Header (all tabs)**: app title, the selected Workspace user (the picker
+    that chooses whose Drive is previewed and inspected), connection status
+    and Sign out. It shows the Workspace user, not the admin's OAuth identity:
+    the login session stays opaque and no extra port or scope is added.
+    Changing the user refreshes the Backup tab and clears the Technical info
+    tab.
+  - **Backup tab**: backup location, drive selection, backup mode, "Sync
+    selected drives", its progress bar with Cancel, and the Drive contents
+    preview.
+  - **Archives tab**: the Archive manager (chains, merge, guarded deletion)
+    with its **own progress bar** and Cancel, so a merge shows progress there
+    and a backup shows it in the Backup tab. Backups and merges stay mutually
+    exclusive (see `BackupActivity`).
+  - **Technical info tab**: a dashboard of three cards — Drive storage usage
+    (for the selected user), Workspace usage report (latest available day)
+    and Cloud API quota limits. Nothing is fetched automatically: each card
+    has its own Refresh button, a "last updated" time and independent
+    loading/unavailable/error states, and a "Refresh all" button sits above
+    them. The login screen shows no header or tabs.
 
 ---
 

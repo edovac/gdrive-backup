@@ -92,7 +92,7 @@ Legend:
 
 | Task | Model | Rationale |
 |---|---|---|
-| **Three-column authenticated-screen redesign** | 🧭 | `JavaFxApplication` is one ~680-line class, and AGENTS.md expects inbound adapters under `adapter.in`. Plan that split with Opus, then build and iterate on the panels with Sonnet. |
+| **Tabbed authenticated-screen redesign (header, Backup / Archives / Technical info tabs)** | 🧭 | `JavaFxApplication` is one ~680-line class, and AGENTS.md expects inbound adapters under `adapter.in`. Plan that split with Opus, then build and iterate on the panels with Sonnet. |
 | **Windows installer with `jpackage`** | 🟢 | Maven/`jpackage` configuration and packaging scripts. Verifying on a clean machine without a JDK is a manual step no model can do. |
 
 ### Items still in progress
