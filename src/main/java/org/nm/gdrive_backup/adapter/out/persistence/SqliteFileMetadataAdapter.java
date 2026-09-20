@@ -58,6 +58,28 @@ public class SqliteFileMetadataAdapter implements FileMetadataPort {
 	}
 
 	@Override
+	public List<StoredFile> searchByName(String query, int limit) {
+		String escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+		try (var connection = database.openConnection();
+			var statement = connection.prepareStatement(
+					"SELECT file_id, owner_scope, name, parents, drive_id, mime_type, trashed, "
+							+ "head_revision_id, current_version_id FROM files WHERE name LIKE ? ESCAPE '\\' "
+							+ "ORDER BY name COLLATE NOCASE, file_id LIMIT ?")) {
+			statement.setString(1, "%" + escaped + "%");
+			statement.setInt(2, limit);
+			try (ResultSet result = statement.executeQuery()) {
+				List<StoredFile> files = new ArrayList<>();
+				while (result.next()) {
+					files.add(readFile(result));
+				}
+				return files;
+			}
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Unable to search SQLite file metadata", exception);
+		}
+	}
+
+	@Override
 	public void save(StoredFile file) {
 		try (var connection = database.openConnection();
 			var statement = connection.prepareStatement(

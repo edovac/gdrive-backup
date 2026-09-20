@@ -11,5 +11,8 @@ public interface FileMetadataPort {
 
 	List<StoredFile> findAllByOwnerScope(String ownerScope);
 
+	/** Files whose name contains the text, case-insensitively, ordered by name and then id. */
+	List<StoredFile> searchByName(String query, int limit);
+
 	void save(StoredFile file);
 }

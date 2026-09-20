@@ -206,7 +206,6 @@ Scheduled unattended backups are out of scope: every backup is started manually 
 
 ### Not started
 
-- [ ] History view for file events and captures.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
 - [x] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common `SessionHeaderPanel` (selected Workspace user, status, sign-out) above three tabs — Backup, Archives (own `OperationProgressPanel`), Technical info (`TechnicalInfoPanel`, on-demand cards). Unit tests pass and the flows were checked by hand against a real account.
 
@@ -257,7 +256,9 @@ requirements below as the source of truth for expected behavior.
 
 **P2 — operational improvements**
 
-- History view.
+- [x] History view: search backed-up files by name and see one file's renames,
+  moves, trashing and captured revisions in time order, with the archive that
+  recorded each (`FileHistoryUseCase`, `FileHistoryPanel`, in the History tab).
 
 **P3 — delivery and UX refinements**
 
@@ -1004,7 +1005,11 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   shown beforehand and a confirmation step before any deletion.
 - **History view**: query `file_events` + `file_captures` for a selected file
   to show renames/moves/trashes and when its content was captured over time,
-  including which archive holds each capture.
+  including which archive holds each capture. The admin finds the file by a
+  case-insensitive name search (up to 200 matches across the backed-up
+  drives) and picks it from the results; move events show folder names where
+  the database still knows them. Events exist only for changes seen by
+  incremental runs, so a file backed up only by full runs shows captures alone.
 - **Main window layout**: after sign-in the window shows a common header
   above a tab bar.
   - **Header (all tabs)**: app title, the selected Workspace user (the picker
@@ -1020,6 +1025,8 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
     with its **own progress bar** and Cancel, so a merge shows progress there
     and a backup shows it in the Backup tab. Backups and merges stay mutually
     exclusive (see `BackupActivity`).
+  - **History tab**: name search over the backed-up files and the selected
+    file's history (see **History view**).
   - **Technical info tab**: a dashboard of three cards — Drive storage usage
     (for the selected user), Workspace usage report (latest available day)
     and Cloud API quota limits. Nothing is fetched automatically: each card

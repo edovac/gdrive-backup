@@ -30,6 +30,8 @@ public class GdriveBackupApplication {
 		JavaFxApplication.setBackupProgress(springContext.getBeanProvider(BackupProgressPort.class).getIfAvailable());
 		JavaFxApplication.setBackupCancellation(
 				springContext.getBeanProvider(BackupCancellationUseCase.class).getIfAvailable());
+		JavaFxApplication.setHistoryService(springContext
+				.getBeanProvider(org.nm.gdrive_backup.domain.port.in.FileHistoryUseCase.class).getIfAvailable());
 		JavaFxApplication.setArchiveServices(
 				springContext.getBeanProvider(org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase.class).getIfAvailable(),
 				springContext.getBeanProvider(org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase.class).getIfAvailable(),

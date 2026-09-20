@@ -54,4 +54,28 @@ class SqliteFileMetadataAdapterTest {
 
 		assertEquals(List.of(trashed, folder), found);
 	}
+
+	@Test
+	void searchesByNameCaseInsensitivelyWithEscapingAndLimit() {
+		SqliteDatabase database = new SqliteDatabase(temporaryDirectory.resolve("backup.db"));
+		database.initialize();
+		SqliteFileMetadataAdapter adapter = new SqliteFileMetadataAdapter(database);
+		adapter.save(file("f1", "Budget 2026.xlsx"));
+		adapter.save(file("f2", "budget notes.txt"));
+		adapter.save(file("f3", "100% done"));
+		adapter.save(file("f4", "1000 done"));
+		adapter.save(file("f5", "snake_case"));
+		adapter.save(file("f6", "snakeXcase"));
+
+		assertEquals(List.of("Budget 2026.xlsx", "budget notes.txt"),
+				adapter.searchByName("BUDGET", 10).stream().map(StoredFile::name).toList());
+		assertEquals(List.of("100% done"), adapter.searchByName("0%", 10).stream().map(StoredFile::name).toList());
+		assertEquals(List.of("snake_case"), adapter.searchByName("e_c", 10).stream().map(StoredFile::name).toList());
+		assertEquals(1, adapter.searchByName("budget", 1).size());
+		assertTrue(adapter.searchByName("missing", 10).isEmpty());
+	}
+
+	private static StoredFile file(String id, String name) {
+		return new StoredFile(id, "user@example.com", name, "root", null, "text/plain", false, "rev", null);
+	}
 }

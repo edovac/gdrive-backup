@@ -32,6 +32,8 @@ import org.nm.gdrive_backup.domain.service.FileContentStreamingService;
 import org.nm.gdrive_backup.domain.service.ArchiveRunPlanner;
 import org.nm.gdrive_backup.domain.service.ArchiveMergeService;
 import org.nm.gdrive_backup.domain.service.ArchiveCatalogService;
+import org.nm.gdrive_backup.domain.service.FileHistoryService;
+import org.nm.gdrive_backup.domain.port.in.FileHistoryUseCase;
 import org.nm.gdrive_backup.domain.service.ArchiveDeletionService;
 import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
 import org.nm.gdrive_backup.domain.port.out.ArchiveDeletionCommitPort;
@@ -140,6 +142,12 @@ public class ServiceAccountConfiguration {
 	@Bean
 	ArchiveCatalogUseCase archiveCatalogUseCase(ArchivePort archivePort, ArchiveStoragePort archiveStoragePort) {
 		return new ArchiveCatalogService(archivePort, archiveStoragePort);
+	}
+
+	@Bean
+	FileHistoryUseCase fileHistoryUseCase(FileMetadataPort fileMetadataPort, FileEventPort fileEventPort,
+			FileCapturePort fileCapturePort, ArchivePort archivePort) {
+		return new FileHistoryService(fileMetadataPort, fileEventPort, fileCapturePort, archivePort);
 	}
 
 	@Bean
