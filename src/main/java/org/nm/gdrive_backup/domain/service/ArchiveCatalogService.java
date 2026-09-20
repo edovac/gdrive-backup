@@ -87,7 +87,7 @@ public class ArchiveCatalogService implements ArchiveCatalogUseCase {
 	}
 
 	/** The drive's folder name under archives/, which is already "My Drive (email)" or "Name (drive_id)". */
-	private static String labelOf(Archive archive) {
+	static String labelOf(Archive archive) {
 		String[] segments = archive.archivePath() == null ? new String[0] : archive.archivePath().split("/");
 		return segments.length >= 3 ? segments[1] : archive.scopeKey();
 	}

@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.FileHistory;
+import org.nm.gdrive_backup.domain.model.FileSearchResult;
 import org.nm.gdrive_backup.domain.model.HistoryEntry;
 import org.nm.gdrive_backup.domain.model.HistoryEntryKind;
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -39,11 +40,21 @@ public class FileHistoryService implements FileHistoryUseCase {
 	}
 
 	@Override
-	public List<StoredFile> searchFiles(String query) {
+	public List<FileSearchResult> searchFiles(String query) {
 		if (query == null || query.isBlank()) {
 			return List.of();
 		}
-		return fileMetadataPort.searchByName(query.trim(), SEARCH_LIMIT);
+		List<StoredFile> files = fileMetadataPort.searchByName(query.trim(), SEARCH_LIMIT);
+		if (files.isEmpty()) {
+			return List.of();
+		}
+		// The same label the Archive manager shows: the drive's archive folder name.
+		Map<String, String> labels = new HashMap<>();
+		archivePort.findAll().forEach(archive -> labels.putIfAbsent(archive.scopeKey(),
+				ArchiveCatalogService.labelOf(archive)));
+		return files.stream()
+				.map(file -> new FileSearchResult(file, labels.getOrDefault(file.ownerScope(), file.ownerScope())))
+				.toList();
 	}
 
 	@Override

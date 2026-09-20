@@ -107,6 +107,29 @@ class FileHistoryServiceTest {
 		verify(metadataPort).searchByName("budget", FileHistoryService.SEARCH_LIMIT);
 	}
 
+	@Test
+	void searchResultsCarryTheDriveLabelOfTheArchiveFolder() {
+		StoredFile personal = file("file-1", "Budget");
+		StoredFile shared = new StoredFile("file-2", "drive-1", "Budget 2", "root", "drive-1", "text/plain", false,
+				"rev", null);
+		StoredFile unknown = new StoredFile("file-3", "gone", "Budget 3", "root", null, "text/plain", false, "rev",
+				null);
+		when(metadataPort.searchByName("budget", FileHistoryService.SEARCH_LIMIT))
+				.thenReturn(List.of(personal, shared, unknown));
+		when(archivePort.findAll()).thenReturn(List.of(
+				archiveAt("user@example.com", "archives/My Drive (user@example.com)/archive-0001-full.zip"),
+				archiveAt("drive-1", "archives/Finance (drive-1)/archive-0001-full.zip")));
+
+		List<String> labels = service.searchFiles("budget").stream().map(result -> result.driveLabel()).toList();
+
+		assertEquals(List.of("My Drive (user@example.com)", "Finance (drive-1)", "gone"), labels);
+	}
+
+	private static Archive archiveAt(String scopeKey, String path) {
+		return new Archive(1L, scopeKey, DriveScopeType.PERSONAL, 1, null, ArchiveMode.FULL,
+				RevisionMode.LATEST_ONLY, T1, path, null, null, false);
+	}
+
 	private static StoredFile file(String id, String name) {
 		return new StoredFile(id, "user@example.com", name, "root", null, "text/plain", false, "rev", null);
 	}

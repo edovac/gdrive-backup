@@ -6,8 +6,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
 import org.nm.gdrive_backup.domain.model.FileHistory;
+import org.nm.gdrive_backup.domain.model.FileSearchResult;
 import org.nm.gdrive_backup.domain.model.HistoryEntry;
-import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.in.FileHistoryUseCase;
 
 import javafx.application.Platform;
@@ -32,7 +32,7 @@ public final class FileHistoryPanel {
 
 	private final TextField searchField = new TextField();
 	private final Button searchButton = new Button("Search");
-	private final TableView<StoredFile> results = new TableView<>();
+	private final TableView<FileSearchResult> results = new TableView<>();
 	private final TableView<HistoryEntry> history = new TableView<>();
 	private final Label status = new Label();
 	private final VBox root;
@@ -60,11 +60,11 @@ public final class FileHistoryPanel {
 		results.setPlaceholder(new Label("Type a file name and search"));
 		results.setPrefHeight(150);
 		results.setMaxWidth(540);
-		results.getColumns().add(column("Name", 260, StoredFile::name));
-		results.getColumns().add(column("Drive", 190, StoredFile::ownerScope));
-		results.getColumns().add(column("", 70, FileHistoryText::status));
+		results.getColumns().add(column("Name", 200, result -> result.file().name()));
+		results.getColumns().add(column("Drive", 250, FileSearchResult::driveLabel));
+		results.getColumns().add(column("", 65, result -> FileHistoryText.status(result.file())));
 		results.getSelectionModel().selectedItemProperty()
-				.addListener((observable, previous, file) -> showHistory(file));
+				.addListener((observable, previous, result) -> showHistory(result));
 
 		history.setPlaceholder(new Label("Select a file to see its history"));
 		history.setPrefHeight(230);
@@ -123,13 +123,13 @@ public final class FileHistoryPanel {
 				}));
 	}
 
-	private void showHistory(StoredFile file) {
+	private void showHistory(FileSearchResult result) {
 		history.getItems().clear();
-		if (file == null || historyUseCase == null) {
+		if (result == null || historyUseCase == null) {
 			return;
 		}
 		status.setText("Loading history...");
-		CompletableFuture.supplyAsync(() -> historyUseCase.historyOf(file.fileId()))
+		CompletableFuture.supplyAsync(() -> historyUseCase.historyOf(result.file().fileId()))
 				.whenComplete((loaded, error) -> Platform.runLater(() -> {
 					if (error != null) {
 						status.setText("Could not load the history: " + rootMessage(error));
@@ -150,9 +150,9 @@ public final class FileHistoryPanel {
 		return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
 	}
 
-	private static TableColumn<StoredFile, String> column(String title, double width,
-			Function<StoredFile, String> text) {
-		TableColumn<StoredFile, String> column = new TableColumn<>(title);
+	private static TableColumn<FileSearchResult, String> column(String title, double width,
+			Function<FileSearchResult, String> text) {
+		TableColumn<FileSearchResult, String> column = new TableColumn<>(title);
 		column.setPrefWidth(width);
 		column.setSortable(false);
 		column.setCellValueFactory(cell -> new ReadOnlyStringWrapper(text.apply(cell.getValue())));
