@@ -13,6 +13,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 
@@ -25,11 +26,11 @@ public final class SessionHeaderPanel {
 
 	private final Consumer<WorkspaceUser> onUserSelected;
 
-	private final Label workingAs = new Label("Working as");
+	private final Label workingAs = new Label("Working as:");
 	private final ComboBox<WorkspaceUser> userPicker = new ComboBox<>();
 	private final Label fixedUser = new Label();
 	private final Label status = new Label();
-	private final HBox root;
+	private final VBox root;
 
 	private boolean silent;
 
@@ -43,8 +44,10 @@ public final class SessionHeaderPanel {
 
 		Label title = new Label("Google Drive Backup");
 		title.getStyleClass().add("subtitle");
+		title.setStyle("-fx-font-weight: bold;");
 		workingAs.getStyleClass().add("scope");
 		userPicker.setPromptText("Select Workspace user");
+		userPicker.setMaxWidth(Double.MAX_VALUE);
 		userPicker.setCellFactory(view -> userCell());
 		userPicker.setButtonCell(userCell());
 		userPicker.setOnAction(event -> {
@@ -55,15 +58,26 @@ public final class SessionHeaderPanel {
 		});
 		fixedUser.getStyleClass().add("status");
 		status.getStyleClass().add("status");
-		Region spacer = new Region();
-		HBox.setHgrow(spacer, Priority.ALWAYS);
 		Button signOut = new Button("Sign out");
 		signOut.getStyleClass().add("secondary-button");
 		signOut.setOnAction(event -> onSignOut.run());
+		for (Label label : List.of(title, workingAs, status, fixedUser)) {
+			label.setMinWidth(Region.USE_PREF_SIZE);
+		}
+		signOut.setMinWidth(Region.USE_PREF_SIZE);
 
-		root = new HBox(12, title, workingAs, userPicker, fixedUser, status, spacer, signOut);
-		root.setAlignment(Pos.CENTER_LEFT);
-		root.setPadding(new Insets(8, 12, 8, 12));
+		// Two rows so nothing is truncated at the minimum window width: identity and session on top, user below.
+		Region spacer = new Region();
+		HBox.setHgrow(spacer, Priority.ALWAYS);
+		HBox sessionRow = new HBox(12, title, spacer, status, signOut);
+		sessionRow.setAlignment(Pos.CENTER_LEFT);
+		HBox.setHgrow(userPicker, Priority.ALWAYS);
+		HBox.setHgrow(fixedUser, Priority.ALWAYS);
+		HBox userRow = new HBox(8, workingAs, userPicker, fixedUser);
+		userRow.setAlignment(Pos.CENTER_LEFT);
+
+		root = new VBox(8, sessionRow, userRow);
+		root.setPadding(new Insets(10, 12, 10, 12));
 		root.setStyle("-fx-background-color: white; -fx-border-color: #dadce0; -fx-border-width: 0 0 1 0;");
 		clearUsers();
 		hide();
