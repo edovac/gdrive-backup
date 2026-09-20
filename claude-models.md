@@ -86,7 +86,6 @@ Legend:
 | Task | Model | Rationale |
 |---|---|---|
 | **History view (`file_events` + `file_versions`)** | 🟢 | Read-only queries against an existing schema plus a list/detail view; well specified in the requirements. |
-| **Scheduled unattended backups** | 🧭 | Scheduling interacts with cancellation, recovery and a desktop app that may be closed. Settle the lifecycle in plan mode before writing `@Scheduled` code. |
 
 ### P3 — delivery and UX refinements
 

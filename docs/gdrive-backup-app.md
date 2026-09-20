@@ -27,6 +27,8 @@ Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
 Last reviewed: 2026-09-20
 
+Scheduled unattended backups are out of scope: every backup is started manually by the admin.
+
 ### Completed
 
 - [x] Spring Boot and JavaFX application startup, including Spring context loading.
@@ -205,7 +207,6 @@ Last reviewed: 2026-09-20
 ### Not started
 
 - [ ] History view for file events and captures.
-- [ ] Scheduled unattended backups.
 - [ ] Windows packaging with `jpackage` and clean-machine verification.
 - [x] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common `SessionHeaderPanel` (selected Workspace user, status, sign-out) above three tabs — Backup, Archives (own `OperationProgressPanel`), Technical info (`TechnicalInfoPanel`, on-demand cards). Unit tests pass and the flows were checked by hand against a real account.
 
@@ -253,7 +254,6 @@ requirements below as the source of truth for expected behavior.
 **P2 — operational improvements**
 
 - History view.
-- Scheduled unattended backups.
 
 **P3 — delivery and UX refinements**
 
@@ -262,7 +262,7 @@ requirements below as the source of truth for expected behavior.
 
 Implementation sequence: runtime location selection; backup-job options and
 state; drive scope selection; progress/cancellation/recovery; per-drive archive
-packaging; partial-failure summary and history; scheduling; UI redesign and
+packaging; partial-failure summary and history; UI redesign and
 Windows packaging.
 
 ---
@@ -520,7 +520,6 @@ This is what actually performs the org-wide backup sweep.
 | OAuth loopback flow | `google-oauth-client-jetty` or a manual local HTTP listener |
 | Backoff/retry | `google-http-client`'s `ExponentialBackOff` |
 | Local DB | `org.xerial:sqlite-jdbc`, optionally Spring Data JPA on top |
-| Scheduling | Spring `@Scheduled`, or Quartz if cron-like flexibility is needed |
 | UI | JavaFX (+ `javafx-weaver` for Spring DI into controllers) |
 | Credential storage | `com.microsoft.credentialstorage` (Windows Credential Manager) or JNA |
 | Logging | SLF4J + Logback |
@@ -1038,9 +1037,8 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
    step 1's fetch code).
 6. Backup options (full/incremental), progress UI,
    archive packaging, and history view.
-7. `@Scheduled` job for unattended runs.
-8. Low-priority JavaFX layout analysis and three-panel redesign.
-9. `jpackage` → Windows installer; test on a clean machine without a
+7. Low-priority JavaFX layout analysis and three-panel redesign.
+8. `jpackage` → Windows installer; test on a clean machine without a
    preinstalled JDK.
 
 ---
