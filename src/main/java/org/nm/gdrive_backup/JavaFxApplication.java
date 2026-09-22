@@ -144,7 +144,7 @@ public class JavaFxApplication extends Application {
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
 			DriveReadPort readPort, WorkspaceUserListingUseCase workspaceUserUseCase,
 			DriveUsageQuotaUseCase usageQuotaUseCase, WorkspaceUsageReportUseCase usageReportUseCase,
-			CloudQuotaLimitUseCase cloudQuotaUseCase, DriveBackupUseCase backupUseCase, String userEmail) {
+			CloudQuotaLimitUseCase cloudQuotaUseCase, DriveBackupUseCase backupUseCase) {
 		serviceAccountUseCase = authenticationUseCase;
 		driveReadPort = readPort;
 		workspaceUserListingUseCase = workspaceUserUseCase;
@@ -152,7 +152,6 @@ public class JavaFxApplication extends Application {
 		workspaceUsageReportUseCase = usageReportUseCase;
 		cloudQuotaLimitUseCase = cloudQuotaUseCase;
 		driveBackupUseCase = backupUseCase;
-		previewUserEmail = userEmail;
 	}
 
 	@Override
@@ -329,6 +328,7 @@ public class JavaFxApplication extends Application {
 						return;
 					}
 					session = loginSession;
+					previewUserEmail = loginSession.userEmail();
 					connectionStatus.setText("");
 					header.show();
 					header.setStatus("Google connected");
@@ -345,6 +345,7 @@ public class JavaFxApplication extends Application {
 			loginUseCase.logout(session);
 			session = null;
 		}
+		previewUserEmail = null;
 		header.hide();
 		driveStatus.setText("");
 		hide(syncNow);
@@ -470,7 +471,7 @@ public class JavaFxApplication extends Application {
 			driveItems.getItems().clear();
 			driveItems.setVisible(false);
 			driveItems.setManaged(false);
-			status.setText("Google connected, Drive preview unavailable. Configure GOOGLE_IMPERSONATED_USER.");
+			status.setText("Google connected, Drive preview unavailable. Configure GOOGLE_SERVICE_ACCOUNT_KEY.");
 			return;
 		}
 		status.setText("Loading available drives for " + selectedUserEmail + "...");

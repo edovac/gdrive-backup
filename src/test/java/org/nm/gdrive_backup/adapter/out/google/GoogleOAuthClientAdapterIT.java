@@ -23,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class GoogleOAuthClientAdapterIT {
 
 	private static final String DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+	private static final String EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email";
+	private static final String OPENID_SCOPE = "openid";
 	private static final String CLIENT_SECRETS_ENV = "GOOGLE_OAUTH_CLIENT_SECRETS";
 
 	@Test
@@ -47,8 +49,12 @@ class GoogleOAuthClientAdapterIT {
 
 			assertNotNull(session.sessionId());
 			assertFalse(session.isExpired(Instant.now()));
-			assertEquals(1, session.scopes().size());
+			assertEquals(3, session.scopes().size());
 			assertTrue(session.scopes().contains(DRIVE_READONLY_SCOPE));
+			assertTrue(session.scopes().contains(OPENID_SCOPE));
+			assertTrue(session.scopes().contains(EMAIL_SCOPE));
+			assertNotNull(session.userEmail());
+			assertFalse(session.userEmail().isBlank());
 
 			loginService.logout(session);
 		}

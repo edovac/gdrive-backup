@@ -7,7 +7,8 @@ import java.util.UUID;
 public record GoogleLoginSession(
 		UUID sessionId,
 		Instant expiresAt,
-		Set<String> scopes) {
+		Set<String> scopes,
+		String userEmail) {
 
 	public GoogleLoginSession {
 		if (sessionId == null) {
@@ -18,6 +19,9 @@ public record GoogleLoginSession(
 		}
 		if (scopes == null || scopes.isEmpty()) {
 			throw new IllegalArgumentException("scopes must not be empty");
+		}
+		if (userEmail == null || userEmail.isBlank()) {
+			throw new IllegalArgumentException("userEmail must not be blank");
 		}
 		scopes = Set.copyOf(scopes);
 	}

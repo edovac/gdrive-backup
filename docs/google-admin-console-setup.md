@@ -4,10 +4,14 @@ This guide configures the service account used by the application to preview and
 
 The application uses two separate authentication paths:
 
-- OAuth login: unlocks the admin UI with `drive.readonly` access.
+- OAuth login: unlocks the admin UI with `drive.readonly` access, plus `openid`
+	and `email` so the application can read the signed-in administrator's email
+	address from the returned ID token. That address becomes the default
+	preview user and the identity the service account impersonates for Admin
+	SDK calls (Workspace user listing) — no separate configuration names it.
 - Service account with domain-wide delegation: accesses Drive data while impersonating Workspace users.
 
-The service-account path requires a Google Workspace organization. It cannot impersonate personal Gmail accounts such as `user@gmail.com`.
+The service-account path requires a Google Workspace organization. It cannot impersonate personal Gmail accounts such as `user@gmail.com`. The signed-in OAuth user must therefore be a real Workspace account in that organization, not a personal Gmail account, or Workspace user listing and Drive preview will fail.
 
 ## 1. Create or select a Google Cloud project
 
@@ -39,8 +43,8 @@ Drive API and does not require these additional APIs.
 
 ## 3. Configure OAuth login
 
-OAuth login unlocks the application UI for the administrator. It uses only the
-read-only Drive scope and does not provide domain-wide impersonation.
+OAuth login unlocks the application UI for the administrator and identifies
+who signed in. It does not provide domain-wide impersonation.
 
 ### Configure the OAuth consent screen
 
@@ -48,11 +52,18 @@ read-only Drive scope and does not provide domain-wide impersonation.
 2. Choose **Internal** if the Cloud project belongs to a Google Workspace organization.
 	Choose **External** for testing with a personal Google account.
 3. Enter the application name and support information.
-4. Add this scope:
+4. Add these scopes:
 
 ```text
 https://www.googleapis.com/auth/drive.readonly
+openid
+https://www.googleapis.com/auth/userinfo.email
 ```
+
+`openid` and the email scope are non-sensitive scopes; adding them does not
+require Google's sensitive-scope verification review. They let the
+application read the signed-in user's email address from the ID token
+Google returns alongside the access token, with no extra API call.
 
 5. If the application is configured as **External**, add the account used for
 	testing under **Test users**.
@@ -168,23 +179,23 @@ account's own project credentials. These project-level calls are separate from
 the delegated Workspace calls and should not be made by impersonating a
 Workspace user.
 
-## 8. Choose an impersonated Workspace user
+## 8. Sign in as the impersonated Workspace user
 
-The service account can impersonate only an account in the Workspace domain that authorized the delegation.
+The service account can impersonate only an account in the Workspace domain that authorized the delegation. There is no separate configuration step for this: whoever signs in through the OAuth login in step 3 becomes that identity, since the application reads their email address from the OAuth ID token and uses it both as the default Drive preview user and as the identity impersonated for Admin SDK calls (Workspace user listing).
 
-Use a real Workspace user, for example:
+Sign in with a real Workspace user, for example:
 
 ```text
 admin@your-workspace-domain.com
 ```
 
-Do not use a personal Gmail account such as:
+Do not sign in with a personal Gmail account such as:
 
 ```text
 user@gmail.com
 ```
 
-The impersonated user must have access to the Drive data that the application is expected to preview. For organization-wide backup, the service account uses domain-wide delegation to impersonate each Workspace user as required by the backup workflow.
+The signed-in user must have access to the Drive data that the application is expected to preview, and must be a Workspace admin for Workspace user listing to work (a non-admin sign-in still works for previewing and backing up that user's own Drive and any Shared Drives they can see). For organization-wide backup, the service account uses domain-wide delegation to impersonate each Workspace user as required by the backup workflow, independent of who is signed in.
 
 ## 9. Configure the application
 
@@ -192,7 +203,6 @@ Set the following environment variables before starting the application:
 
 ```bash
 export GOOGLE_SERVICE_ACCOUNT_KEY=/home/edoardo/gdrive-service-account.json
-export GOOGLE_IMPERSONATED_USER=admin@your-workspace-domain.com
 export GOOGLE_CLOUD_PROJECT_ID=your-cloud-project-id
 ```
 
@@ -201,6 +211,9 @@ The OAuth UI login also requires a desktop OAuth client-secrets file:
 ```bash
 export GOOGLE_OAUTH_CLIENT_SECRETS=/home/edoardo/client_secret.json
 ```
+
+There is no environment variable for the impersonated/preview user: it is
+derived from whoever signs in through the OAuth login (step 8 above).
 
 Start the application:
 
@@ -213,7 +226,6 @@ Or provide the values for one command:
 ```bash
 GOOGLE_OAUTH_CLIENT_SECRETS=/home/edoardo/client_secret.json \
 GOOGLE_SERVICE_ACCOUNT_KEY=/home/edoardo/gdrive-service-account.json \
-GOOGLE_IMPERSONATED_USER=admin@your-workspace-domain.com \
 GOOGLE_CLOUD_PROJECT_ID=your-cloud-project-id \
 ./mvnw spring-boot:run
 ```
@@ -228,7 +240,7 @@ After signing in through the UI:
 
 If the UI shows `Google connected, Drive preview unavailable`, check:
 
-1. `GOOGLE_IMPERSONATED_USER` is a Workspace account, not a personal Gmail account.
+1. The signed-in Google account is a Workspace account, not a personal Gmail account.
 2. The service-account key belongs to the Cloud project where delegation was configured.
 3. The Admin Console authorization uses the service account's OAuth 2 Client ID.
 4. Both scopes are authorized exactly as shown above.

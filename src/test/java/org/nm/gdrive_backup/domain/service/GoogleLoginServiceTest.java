@@ -44,7 +44,7 @@ class GoogleLoginServiceTest {
 
 	private static GoogleLoginSession session() {
 		return new GoogleLoginSession(UUID.randomUUID(), Instant.now().plusSeconds(300),
-				Set.of("https://www.googleapis.com/auth/drive.readonly"));
+				Set.of("https://www.googleapis.com/auth/drive.readonly"), "admin@example.com");
 	}
 
 	private static final class FakeGoogleOAuthPort implements GoogleOAuthPort {

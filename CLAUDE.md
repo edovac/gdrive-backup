@@ -48,8 +48,9 @@ Configuration comes from environment variables bound through Spring relaxed bind
 |---|---|---|
 | `GOOGLE_OAUTH_CLIENT_SECRETS` | `google.oauth.client-secrets` | Sign-in fails with a "not configured" message |
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | `google.service-account.key` | All Google-backed beans are replaced by fallbacks (see below) |
-| `GOOGLE_IMPERSONATED_USER` | `google.drive.preview.user-email` | No user listing and no default preview user; this admin identity is impersonated for Admin SDK calls |
 | `GOOGLE_CLOUD_PROJECT_ID` | `google.service-account.project-id` | Cloud quota limits unavailable |
+
+There is no env var for the impersonated/preview user. OAuth login requests `openid` and the email scope alongside `drive.readonly`; the admin's email comes back in the ID token and is impersonated for Admin SDK calls and used as the default preview user (see `GoogleOAuthClientAdapter`, `GoogleLoginSession.userEmail()`).
 
 The backup location is deliberately not configurable through the environment. Every launch starts with `~/.gdrive-backup` as the single root for the backup history database (`backup.db`), the archive output, and the admin changes it for the current session in the UI through `BackupLocationUseCase`. There is no separate database-location setting — `backup.db` always lives inside the chosen root.
 

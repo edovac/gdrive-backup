@@ -25,7 +25,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-20
+Last reviewed: 2026-09-22
 
 Scheduled unattended backups are out of scope: every backup is started manually by the admin.
 
@@ -503,10 +503,18 @@ This is what actually performs the org-wide backup sweep.
 
 ### 2. OAuth login (admin UI access gate + preview)
 
-- Standard installed-app OAuth flow (loopback redirect), scope
-  `drive.readonly`.
-- Purpose is **narrow**: sign in to unlock the admin UI. It is *not* the data
-  path for previewing other users' files.
+- Standard installed-app OAuth flow (loopback redirect), scopes
+  `drive.readonly`, `openid`, and the email scope
+  (`https://www.googleapis.com/auth/userinfo.email`). `openid`/email are
+  non-sensitive scopes, so adding them doesn't require Google's
+  sensitive-scope verification review.
+- Purpose is **narrow**: sign in to unlock the admin UI, and identify who
+  signed in. It is *not* the data path for previewing other users' files.
+- The email address is read from the ID token Google returns alongside the
+  access token (no extra API call) and becomes the default preview user and
+  the identity the service account impersonates for Admin SDK calls
+  (Workspace user listing). There is no separate configuration for this
+  identity — whoever signs in is who gets impersonated for those calls.
 - The actual "preview a user's Drive" feature reuses the **service account +
   impersonation** path (pick an org user → impersonate → browse) so there's
   only one Drive-fetching code path shared between backend sweep and UI

@@ -3,6 +3,8 @@ package org.nm.gdrive_backup.adapter.out.google;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleTokenResponse;
 import com.google.api.client.http.GenericUrl;
 import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpRequestFactory;
@@ -27,6 +29,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 
 	private static final String DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+	private static final String OPENID_SCOPE = "openid";
+	private static final String EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email";
+	private static final Set<String> LOGIN_SCOPES = Set.of(DRIVE_READONLY_SCOPE, OPENID_SCOPE, EMAIL_SCOPE);
 	private static final String REVOCATION_URL = "https://oauth2.googleapis.com/revoke";
 	private static final JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
 
@@ -47,7 +52,7 @@ public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 					httpTransport,
 					JSON_FACTORY,
 					clientSecrets,
-					Set.of(DRIVE_READONLY_SCOPE))
+					LOGIN_SCOPES)
 					.setAccessType("offline")
 					.setDataStoreFactory(new MemoryDataStoreFactory())
 					.build();
@@ -63,13 +68,14 @@ public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 				throw new GoogleOAuthException("Google login cancelled");
 			}
 			String authorizationCode = receiver.waitForCode();
-			Credential credential = flow.createAndStoreCredential(
-					flow.newTokenRequest(authorizationCode)
-							.setRedirectUri(redirectUri)
-							.execute(), userId);
+			GoogleTokenResponse tokenResponse = flow.newTokenRequest(authorizationCode)
+					.setRedirectUri(redirectUri)
+					.execute();
+			Credential credential = flow.createAndStoreCredential(tokenResponse, userId);
 			UUID sessionId = UUID.randomUUID();
 			credentials.put(sessionId, credential);
-			return new GoogleLoginSession(sessionId, expirationOf(credential), Set.of(DRIVE_READONLY_SCOPE));
+			return new GoogleLoginSession(sessionId, expirationOf(credential), LOGIN_SCOPES,
+					emailOf(tokenResponse));
 		} catch (IOException exception) {
 			throw new GoogleOAuthException("Google authentication failed", exception);
 		} finally {
@@ -108,5 +114,24 @@ public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 	private static Instant expirationOf(Credential credential) {
 		Long expiration = credential.getExpirationTimeMilliseconds();
 		return expiration == null ? Instant.MAX : Instant.ofEpochMilli(expiration);
+	}
+
+	/**
+	 * Reads the signed-in user's email from the ID token issued alongside the access token (the
+	 * {@code openid}/{@code email} scopes). The ID token is parsed without signature verification:
+	 * it arrives directly from Google's token endpoint over TLS in this back-channel exchange,
+	 * never through a browser redirect, so it does not need the additional verification a
+	 * redirect-delivered ID token would.
+	 */
+	private static String emailOf(GoogleTokenResponse tokenResponse) throws IOException {
+		GoogleIdToken idToken = tokenResponse.parseIdToken();
+		if (idToken == null) {
+			throw new GoogleOAuthException("Google did not return an ID token; the email scope may be missing");
+		}
+		String email = idToken.getPayload().getEmail();
+		if (email == null || email.isBlank()) {
+			throw new GoogleOAuthException("Google did not return an email address for the signed-in user");
+		}
+		return email;
 	}
 }
