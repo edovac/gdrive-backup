@@ -2,7 +2,9 @@ package org.nm.gdrive_backup.adapter.out.google;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.nm.gdrive_backup.adapter.out.credentialstorage.InMemoryCredentialStorageAdapter;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
+import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 
 import java.nio.file.Path;
 
@@ -22,7 +24,9 @@ class GoogleServiceAccountAdapterIT {
 		String keyPath = requiredEnvironment(KEY_ENV);
 		String userEmail = requiredEnvironment(USER_ENV);
 
-		ServiceAccountAccess access = new GoogleServiceAccountAdapter(Path.of(keyPath))
+		CredentialStoragePort credentialStoragePort = new InMemoryCredentialStorageAdapter();
+		credentialStoragePort.importServiceAccountKeyFile(Path.of(keyPath));
+		ServiceAccountAccess access = new GoogleServiceAccountAdapter(credentialStoragePort)
 				.authenticateAs(userEmail);
 
 		assertNotNull(access.accessId());

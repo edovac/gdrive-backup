@@ -7,6 +7,7 @@ import com.tngtech.archunit.core.importer.ImportOption.DoNotIncludeTests;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
+import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 import org.nm.gdrive_backup.domain.port.out.GoogleOAuthPort;
 import org.nm.gdrive_backup.domain.port.out.ServiceAccountCredentialPort;
@@ -87,6 +88,12 @@ class HexagonalArchitectureTest {
 			.should().haveSimpleNameEndingWith("Adapter");
 
 	@ArchTest
+	static final ArchRule credential_storage_adapters_are_named_as_adapters = classes()
+			.that().resideInAnyPackage("..adapter..")
+			.and().implement(CredentialStoragePort.class)
+			.should().haveSimpleNameEndingWith("Adapter");
+
+	@ArchTest
 	static final ArchRule workspace_directory_adapters_are_named_as_adapters = classes()
 			.that().resideInAnyPackage("..adapter..")
 			.and().implement(WorkspaceUserDirectoryPort.class)
@@ -97,8 +104,11 @@ class HexagonalArchitectureTest {
 			.that().areAnnotatedWith(Configuration.class)
 			.should().haveSimpleNameEndingWith("Configuration");
 
+	// allowEmptyShould: no @ConfigurationProperties classes exist right now (credentials moved to
+	// CredentialStoragePort), but the naming convention should still be enforced if one returns.
 	@ArchTest
 	static final ArchRule spring_property_classes_have_conventional_names = classes()
 			.that().areAnnotatedWith(ConfigurationProperties.class)
-			.should().haveSimpleNameEndingWith("Properties");
+			.should().haveSimpleNameEndingWith("Properties")
+			.allowEmptyShould(true);
 }

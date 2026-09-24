@@ -4,12 +4,12 @@ import com.google.auth.oauth2.AccessToken;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auth.oauth2.ServiceAccountCredentials;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
+import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 import org.nm.gdrive_backup.domain.port.out.ServiceAccountCredentialPort;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
@@ -30,19 +30,27 @@ public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort
 			DRIVE_READONLY_SCOPE,
 			DIRECTORY_USER_READONLY_SCOPE);
 
-	private final ServiceAccountCredentials serviceAccountCredentials;
+	private final CredentialStoragePort credentialStoragePort;
 	private final Map<UUID, GoogleCredentials> credentials = new ConcurrentHashMap<>();
 
-	public GoogleServiceAccountAdapter(Path keyPath) throws IOException {
-		try (InputStream key = Files.newInputStream(keyPath)) {
-			this.serviceAccountCredentials = ServiceAccountCredentials.fromStream(key);
+	public GoogleServiceAccountAdapter(CredentialStoragePort credentialStoragePort) {
+		this.credentialStoragePort = credentialStoragePort;
+	}
+
+	private ServiceAccountCredentials loadCredentials() {
+		String json = credentialStoragePort.serviceAccountKeyJson().orElseThrow(() -> new GoogleOAuthException(
+				"Google service-account authentication is not configured. Import a service-account key in Settings."));
+		try {
+			return ServiceAccountCredentials.fromStream(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
+		} catch (IOException | RuntimeException exception) {
+			throw new GoogleOAuthException("Unable to load Google service-account key", exception);
 		}
 	}
 
 	@Override
 	public ServiceAccountAccess authenticateAs(String userEmail) {
 		try {
-			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) serviceAccountCredentials
+			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) loadCredentials()
 					.createScoped(SCOPES);
 			GoogleCredentials delegatedCredentials = scopedCredentials.createDelegated(userEmail);
 			delegatedCredentials.refreshIfExpired();
@@ -77,7 +85,7 @@ public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort
 			throw new IllegalArgumentException("access must not be null");
 		}
 		try {
-			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) serviceAccountCredentials
+			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) loadCredentials()
 					.createScoped(Set.of(REPORTS_USAGE_READONLY_SCOPE));
 			GoogleCredentials delegatedCredentials = scopedCredentials.createDelegated(access.impersonatedUserEmail());
 			delegatedCredentials.refreshIfExpired();
@@ -89,7 +97,7 @@ public class GoogleServiceAccountAdapter implements ServiceAccountCredentialPort
 
 	GoogleCredentials cloudCredentials() {
 		try {
-			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) serviceAccountCredentials
+			ServiceAccountCredentials scopedCredentials = (ServiceAccountCredentials) loadCredentials()
 					.createScoped(Set.of(CLOUD_PLATFORM_SCOPE));
 			scopedCredentials.refreshIfExpired();
 			return scopedCredentials;

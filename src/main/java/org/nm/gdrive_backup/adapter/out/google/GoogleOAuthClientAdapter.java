@@ -16,10 +16,11 @@ import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.util.store.MemoryDataStoreFactory;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
 import org.nm.gdrive_backup.domain.port.in.GoogleAuthorizationApproval;
+import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 import org.nm.gdrive_backup.domain.port.out.GoogleOAuthPort;
 
 import java.io.IOException;
-import java.io.Reader;
+import java.io.StringReader;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
@@ -36,12 +37,22 @@ public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 	private static final JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
 
 	private final HttpTransport httpTransport;
-	private final GoogleClientSecrets clientSecrets;
+	private final CredentialStoragePort credentialStoragePort;
 	private final Map<UUID, Credential> credentials = new ConcurrentHashMap<>();
 
-	public GoogleOAuthClientAdapter(HttpTransport httpTransport, Reader clientSecretsReader) throws IOException {
+	public GoogleOAuthClientAdapter(HttpTransport httpTransport, CredentialStoragePort credentialStoragePort) {
 		this.httpTransport = httpTransport;
-		this.clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, clientSecretsReader);
+		this.credentialStoragePort = credentialStoragePort;
+	}
+
+	private GoogleClientSecrets loadClientSecrets() {
+		String json = credentialStoragePort.oauthClientSecretsJson().orElseThrow(() -> new GoogleOAuthException(
+				"Google OAuth is not configured. Import client secrets in Settings."));
+		try {
+			return GoogleClientSecrets.load(JSON_FACTORY, new StringReader(json));
+		} catch (IOException | RuntimeException exception) {
+			throw new GoogleOAuthException("Unable to load Google OAuth client secrets", exception);
+		}
 	}
 
 	@Override
@@ -51,7 +62,7 @@ public class GoogleOAuthClientAdapter implements GoogleOAuthPort {
 			GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
 					httpTransport,
 					JSON_FACTORY,
-					clientSecrets,
+					loadClientSecrets(),
 					LOGIN_SCOPES)
 					.setAccessType("offline")
 					.setDataStoreFactory(new MemoryDataStoreFactory())

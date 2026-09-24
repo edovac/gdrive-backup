@@ -9,6 +9,7 @@ import com.google.api.services.serviceusage.v1.model.QuotaLimit;
 import com.google.auth.http.HttpCredentialsAdapter;
 import org.nm.gdrive_backup.domain.model.CloudQuotaLimit;
 import org.nm.gdrive_backup.domain.port.out.CloudQuotaLimitPort;
+import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -23,17 +24,19 @@ public class GoogleCloudQuotaLimitAdapter implements CloudQuotaLimitPort {
 	private static final String FIELDS = "name,config(title,quota(limits(metric,displayName,defaultLimit,maxLimit,unit)))";
 
 	private final GoogleServiceAccountAdapter credentialAdapter;
-	private final String projectId;
+	private final CredentialStoragePort credentialStoragePort;
 
-	public GoogleCloudQuotaLimitAdapter(GoogleServiceAccountAdapter credentialAdapter, String projectId) {
+	public GoogleCloudQuotaLimitAdapter(GoogleServiceAccountAdapter credentialAdapter,
+			CredentialStoragePort credentialStoragePort) {
 		this.credentialAdapter = credentialAdapter;
-		this.projectId = projectId;
+		this.credentialStoragePort = credentialStoragePort;
 	}
 
 	@Override
 	public List<CloudQuotaLimit> listQuotaLimits() {
+		String projectId = credentialStoragePort.projectId().orElse(null);
 		if (projectId == null || projectId.isBlank()) {
-			throw new GoogleOAuthException("Google Cloud project ID is not configured. Set GOOGLE_CLOUD_PROJECT_ID.");
+			throw new GoogleOAuthException("Google Cloud project ID is not configured. Set it in Settings.");
 		}
 		try {
 			ServiceUsage serviceUsage = serviceUsage();

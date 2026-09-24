@@ -9,8 +9,10 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.nm.gdrive_backup.adapter.out.credentialstorage.InMemoryCredentialStorageAdapter;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.WorkspaceUser;
+import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 
 @EnabledIfSystemProperty(named = "google.service-account.integration", matches = "true")
 class GoogleWorkspaceUserDirectoryAdapterIT {
@@ -23,7 +25,9 @@ class GoogleWorkspaceUserDirectoryAdapterIT {
 		String keyPath = requiredEnvironment(KEY_ENV);
 		String userEmail = requiredEnvironment(USER_ENV);
 
-		GoogleServiceAccountAdapter credentialAdapter = new GoogleServiceAccountAdapter(Path.of(keyPath));
+		CredentialStoragePort credentialStoragePort = new InMemoryCredentialStorageAdapter();
+		credentialStoragePort.importServiceAccountKeyFile(Path.of(keyPath));
+		GoogleServiceAccountAdapter credentialAdapter = new GoogleServiceAccountAdapter(credentialStoragePort);
 		ServiceAccountAccess access = credentialAdapter.authenticateAs(userEmail);
 		List<WorkspaceUser> users = new GoogleWorkspaceUserDirectoryAdapter(credentialAdapter).listUsers(access);
 

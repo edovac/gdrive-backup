@@ -5,6 +5,7 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Alert;
@@ -19,6 +20,7 @@ import javafx.scene.control.cell.CheckBoxListCell;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -37,6 +39,7 @@ import org.nm.gdrive_backup.adapter.in.javafx.BackupSummaryText;
 import org.nm.gdrive_backup.adapter.in.javafx.FileHistoryPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.OperationProgressPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.SessionHeaderPanel;
+import org.nm.gdrive_backup.adapter.in.javafx.SettingsPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.TechnicalInfoPanel;
 import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
@@ -53,6 +56,7 @@ import org.nm.gdrive_backup.domain.model.BackupLocation;
 import org.nm.gdrive_backup.domain.model.LocationStatus;
 import org.nm.gdrive_backup.domain.model.LocationValidation;
 import org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase;
+import org.nm.gdrive_backup.domain.port.in.CredentialConfigurationUseCase;
 
 import java.awt.Desktop;
 import java.io.File;
@@ -81,6 +85,7 @@ public class JavaFxApplication extends Application {
 	private static DriveBackupUseCase driveBackupUseCase;
 	private static String previewUserEmail;
 	private static BackupLocationUseCase backupLocationUseCase;
+	private static CredentialConfigurationUseCase credentialConfigurationUseCase;
 	private static BackupProgressPort backupProgressPort;
 	private static BackupCancellationUseCase backupCancellationUseCase;
 	private static ArchiveCatalogUseCase archiveCatalogUseCase;
@@ -109,6 +114,7 @@ public class JavaFxApplication extends Application {
 	private OperationProgressPanel archiveProgressPanel;
 	private ArchiveManagerPanel archiveManagerPanel;
 	private FileHistoryPanel fileHistoryPanel;
+	private SettingsPanel settingsPanel;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
 		springContext = context;
@@ -120,6 +126,10 @@ public class JavaFxApplication extends Application {
 
 	static void setBackupLocationUseCase(BackupLocationUseCase useCase) {
 		backupLocationUseCase = useCase;
+	}
+
+	static void setCredentialConfigurationUseCase(CredentialConfigurationUseCase useCase) {
+		credentialConfigurationUseCase = useCase;
 	}
 
 	static void setBackupProgress(BackupProgressPort progressPort) {
@@ -193,15 +203,38 @@ public class JavaFxApplication extends Application {
 		connectionStatus.setMaxWidth(540);
 		signIn.getStyleClass().add("primary-button");
 		signIn.setOnAction(event -> authenticate());
-		VBox box = new VBox(12, title, subtitle, signIn, scope, connectionStatus);
+		Button settingsButton = new Button("Settings");
+		settingsButton.getStyleClass().add("secondary-button");
+		settingsButton.setOnAction(event -> showSettings());
+		VBox box = new VBox(12, title, subtitle, signIn, settingsButton, scope, connectionStatus);
 		box.setAlignment(Pos.CENTER);
 		return box;
+	}
+
+	/** Opens the credential/project-id Settings screen as a modal dialog, reachable signed in or out. */
+	private void showSettings() {
+		if (credentialConfigurationUseCase == null) {
+			return;
+		}
+		if (settingsPanel == null) {
+			settingsPanel = new SettingsPanel(credentialConfigurationUseCase);
+		} else {
+			settingsPanel.refresh();
+		}
+		Stage dialog = new Stage();
+		dialog.initModality(Modality.APPLICATION_MODAL);
+		dialog.initOwner(root.getScene().getWindow());
+		dialog.setTitle("Settings");
+		Scene scene = new Scene((Parent) scrollable(settingsPanel.node()), 480, 440);
+		scene.getStylesheets().add("/login.css");
+		dialog.setScene(scene);
+		dialog.showAndWait();
 	}
 
 	/** Builds the signed-in window: the common header above the Backup, Archives and Technical info tabs. */
 	private void buildMainView() {
 		loginView = buildLoginView();
-		header = new SessionHeaderPanel(user -> reloadForSelectedUser(), this::signOut);
+		header = new SessionHeaderPanel(user -> reloadForSelectedUser(), this::signOut, this::showSettings);
 		technicalInfoPanel = new TechnicalInfoPanel(serviceAccountUseCase, driveUsageQuotaUseCase,
 				workspaceUsageReportUseCase, cloudQuotaLimitUseCase, this::selectedUserEmail);
 
@@ -471,7 +504,7 @@ public class JavaFxApplication extends Application {
 			driveItems.getItems().clear();
 			driveItems.setVisible(false);
 			driveItems.setManaged(false);
-			status.setText("Google connected, Drive preview unavailable. Configure GOOGLE_SERVICE_ACCOUNT_KEY.");
+			status.setText("Google connected, Drive preview unavailable. Import a service-account key in Settings.");
 			return;
 		}
 		status.setText("Loading available drives for " + selectedUserEmail + "...");

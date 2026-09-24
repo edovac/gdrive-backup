@@ -38,8 +38,9 @@ public final class SessionHeaderPanel {
 	 * @param onUserSelected called on the FX thread when the admin picks a user; not called when the list is filled
 	 *        or cleared by {@link #setUsers} and {@link #clearUsers}, so the owner reloads explicitly in those cases
 	 * @param onSignOut called on the FX thread when the admin presses Sign out
+	 * @param onSettings called on the FX thread when the admin presses Settings
 	 */
-	public SessionHeaderPanel(Consumer<WorkspaceUser> onUserSelected, Runnable onSignOut) {
+	public SessionHeaderPanel(Consumer<WorkspaceUser> onUserSelected, Runnable onSignOut, Runnable onSettings) {
 		this.onUserSelected = onUserSelected;
 
 		Label title = new Label("Google Drive Backup");
@@ -58,18 +59,22 @@ public final class SessionHeaderPanel {
 		});
 		fixedUser.getStyleClass().add("status");
 		status.getStyleClass().add("status");
+		Button settings = new Button("Settings");
+		settings.getStyleClass().add("secondary-button");
+		settings.setOnAction(event -> onSettings.run());
 		Button signOut = new Button("Sign out");
 		signOut.getStyleClass().add("secondary-button");
 		signOut.setOnAction(event -> onSignOut.run());
 		for (Label label : List.of(title, workingAs, status, fixedUser)) {
 			label.setMinWidth(Region.USE_PREF_SIZE);
 		}
+		settings.setMinWidth(Region.USE_PREF_SIZE);
 		signOut.setMinWidth(Region.USE_PREF_SIZE);
 
 		// Two rows so nothing is truncated at the minimum window width: identity and session on top, user below.
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
-		HBox sessionRow = new HBox(12, title, spacer, status, signOut);
+		HBox sessionRow = new HBox(12, title, spacer, status, settings, signOut);
 		sessionRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(userPicker, Priority.ALWAYS);
 		HBox.setHgrow(fixedUser, Priority.ALWAYS);
