@@ -1,22 +1,23 @@
 # Windows credential storage and packaging — remaining work
 
 This documents the rest of the plan for removing `application.properties`/env-var
-configuration and shipping a Windows installer. Stages 1–4 are done (see below);
-stage 5 is Windows-only and needs a real Windows machine to build and verify, so
-it's written up here to resume in that environment. Once stage 5 lands, fold a
-short summary back into `docs/gdrive-backup-app.md`'s P3 "Windows installer and
+configuration and shipping a self-contained Windows package. Stages 1–5 are all done
+(see below); what's left is a clean-machine manual verification pass, which needs a
+second, real Windows machine and can't be done from this session. Once that's done,
+fold a short summary back into `docs/gdrive-backup-app.md`'s P3 "Windows installer and
 clean-machine verification" item and delete this file.
 
 ## Why
 
 The app moved from a dev-only `.env`/env-var setup
 (`GOOGLE_SERVICE_ACCOUNT_KEY`, `GOOGLE_OAUTH_CLIENT_SECRETS`, `GOOGLE_CLOUD_PROJECT_ID`,
-all file paths) to a packaged, personal-use Windows installer. There's no shell to
+all file paths) to a packaged, personal-use Windows distribution. There's no shell to
 export env vars from on a packaged install, and per `AGENTS.md`, credential files
 can't be stored in plain files either way. Decisions already made (see git history on
 `feature/windows` for the full discussion): secrets go into **Windows Credential
-Manager**; a **Settings modal** replaces manual file/env setup; the installer is a
-**self-contained EXE/MSI with a bundled JRE** via `jpackage`.
+Manager**; a **Settings modal** replaces manual file/env setup; the package is a
+**self-contained app-image with a bundled, trimmed JRE** via `jpackage` — not an
+installer (see stage 5 below for why).
 
 ## Done (stages 1–3)
 
@@ -102,44 +103,79 @@ Manager**; a **Settings modal** replaces manual file/env setup; the installer is
 Settings modal, restarting the app, and confirming sign-in/backup still work end to end
 (the IT covers the storage layer directly, not the UI round trip).
 
-## Stage 5 — jpackage Windows installer
+## Done (stage 5) — self-contained app-image, not an installer
 
-`pom.xml` changes:
-- Add explicit `javafx-graphics` and `javafx-base` dependencies (currently only
-  `javafx-controls`, which pulls these in transitively via its own POM — making them
-  explicit documents the real module surface for jlink/jpackage's module computation).
-- Add `org.panteleyev:jpackage-maven-plugin` (~1.8.0) — preferred over `launch4j`
-  (wraps a jar in an .exe launcher but doesn't bundle a JRE or produce an MSI) and over
-  a raw `exec-maven-plugin` invocation (this plugin gives a proper `<configuration>`
-  block integrated with the `package` phase). Configure `type=MSI` (or `EXE`),
-  `mainJar` = the Spring Boot fat jar (`${project.build.finalName}.jar`),
-  `mainClass=org.nm.gdrive_backup.GdriveBackupApplication`, `winMenu`/`winShortcut=true`,
-  bound after `spring-boot:repackage`.
-- Module list (`addModules`): compute once via
-  `jdeps --multi-release 25 --print-module-deps --ignore-missing-deps target/gdrive-backup-*.jar`
-  against the built fat jar and hardcode the result. Expect at least: `java.base`,
-  `java.desktop` (JavaFX + `java.awt.Desktop`, used by
-  `JavaFxApplication.openBrowser()`), `java.sql` (sqlite-jdbc), `java.naming`,
-  `java.management`, `java.logging`, `jdk.crypto.ec` (TLS for Google API HTTPS calls),
-  `javafx.controls`/`javafx.graphics`/`javafx.base`.
-- Scope the jpackage plugin execution to a `windows-package` Maven profile activated
-  only on Windows (`<activation><os><family>windows</family></os></activation>`), so
-  `./mvnw verify` on the existing Linux CI job (`.github/workflows/ci.yml`) is
-  unaffected — jpackage doesn't cross-compile; it bundles the *host's* own JRE/natives.
-- `org.xerial:sqlite-jdbc` already bundles its native libs inside its own jar and
-  extracts them at runtime — no special jpackage handling needed, just confirm at
-  manual-verification time.
+The original plan here was an MSI installer via `jpackage`. Building one hands-on hit
+a real blocker: MSI output needs the **WiX Toolset**, an external tool that isn't part
+of the JDK and wasn't installed. Asked whether an installer was actually required, the
+decision was to skip installers entirely and ship a **self-contained `app-image`**
+instead: a folder with a native `.exe` launcher and a bundled, trimmed JRE, buildable
+with zero extra tooling (no WiX, no Inno Setup). Distribute it by zipping the folder;
+running the `.exe` inside launches the app directly, no install step. The tradeoff is
+losing installer niceties (Start Menu entry, desktop shortcut, an Apps & Features
+uninstall entry) — revisit with WiX/Inno Setup later if that's ever worth it.
 
-**CI**: add a second job to `.github/workflows/ci.yml`, `runs-on: windows-latest`,
-running `./mvnw -B -P windows-package package` and uploading the resulting MSI/EXE via
-`actions/upload-artifact@v4` — **not** a required/blocking check, just a continuous
-"does it build" signal. Full clean-machine install/run verification stays a manual
-step; per `claude-models.md`, "verifying on a clean machine without a JDK is a manual
-step no model can do."
+- **`pom.xml`**: added explicit `javafx-graphics`/`javafx-base` dependencies (were only
+  transitive via `javafx-controls`). Added `org.panteleyev:jpackage-maven-plugin:1.8.0`
+  (preferred over `launch4j`, which doesn't bundle a JRE, and over a raw
+  `exec-maven-plugin` call). Both scoped to a `windows-package` Maven profile activated
+  only on `<os><family>windows</family></os>`, so the Linux CI job is unaffected —
+  jpackage doesn't cross-compile, it bundles the *host's* own JRE/natives.
+- **Staging** (two steps ahead of the `jpackage` execution, all bound to the `package`
+  phase so ordering follows POM declaration order after `spring-boot:repackage`):
+  - `maven-resources-plugin` copies just the repackaged fat jar into
+    `target/jpackage-input` — jpackage's `--input` directory gets copied wholesale into
+    the app image, so this avoids dragging in the much larger, mostly irrelevant rest
+    of `target/`.
+  - `maven-dependency-plugin` copies the three Windows-**classified** (`-win`) JavaFX
+    jars into `target/jpackage-modules`, given explicitly to jpackage as
+    `modulePaths`. This turned out to be necessary, not optional: `javafx-controls`
+    (and `-graphics`/`-base`) pull in a same-named `-win` classified artifact
+    transitively via their own POM's OS-activated profile, and **only the classified
+    jar has a real `module-info.class`** — the unclassified one has none. Pointing
+    jlink at `BOOT-INF/lib` (which has both) left it unable to resolve `javafx.base`/
+    `controls`/`graphics` as named modules at all (`jlink failed with: Error: Module
+    javafx.base not found`); isolating just the classified jars on their own module
+    path fixed it.
+  - `mainJar` is set to the fat jar's filename with **no `mainClass` override** —
+    jpackage reads `Main-Class` from the jar's own manifest
+    (`org.springframework.boot.loader.launch.JarLauncher`, which is what actually
+    unpacks `BOOT-INF/lib` at runtime). Setting `mainClass` directly to
+    `GdriveBackupApplication`, as the original plan sketched, would have skipped that
+    and broken the packaged app's classpath.
+- **Module list (`addModules`)**: computed by running jdeps' "print module deps" mode
+  against `BOOT-INF/classes` of the *exploded* fat jar (jdeps can't see into a Spring
+  Boot fat jar's nested `BOOT-INF/lib` when pointed at the jar directly — it silently
+  under-reports), with `BOOT-INF/lib`'s jars minus the unclassified javafx duplicates
+  on the classpath. Result: `java.base`, `java.compiler`, `java.desktop`,
+  `java.instrument`, `java.logging`, `java.management`, `java.naming`, `java.prefs`,
+  `java.scripting`, `java.security.jgss`, `java.sql`, `jdk.httpserver`, `jdk.jfr`,
+  `jdk.unsupported` — a broader, empirically-grounded set than the original guess,
+  since jdeps' recursive closure picks up optional-API references from third-party
+  libraries (Guava, gRPC, Apache HttpClient, etc.) the original plan didn't anticipate.
+  Unioned by hand with two kinds of module jdeps cannot find by static analysis alone:
+  `javafx.base`/`controls`/`graphics` (loaded via the JavaFX runtime, not a bytecode
+  `requires`) and `jdk.crypto.ec` (EC/ECDSA TLS cipher suites for Google's HTTPS APIs,
+  selected reflectively via the security-provider SPI).
+- `org.xerial:sqlite-jdbc` bundles its native libs inside its own jar and extracts
+  them at runtime — confirmed working with no special jpackage handling.
+- **CI**: added a `windows-package` job to `.github/workflows/ci.yml`
+  (`runs-on: windows-latest`, `continue-on-error: true` since it's a "does it still
+  build" signal, not a required check) that runs
+  `./mvnw.cmd -B -P windows-package -DskipTests package` and uploads
+  `target/app-image/Google Drive Backup` via `actions/upload-artifact@v4`.
+- **Verified on this machine**: `./mvnw -DskipTests -P windows-package package`
+  succeeds; the produced `Google Drive Backup.exe` launches the trimmed runtime with
+  no missing-module errors — Spring Boot starts, JNA loads the Windows Credential
+  Manager native library, JavaFX graphics natives load, all against the 141MB
+  app-image folder.
 
-**Manual verification**: run the Windows CI job (or build locally on Windows), download
-the artifact, install it on a real Windows machine — ideally a clean VM with no JDK —
-launch it, and walk through Settings → import credentials → sign in → run a backup.
+**Still to verify manually**: copy/zip `target/app-image/Google Drive Backup` (or the
+CI job's uploaded artifact) to another Windows machine — ideally a clean VM with no
+JDK, to confirm the bundled runtime is genuinely self-contained — and confirm
+`Google Drive Backup.exe` launches there too, then walk through Settings → import
+credentials → sign in → run a backup. Per `claude-models.md`, "verifying on a clean
+machine without a JDK is a manual step no model can do."
 
 ## After stage 5
 
