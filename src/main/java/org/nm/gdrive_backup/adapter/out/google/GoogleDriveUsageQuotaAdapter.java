@@ -1,7 +1,8 @@
 package org.nm.gdrive_backup.adapter.out.google;
 
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.model.About;
@@ -11,10 +12,10 @@ import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.port.out.DriveUsageQuotaPort;
 
 import java.io.IOException;
-import java.security.GeneralSecurityException;
 
 public class GoogleDriveUsageQuotaAdapter implements DriveUsageQuotaPort {
 
+	private static final HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
 	private static final String FIELDS = "user(emailAddress),storageQuota(limit,usage,usageInDrive,usageInDriveTrash)";
 
 	private final GoogleServiceAccountAdapter credentialAdapter;
@@ -36,18 +37,18 @@ public class GoogleDriveUsageQuotaAdapter implements DriveUsageQuotaPort {
 					storageQuota == null ? null : storageQuota.getLimit(),
 					storageQuota == null ? null : storageQuota.getUsageInDrive(),
 					storageQuota == null ? null : storageQuota.getUsageInDriveTrash());
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to load Drive usage quota", exception);
 		}
 	}
 
-	private Drive drive(ServiceAccountAccess access) throws IOException, GeneralSecurityException {
+	private Drive drive(ServiceAccountAccess access) throws IOException {
 		if (access == null) {
 			throw new IllegalArgumentException("access must not be null");
 		}
 		HttpRequestInitializer initializer = new HttpCredentialsAdapter(credentialAdapter.credentialsFor(access));
 		return new Drive.Builder(
-				GoogleNetHttpTransport.newTrustedTransport(),
+				HTTP_TRANSPORT,
 				GsonFactory.getDefaultInstance(),
 				initializer)
 				.setApplicationName("gdrive-backup")

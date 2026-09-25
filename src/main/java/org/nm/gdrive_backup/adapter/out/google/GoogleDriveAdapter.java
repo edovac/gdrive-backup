@@ -1,7 +1,8 @@
 package org.nm.gdrive_backup.adapter.out.google;
 
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.services.drive.Drive;
@@ -24,10 +25,11 @@ import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.security.GeneralSecurityException;
 import java.util.List;
 
 public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, DriveContentPort, DriveFileListingPort {
+
+	private static final HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
 
 	private static final String FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 	private static final String DEFAULT_PARENT_ID = "root";
@@ -50,7 +52,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 			return java.util.stream.Stream.concat(
 					java.util.stream.Stream.of(new AvailableDrive("root", "My Drive", false)),
 					drives.stream()).toList();
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list available drives", exception);
 		}
 	}
@@ -66,7 +68,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true);
 			return mapFiles(request.execute().getFiles());
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list My Drive items", exception);
 		}
 	}
@@ -86,7 +88,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true);
 			return mapFiles(request.execute().getFiles());
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list Shared Drive items", exception);
 		}
 	}
@@ -98,7 +100,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setSupportsAllDrives(true);
 			configureDriveScope(request, scope);
 			return request.execute().getStartPageToken();
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to get Drive change start token", exception);
 		}
 	}
@@ -130,7 +132,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 				throw new StaleDrivePageTokenException("Drive change page token has expired", exception);
 			}
 			throw new GoogleDriveException("Unable to list Drive changes", exception);
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list Drive changes", exception);
 		}
 	}
@@ -158,7 +160,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 				pageToken = response.getNextPageToken();
 			} while (pageToken != null && !pageToken.isBlank());
 			return files;
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list all Drive files", exception);
 		}
 	}
@@ -168,13 +170,9 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		if (fileId == null || fileId.isBlank()) {
 			throw new IllegalArgumentException("fileId must not be blank");
 		}
-		try {
-			return drive(access).files().get(fileId)
-					.setSupportsAllDrives(true)
-					.executeMediaAsInputStream();
-		} catch (GeneralSecurityException exception) {
-			throw new GoogleDriveException("Unable to download Drive file", exception);
-		}
+		return drive(access).files().get(fileId)
+				.setSupportsAllDrives(true)
+				.executeMediaAsInputStream();
 	}
 
 	@Override
@@ -189,8 +187,6 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 				throw new DriveExportLimitException("Google export exceeds the supported size limit", exception);
 			}
 			throw exception;
-		} catch (GeneralSecurityException exception) {
-			throw new GoogleDriveException("Unable to export Google-native Drive file", exception);
 		}
 	}
 
@@ -245,13 +241,13 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		return file.getVersion() == null ? null : "v" + file.getVersion();
 	}
 
-	private Drive drive(ServiceAccountAccess access) throws IOException, GeneralSecurityException {
+	private Drive drive(ServiceAccountAccess access) throws IOException {
 		if (access == null) {
 			throw new IllegalArgumentException("access must not be null");
 		}
 		HttpRequestInitializer initializer = new HttpCredentialsAdapter(credentialAdapter.credentialsFor(access));
 		return new Drive.Builder(
-				GoogleNetHttpTransport.newTrustedTransport(),
+				HTTP_TRANSPORT,
 				GsonFactory.getDefaultInstance(),
 				initializer)
 				.setApplicationName("gdrive-backup")
