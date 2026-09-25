@@ -18,14 +18,14 @@ Drive-shaped folder tree the admin can upload directly to a new Drive, trading
 away file history for a usable copy (see **Archive output**).
 
 Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
-**SQLite** (local state/history), packaged as a native Windows installer via
+**SQLite** (local state/history), packaged as a self-contained Windows app-image via
 `jpackage`.
 
 ## Implementation progress
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-22
+Last reviewed: 2026-09-25
 
 Scheduled unattended backups are out of scope: every backup is started manually by the admin.
 
@@ -200,6 +200,19 @@ Scheduled unattended backups are out of scope: every backup is started manually 
   operation was removed.
 
 - [x] Tabbed authenticated screen (replaces the earlier three-column idea; see **Main window layout**): a common `SessionHeaderPanel` (selected Workspace user, status, sign-out) above four tabs — Backup, Archives (own `OperationProgressPanel`), History (`FileHistoryPanel`), Technical info (`TechnicalInfoPanel`, on-demand cards). Unit tests pass and the flows were checked by hand against a real account.
+- [x] Windows packaging and clean-machine verification: credentials persist through
+  `adapter.out.credentialstorage.WindowsCredentialManagerAdapter` (Windows Credential
+  Manager, chunked with a manifest since a service-account key exceeds a single
+  entry's size limit; the in-memory adapter stays wired everywhere else, including
+  Linux CI). Ships as a self-contained `jpackage` app-image (native `.exe` launcher
+  plus a bundled, trimmed JRE) rather than an MSI/EXE installer, since either would
+  need the WiX Toolset or Inno Setup installed as an extra dependency neither this
+  environment nor GitHub's Windows runners are guaranteed to have; distributed as a
+  zipped folder instead. A `windows-package` Maven profile (Windows-only activation)
+  builds it, and a non-blocking `windows-latest` CI job builds and uploads it as an
+  artifact on every push. Verified end to end on a second, clean Windows machine with
+  no JDK installed: Settings → import credentials → sign in → run a backup all worked
+  from the app-image build.
 
 ### In progress
 
@@ -208,7 +221,7 @@ Scheduled unattended backups are out of scope: every backup is started manually 
 
 ### Not started
 
-- [ ] Windows packaging with `jpackage` and clean-machine verification.
+None currently.
 
 This section is the working roadmap. Update the status markers and the
 `Last reviewed` date as each vertical slice is completed; keep the detailed
@@ -264,7 +277,8 @@ requirements below as the source of truth for expected behavior.
 **P3 — delivery and UX refinements**
 
 - [x] Tabbed authenticated-screen redesign (see **Main window layout**).
-- [ ] Windows installer and clean-machine verification.
+- [x] Windows packaging and clean-machine verification (shipped as a self-contained
+  app-image, not an installer — see the Completed list).
 
 Implementation sequence: runtime location selection; backup-job options and
 state; drive scope selection; progress/cancellation/recovery; per-drive archive
@@ -1058,7 +1072,7 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
 6. Backup options (full/incremental), progress UI,
    archive packaging, and history view.
 7. Low-priority JavaFX layout analysis and three-panel redesign.
-8. `jpackage` → Windows installer; test on a clean machine without a
+8. `jpackage` → self-contained Windows app-image; test on a clean machine without a
    preinstalled JDK.
 
 ---
