@@ -1,7 +1,8 @@
 package org.nm.gdrive_backup.adapter.out.google;
 
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.serviceusage.v1.ServiceUsage;
 import com.google.api.services.serviceusage.v1.model.GoogleApiServiceusageV1Service;
@@ -12,12 +13,12 @@ import org.nm.gdrive_backup.domain.port.out.CloudQuotaLimitPort;
 import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 
 import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class GoogleCloudQuotaLimitAdapter implements CloudQuotaLimitPort {
 
+	private static final HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
 	private static final List<String> SERVICES = List.of(
 			"drive.googleapis.com",
 			"admin.googleapis.com");
@@ -61,15 +62,15 @@ public class GoogleCloudQuotaLimitAdapter implements CloudQuotaLimitPort {
 				}
 			}
 			return limits;
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to load Cloud API quota limits", exception);
 		}
 	}
 
-	private ServiceUsage serviceUsage() throws IOException, GeneralSecurityException {
+	private ServiceUsage serviceUsage() throws IOException {
 		HttpRequestInitializer initializer = new HttpCredentialsAdapter(credentialAdapter.cloudCredentials());
 		return new ServiceUsage.Builder(
-				GoogleNetHttpTransport.newTrustedTransport(),
+				HTTP_TRANSPORT,
 				GsonFactory.getDefaultInstance(),
 				initializer)
 				.setApplicationName("gdrive-backup")

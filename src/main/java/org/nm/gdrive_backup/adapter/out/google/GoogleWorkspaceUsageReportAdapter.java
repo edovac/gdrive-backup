@@ -1,7 +1,8 @@
 package org.nm.gdrive_backup.adapter.out.google;
 
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.reports.Reports;
 import com.google.api.services.reports.model.UsageReport;
@@ -16,7 +17,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -24,6 +24,7 @@ import java.util.List;
 
 public class GoogleWorkspaceUsageReportAdapter implements WorkspaceUsageReportPort {
 
+	private static final HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
 	private static final Logger LOGGER = LoggerFactory.getLogger(GoogleWorkspaceUsageReportAdapter.class);
 	private static final String CUSTOMER_ID = "my_customer";
 	private static final String PARAMETERS = String.join(",",
@@ -80,7 +81,7 @@ public class GoogleWorkspaceUsageReportAdapter implements WorkspaceUsageReportPo
 			throw new GoogleDriveException(
 					"Unable to load Workspace usage report (HTTP " + exception.getStatusCode() + "): " + reason,
 					exception);
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			LOGGER.error("Workspace usage report failed before receiving a Google response", exception);
 			throw new GoogleDriveException("Unable to load Workspace usage report", exception);
 		}
@@ -132,13 +133,13 @@ public class GoogleWorkspaceUsageReportAdapter implements WorkspaceUsageReportPo
 				&& reason.contains("Data for dates later than");
 	}
 
-	private Reports reports(ServiceAccountAccess access) throws IOException, GeneralSecurityException {
+	private Reports reports(ServiceAccountAccess access) throws IOException {
 		if (access == null) {
 			throw new IllegalArgumentException("access must not be null");
 		}
 		HttpRequestInitializer initializer = new HttpCredentialsAdapter(credentialAdapter.reportsCredentialsFor(access));
 		return new Reports.Builder(
-				GoogleNetHttpTransport.newTrustedTransport(),
+				HTTP_TRANSPORT,
 				GsonFactory.getDefaultInstance(),
 				initializer)
 				.setApplicationName("gdrive-backup")

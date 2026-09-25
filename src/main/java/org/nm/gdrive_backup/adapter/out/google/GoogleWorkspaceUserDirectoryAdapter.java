@@ -1,12 +1,12 @@
 package org.nm.gdrive_backup.adapter.out.google;
 
 import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.util.Comparator;
 import java.util.List;
 
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.directory.Directory;
 import com.google.api.services.directory.model.User;
@@ -18,6 +18,7 @@ import org.nm.gdrive_backup.domain.port.out.WorkspaceUserDirectoryPort;
 
 public class GoogleWorkspaceUserDirectoryAdapter implements WorkspaceUserDirectoryPort {
 
+	private static final HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
 	private final GoogleServiceAccountAdapter credentialAdapter;
 
 	public GoogleWorkspaceUserDirectoryAdapter(GoogleServiceAccountAdapter credentialAdapter) {
@@ -43,20 +44,20 @@ public class GoogleWorkspaceUserDirectoryAdapter implements WorkspaceUserDirecto
 					.filter(user -> user != null)
 					.sorted(Comparator.comparing(WorkspaceUser::email))
 					.toList();
-		} catch (IOException | GeneralSecurityException exception) {
+		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list Workspace users", exception);
 		}
 	}
 
 	private Directory directory(ServiceAccountAccess access)
-			throws IOException, GeneralSecurityException {
+			throws IOException {
 		if (access == null) {
 			throw new IllegalArgumentException("access must not be null");
 		}
 		HttpRequestInitializer initializer = new HttpCredentialsAdapter(
 				credentialAdapter.credentialsFor(access));
 		return new Directory.Builder(
-				GoogleNetHttpTransport.newTrustedTransport(),
+				HTTP_TRANSPORT,
 				GsonFactory.getDefaultInstance(),
 				initializer)
 				.setApplicationName("gdrive-backup")
