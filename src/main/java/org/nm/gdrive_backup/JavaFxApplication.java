@@ -97,6 +97,7 @@ public class JavaFxApplication extends Application {
 	private final ListView<DriveItem> driveItems = new ListView<>();
 	private final Button syncNow = new Button("Sync selected drives");
 	private final Label footerSummary = new Label();
+	private HBox idleFooterRow;
 	private final BackupDrivePanel drivePanel = new BackupDrivePanel();
 	private final BackupModePicker modePicker = new BackupModePicker();
 	private final TabPane tabs = new TabPane();
@@ -319,13 +320,17 @@ public class JavaFxApplication extends Application {
 		syncNow.setOnAction(event -> synchronizeSelectedUser());
 		footerSummary.getStyleClass().add("status");
 		footerSummary.setWrapText(true);
-		HBox footer = new HBox(14, footerSummary, syncNow);
-		footer.setAlignment(Pos.CENTER_LEFT);
-		footer.getStyleClass().add("footer-bar");
+		idleFooterRow = new HBox(14, footerSummary, syncNow);
+		idleFooterRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(footerSummary, Priority.ALWAYS);
 		updateBackupFooter();
 
-		VBox cards = new VBox(14, whereCard, whatCard, howCard, previewPane, progressPanel.node());
+		// The progress bar lives in the pinned footer, not the scrollable cards above, so it stays visible
+		// (and prominent) no matter how far the admin has scrolled or how tall the drive list has grown.
+		VBox footer = new VBox(10, idleFooterRow, progressPanel.node());
+		footer.getStyleClass().add("footer-bar");
+
+		VBox cards = new VBox(14, whereCard, whatCard, howCard, previewPane);
 		cards.setMaxWidth(720);
 		cards.setPadding(new Insets(16, 0, 16, 0));
 		VBox centered = new VBox(cards);
@@ -483,8 +488,8 @@ public class JavaFxApplication extends Application {
 				+ destination + "...");
 		drivePanel.runStarted(selectedDrives);
 		progressPanel.setProgressListener(drivePanel::onProgress);
+		hide(idleFooterRow);
 		progressPanel.start();
-		footerSummary.setText("Synchronizing " + selectedDrives.size() + " drive(s)...");
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
 			return driveBackupUseCase.synchronizeSelectedDrives(access, selectedDrives, mode);
@@ -495,6 +500,7 @@ public class JavaFxApplication extends Application {
 			locationsPanel.setChangesDisabled(false);
 			archiveManagerPanel.setExternallyBusy(false);
 			progressPanel.stop();
+			show(idleFooterRow);
 			if (error != null) {
 				status.setText("Synchronization failed: " + messageFor(error));
 				updateBackupFooter();
