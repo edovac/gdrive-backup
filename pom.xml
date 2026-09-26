@@ -31,6 +31,8 @@
 		<java.version>25</java.version>
 		<javafx.version>25.0.1</javafx.version>
 		<mockito.version>5.23.0</mockito.version>
+		<!-- jpackage needs a plain dotted numeric version; the release workflow overrides it from the tag. -->
+		<app.version>0.0.1</app.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -300,10 +302,11 @@
 									<type>APP_IMAGE</type>
 									<name>Google Drive Backup</name>
 									<!--
-										jpackage requires a plain dotted numeric version; strip the
-										-SNAPSHOT suffix project.version carries during development.
+										jpackage requires a plain dotted numeric version, so this can't
+										be project.version (it carries -SNAPSHOT during development).
+										The release workflow sets app.version from the pushed tag.
 									-->
-									<appVersion>0.0.1</appVersion>
+									<appVersion>${app.version}</appVersion>
 									<vendor>gdrive-backup</vendor>
 									<description>Personal Google Drive backup tool</description>
 									<input>${project.build.directory}/jpackage-input</input>
