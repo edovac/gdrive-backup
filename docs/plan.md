@@ -208,7 +208,12 @@ Last reviewed: 2026-09-26
 
 ### Not started
 
-None currently.
+- [ ] Header identity polish: app version (header, login screen, and a new
+  Application card on the Technical info tab, from Spring Boot's
+  `BuildProperties`/`app.version`), the admin's email-domain favicon, and the
+  signed-in admin's avatar (Drive `about.get` `user.photoLink` via the
+  service account impersonating the admin — no new OAuth scope — falling
+  back to initials). See **Main window layout** and **Technical info tab**.
 
 Update the status markers and the `Last reviewed` date as each vertical slice
 is completed; keep [gdrive-backup-app.md](gdrive-backup-app.md) as the source
@@ -272,11 +277,13 @@ of truth for expected behavior.
   click-per-row list.
 - [x] Windows packaging and clean-machine verification (shipped as a self-contained
   app-image, not an installer — see the Completed list).
+- [ ] Header identity polish: app version, domain favicon, admin avatar (see
+  the Not started item above).
 
 Implementation sequence: runtime location selection; backup-job options and
 state; drive scope selection; progress/cancellation/recovery; per-drive archive
 packaging; partial-failure summary and history; UI redesign and
-Windows packaging.
+Windows packaging; header identity polish.
 
 ---
 

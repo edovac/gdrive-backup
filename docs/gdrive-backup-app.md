@@ -777,10 +777,14 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   incremental runs, so a file backed up only by full runs shows captures alone.
 - **Main window layout**: after sign-in the window shows a common header
   above a tab bar.
-  - **Header (all tabs)**: app title, the selected Workspace user (the picker
-    that chooses whose Drive is previewed and inspected), connection status
-    and Sign out. It shows the Workspace user, not the admin's OAuth identity:
-    the login session stays opaque and no extra port or scope is added.
+  - **Header (all tabs)**: app title with the running app version, the
+    signed-in admin's domain favicon and name/avatar (photo from Drive
+    `about.get` via the service account impersonating the admin, initials
+    until it loads or if there is none — no extra OAuth scope), the selected
+    Workspace user (the picker that chooses whose Drive is previewed and
+    inspected), connection status and Sign out. The Workspace user picker is
+    independent of the admin's own identity shown alongside it: the login
+    session stays opaque and no extra port or scope is added for it.
     Changing the user refreshes the Backup tab and clears the Technical info
     tab.
   - **Backup tab**: three numbered steps — **Where** (backup location),
@@ -802,10 +806,12 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
     file's history (see **History view**).
   - **Technical info tab**: a dashboard of three cards — Drive storage usage
     (for the selected user), Workspace usage report (latest available day)
-    and Cloud API quota limits. Nothing is fetched automatically: each card
-    has its own Refresh button, a "last updated" time and independent
-    loading/unavailable/error states, and a "Refresh all" button sits above
-    them. The login screen shows no header or tabs.
+    and Cloud API quota limits, plus a fourth static Application card showing
+    the running app version and build time. Nothing is fetched automatically
+    for the first three: each has its own Refresh button, a "last updated"
+    time and independent loading/unavailable/error states, and a "Refresh
+    all" button sits above them. The login screen shows no header or tabs,
+    but does show the app version under its title.
 
 ---
 
