@@ -25,7 +25,7 @@ Target stack: **Java + Spring Boot** (backend/service layer), **JavaFX** (UI),
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-25
+Last reviewed: 2026-09-26
 
 Scheduled unattended backups are out of scope: every backup is started manually by the admin.
 
@@ -277,6 +277,12 @@ requirements below as the source of truth for expected behavior.
 **P3 — delivery and UX refinements**
 
 - [x] Tabbed authenticated-screen redesign (see **Main window layout**).
+- [x] Backup tab guided-steps refinement: the flat list/combo layout became
+  three numbered steps (Where/What/How), each drive row now shows its last
+  archive or chain problem idle and live per-drive status during a run
+  (`BackupDrivePanel`, `BackupDriveText`, `BackupModePicker`), and the Drive
+  contents preview is a collapsible panel loaded on demand instead of a
+  click-per-row list.
 - [x] Windows packaging and clean-machine verification (shipped as a self-contained
   app-image, not an installer — see the Completed list).
 
@@ -1041,9 +1047,17 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
     the login session stays opaque and no extra port or scope is added.
     Changing the user refreshes the Backup tab and clears the Technical info
     tab.
-  - **Backup tab**: backup location, drive selection, backup mode, "Sync
-    selected drives", its progress bar with Cancel, and the Drive contents
-    preview.
+  - **Backup tab**: three numbered steps — **Where** (backup location),
+    **What** (drive selection, each row showing its last archive or chain
+    problem from the archive catalog when idle, and live/final status once a
+    job is running) and **How** (backup mode, as two described option cards)
+    — above a collapsible Drive contents preview (loaded for whichever drive
+    the admin last clicked, only while expanded). A footer bar summarizes the
+    pending run and holds "Sync selected drives"; the shared progress bar
+    with Cancel appears above it while a job runs. The archive catalog is
+    refreshed after drives load, after a run ends, after a location change,
+    and whenever the tab is reselected, so a merge or deletion made on the
+    Archives tab is reflected without a manual refresh.
   - **Archives tab**: the Archive manager (chains, merge, guarded deletion)
     with its **own progress bar** and Cancel, so a merge shows progress there
     and a backup shows it in the Backup tab. Backups and merges stay mutually

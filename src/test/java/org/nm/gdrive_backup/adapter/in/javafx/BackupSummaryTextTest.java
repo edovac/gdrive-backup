@@ -52,4 +52,16 @@ class BackupSummaryTextTest {
 		assertEquals("Synchronization cancelled. 1 drive(s) failed.\nMy Drive (user@example.com): FAILED — Boom"
 				+ "\nShared: Finance: not started", text);
 	}
+
+	@Test
+	void theHeadlineAloneCoversSuccessFailureAndCancellation() {
+		assertEquals("Synchronization complete.",
+				BackupSummaryText.headline(List.of(new BackupResult(PERSONAL, 4, true, false)), false));
+		assertEquals("Synchronization complete with 1 failed drive(s).",
+				BackupSummaryText.headline(List.of(BackupResult.failed(SHARED, "No access")), false));
+		assertEquals("Synchronization cancelled.",
+				BackupSummaryText.headline(List.of(new BackupResult(PERSONAL, 4, true, true)), true));
+		assertEquals("Synchronization cancelled. 1 drive(s) failed.",
+				BackupSummaryText.headline(List.of(BackupResult.failed(PERSONAL, "Boom")), true));
+	}
 }

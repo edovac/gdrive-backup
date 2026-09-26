@@ -10,21 +10,19 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
-import javafx.scene.control.cell.CheckBoxListCell;
+import javafx.scene.control.TitledPane;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.util.StringConverter;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.nm.gdrive_backup.domain.model.GoogleLoginSession;
 import org.nm.gdrive_backup.domain.port.in.GoogleLoginUseCase;
@@ -35,6 +33,8 @@ import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
+import org.nm.gdrive_backup.adapter.in.javafx.BackupDrivePanel;
+import org.nm.gdrive_backup.adapter.in.javafx.BackupModePicker;
 import org.nm.gdrive_backup.adapter.in.javafx.BackupSummaryText;
 import org.nm.gdrive_backup.adapter.in.javafx.FileHistoryPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.OperationProgressPanel;
@@ -64,9 +64,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
@@ -96,12 +94,11 @@ public class JavaFxApplication extends Application {
 	private final Button signIn = new Button("Sign in with Google");
 	private final Label connectionStatus = new Label();
 	private final Label driveStatus = new Label();
-	private final Label drivesLabel = new Label("Select the drive(s) to back up:");
-	private final Map<AvailableDrive, BooleanProperty> driveSelections = new HashMap<>();
-	private final ListView<AvailableDrive> drives = new ListView<>();
 	private final ListView<DriveItem> driveItems = new ListView<>();
-	private final ComboBox<BackupMode> backupModeCombo = new ComboBox<>();
 	private final Button syncNow = new Button("Sync selected drives");
+	private final Label footerSummary = new Label();
+	private final BackupDrivePanel drivePanel = new BackupDrivePanel();
+	private final BackupModePicker modePicker = new BackupModePicker();
 	private final TabPane tabs = new TabPane();
 
 	private BorderPane root;
@@ -115,6 +112,7 @@ public class JavaFxApplication extends Application {
 	private ArchiveManagerPanel archiveManagerPanel;
 	private FileHistoryPanel fileHistoryPanel;
 	private SettingsPanel settingsPanel;
+	private Tab backupTab;
 
 	static void setSpringContext(ConfigurableApplicationContext context) {
 		springContext = context;
@@ -239,6 +237,10 @@ public class JavaFxApplication extends Application {
 				workspaceUsageReportUseCase, cloudQuotaLimitUseCase, this::selectedUserEmail);
 
 		locationsPanel = new LocationsPanel(syncNow);
+		locationsPanel.onChanged(() -> {
+			updateBackupFooter();
+			refreshArchiveCatalog();
+		});
 		progressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
 				"Starting synchronization...");
 		archiveProgressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
@@ -256,56 +258,39 @@ public class JavaFxApplication extends Application {
 
 		fileHistoryPanel = new FileHistoryPanel(fileHistoryUseCase);
 
+		backupTab = new Tab("Backup", buildBackupTab());
 		tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-		tabs.getTabs().addAll(new Tab("Backup", scrollable(buildBackupTab())),
+		tabs.getTabs().addAll(backupTab,
 				new Tab("Archives", scrollable(buildArchivesTab())),
 				new Tab("History", scrollable(fileHistoryPanel.node())),
 				new Tab("Technical info", scrollable(technicalInfoPanel.node())));
+		tabs.getSelectionModel().selectedItemProperty().addListener((observable, was, now) -> {
+			if (now == backupTab) {
+				refreshArchiveCatalog();
+			}
+		});
 	}
 
+	/**
+	 * The Backup tab: three numbered steps (Where / What / How) above a collapsible contents preview, with a
+	 * footer bar that summarizes the pending run and starts it — replaced by the shared progress panel while
+	 * one is in flight.
+	 */
 	private Node buildBackupTab() {
 		driveStatus.getStyleClass().add("status");
 		driveStatus.setWrapText(true);
-		driveStatus.setMaxWidth(540);
-		drivesLabel.getStyleClass().add("scope");
-		hide(drivesLabel);
-		drives.setPlaceholder(new Label("No drives loaded"));
-		hide(drives);
-		drives.setCellFactory(CheckBoxListCell.forListView(
-				drive -> driveSelections.computeIfAbsent(drive, key -> new SimpleBooleanProperty(false)),
-				new StringConverter<AvailableDrive>() {
-					@Override
-					public String toString(AvailableDrive drive) {
-						return drive == null ? "" : (drive.shared() ? "Shared: " : "") + drive.name();
-					}
+		driveStatus.setMaxWidth(660);
 
-					@Override
-					public AvailableDrive fromString(String string) {
-						return null;
-					}
-				}));
+		Node whereCard = stepCard(1, "Where", locationsPanel.node());
+		Node whatCard = stepCard(2, "What", new VBox(8, drivePanel.node(), driveStatus));
+		Node howCard = stepCard(3, "How", modePicker.node());
+
 		driveItems.setPlaceholder(new Label("No items loaded"));
-		hide(driveItems);
 		driveItems.setCellFactory(view -> new javafx.scene.control.ListCell<>() {
 			@Override
 			protected void updateItem(DriveItem item, boolean empty) {
 				super.updateItem(item, empty);
 				setText(empty || item == null ? null : (item.folder() ? "[Folder] " : "") + item.name());
-			}
-		});
-		backupModeCombo.getItems().setAll(BackupMode.INCREMENTAL, BackupMode.FULL);
-		backupModeCombo.setValue(BackupMode.INCREMENTAL);
-		backupModeCombo.setCellFactory(view -> backupModeCell());
-		backupModeCombo.setButtonCell(backupModeCell());
-		hide(backupModeCombo);
-		syncNow.getStyleClass().add("primary-button");
-		hide(syncNow);
-		syncNow.setOnAction(event -> synchronizeSelectedUser());
-
-		drives.setOnMouseClicked(event -> {
-			AvailableDrive selected = drives.getSelectionModel().getSelectedItem();
-			if (selected != null && event.getClickCount() >= 1) {
-				loadDriveContents(selectedUserEmail(), selected);
 			}
 		});
 		driveItems.setOnMouseClicked(event -> {
@@ -314,13 +299,54 @@ public class JavaFxApplication extends Application {
 				loadFolderContents(selectedUserEmail(), selected);
 			}
 		});
+		TitledPane previewPane = new TitledPane("Preview drive contents", driveItems);
+		previewPane.setExpanded(false);
+		previewPane.expandedProperty().addListener((observable, was, expanded) -> {
+			if (expanded) {
+				loadDriveContents(selectedUserEmail(), drivePanel.focusedDrive());
+			}
+		});
+		drivePanel.onFocusChanged(drive -> {
+			if (previewPane.isExpanded()) {
+				loadDriveContents(selectedUserEmail(), drive);
+			}
+		});
+		drivePanel.onSelectionChanged(this::updateBackupFooter);
+		modePicker.onChange(this::updateBackupFooter);
 
-		VBox content = new VBox(12, locationsPanel.node(), drivesLabel, drives, backupModeCombo, syncNow,
-				progressPanel.node(), driveStatus, driveItems);
-		content.setAlignment(Pos.CENTER);
-		content.setMaxWidth(560);
-		content.setPadding(new Insets(12));
-		return content;
+		syncNow.getStyleClass().add("primary-button");
+		hide(syncNow);
+		syncNow.setOnAction(event -> synchronizeSelectedUser());
+		footerSummary.getStyleClass().add("status");
+		footerSummary.setWrapText(true);
+		HBox footer = new HBox(14, footerSummary, syncNow);
+		footer.setAlignment(Pos.CENTER_LEFT);
+		footer.getStyleClass().add("footer-bar");
+		HBox.setHgrow(footerSummary, Priority.ALWAYS);
+		updateBackupFooter();
+
+		VBox cards = new VBox(14, whereCard, whatCard, howCard, previewPane, progressPanel.node());
+		cards.setMaxWidth(720);
+		cards.setPadding(new Insets(16, 0, 16, 0));
+		VBox centered = new VBox(cards);
+		centered.setAlignment(Pos.TOP_CENTER);
+
+		BorderPane layout = new BorderPane();
+		layout.setCenter(scrollable(centered));
+		layout.setBottom(footer);
+		return layout;
+	}
+
+	private static Node stepCard(int number, String title, Node body) {
+		Label numberLabel = new Label(Integer.toString(number));
+		numberLabel.getStyleClass().add("step-number");
+		Label titleLabel = new Label(title);
+		titleLabel.getStyleClass().add("step-title");
+		HBox header = new HBox(10, numberLabel, titleLabel);
+		header.setAlignment(Pos.CENTER_LEFT);
+		VBox card = new VBox(10, header, body);
+		card.getStyleClass().add("step-card");
+		return card;
 	}
 
 	private Node buildArchivesTab() {
@@ -382,14 +408,11 @@ public class JavaFxApplication extends Application {
 		header.hide();
 		driveStatus.setText("");
 		hide(syncNow);
-		hide(backupModeCombo);
-		backupModeCombo.setValue(BackupMode.INCREMENTAL);
+		modePicker.reset();
+		drivePanel.clear();
 		driveItems.getItems().clear();
 		hide(driveItems);
-		driveSelections.clear();
-		drives.getItems().clear();
-		hide(drives);
-		hide(drivesLabel);
+		updateBackupFooter();
 		locationsPanel.hide();
 		archiveManagerPanel.hide();
 		fileHistoryPanel.hide();
@@ -428,11 +451,8 @@ public class JavaFxApplication extends Application {
 				return;
 			}
 			header.setUsers(users, previewUserEmail);
-			if (!users.isEmpty()) {
-				if (driveBackupUseCase != null) {
-					show(syncNow);
-					show(backupModeCombo);
-				}
+			if (!users.isEmpty() && driveBackupUseCase != null) {
+				show(syncNow);
 			}
 			reloadForSelectedUser();
 		}));
@@ -446,39 +466,46 @@ public class JavaFxApplication extends Application {
 			status.setText("Sync unavailable. Select a Workspace user and configure service-account access.");
 			return;
 		}
-		List<AvailableDrive> selectedDrives = drives.getItems().stream()
-				.filter(drive -> driveSelections.getOrDefault(drive, new SimpleBooleanProperty(false)).get())
-				.toList();
+		List<AvailableDrive> selectedDrives = drivePanel.selectedDrives();
 		if (selectedDrives.isEmpty()) {
 			status.setText("Select at least one drive to back up.");
 			return;
 		}
-		BackupMode mode = backupModeCombo.getValue();
+		BackupMode mode = modePicker.value();
 		syncNow.setDisable(true);
-		backupModeCombo.setDisable(true);
+		modePicker.setDisabled(true);
+		drivePanel.setDisabled(true);
 		locationsPanel.setChangesDisabled(true);
 		archiveManagerPanel.setExternallyBusy(true);
 		String destination = backupLocationUseCase == null ? ""
 				: " into " + backupLocationUseCase.currentLocation().root();
 		status.setText("Synchronizing " + modeLabel(mode).toLowerCase() + " backup for " + selectedUserEmail
 				+ destination + "...");
+		drivePanel.runStarted(selectedDrives);
+		progressPanel.setProgressListener(drivePanel::onProgress);
 		progressPanel.start();
+		footerSummary.setText("Synchronizing " + selectedDrives.size() + " drive(s)...");
 		CompletableFuture.supplyAsync(() -> {
 			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(selectedUserEmail);
 			return driveBackupUseCase.synchronizeSelectedDrives(access, selectedDrives, mode);
 		}).whenComplete((results, error) -> Platform.runLater(() -> {
 			syncNow.setDisable(false);
-			backupModeCombo.setDisable(false);
+			modePicker.setDisabled(false);
+			drivePanel.setDisabled(false);
 			locationsPanel.setChangesDisabled(false);
 			archiveManagerPanel.setExternallyBusy(false);
 			progressPanel.stop();
 			if (error != null) {
 				status.setText("Synchronization failed: " + messageFor(error));
+				updateBackupFooter();
 				return;
 			}
 			boolean cancelled = results.size() < selectedDrives.size()
 					|| results.stream().anyMatch(BackupResult::cancelled);
+			drivePanel.runFinished(results);
 			status.setText(BackupSummaryText.summary(results, selectedDrives, cancelled));
+			footerSummary.setText(BackupSummaryText.headline(results, cancelled));
+			refreshArchiveCatalog();
 		}));
 	}
 
@@ -486,14 +513,33 @@ public class JavaFxApplication extends Application {
 		return mode == BackupMode.FULL ? "Full" : "Incremental";
 	}
 
-	private static javafx.scene.control.ListCell<BackupMode> backupModeCell() {
-		return new javafx.scene.control.ListCell<>() {
-			@Override
-			protected void updateItem(BackupMode mode, boolean empty) {
-				super.updateItem(mode, empty);
-				setText(empty || mode == null ? null : modeLabel(mode) + " backup");
-			}
-		};
+	/** The ready-to-start summary and the Start button's enabled state, recomputed on any selection/mode change. */
+	private void updateBackupFooter() {
+		int selected = drivePanel.selectedDrives().size();
+		syncNow.setDisable(selected == 0);
+		if (selected == 0) {
+			footerSummary.setText("Select at least one drive to back up.");
+			return;
+		}
+		String destination = backupLocationUseCase == null ? ""
+				: " → " + backupLocationUseCase.currentLocation().root();
+		footerSummary.setText("Ready: " + modeLabel(modePicker.value()).toLowerCase() + " backup of " + selected
+				+ " drive" + (selected == 1 ? "" : "s") + destination);
+	}
+
+	/** Refreshes each drive row's last-archive/chain state; called after drives load, a run ends, a location
+	 * change, and whenever the Backup tab is (re)selected, since a merge or deletion on the Archives tab can
+	 * change it. */
+	private void refreshArchiveCatalog() {
+		if (archiveCatalogUseCase == null) {
+			return;
+		}
+		CompletableFuture.supplyAsync(archiveCatalogUseCase::listScopes)
+				.whenComplete((scopes, error) -> Platform.runLater(() -> {
+					if (error == null) {
+						drivePanel.setCatalog(scopes);
+					}
+				}));
 	}
 
 	private void loadDrives() {
@@ -502,8 +548,9 @@ public class JavaFxApplication extends Application {
 		if (serviceAccountUseCase == null || driveReadPort == null || selectedUserEmail == null
 				|| selectedUserEmail.isBlank()) {
 			driveItems.getItems().clear();
-			driveItems.setVisible(false);
-			driveItems.setManaged(false);
+			hide(driveItems);
+			drivePanel.clear();
+			updateBackupFooter();
 			status.setText("Google connected, Drive preview unavailable. Import a service-account key in Settings.");
 			return;
 		}
@@ -515,20 +562,17 @@ public class JavaFxApplication extends Application {
 			if (error != null) {
 				status.setText("Google connected, Drive preview unavailable: " + messageFor(error));
 				driveItems.getItems().clear();
-				driveItems.setVisible(false);
-				driveItems.setManaged(false);
+				hide(driveItems);
+				drivePanel.clear();
+				updateBackupFooter();
 				return;
 			}
-			driveSelections.clear();
-			drives.getItems().setAll(availableDrives);
-			drives.setVisible(true);
-			drives.setManaged(true);
-			drivesLabel.setVisible(true);
-			drivesLabel.setManaged(true);
+			drivePanel.setDrives(availableDrives, selectedUserEmail);
 			driveItems.getItems().clear();
-			driveItems.setVisible(false);
-			driveItems.setManaged(false);
+			hide(driveItems);
 			status.setText("Available drives for " + selectedUserEmail);
+			updateBackupFooter();
+			refreshArchiveCatalog();
 		}));
 	}
 
@@ -651,26 +695,32 @@ public class JavaFxApplication extends Application {
 		private final Label status = new Label();
 		private final Button changeLocation = new Button("Change location...");
 		private final VBox root;
+		private Runnable onChanged = () -> {
+		};
 
 		LocationsPanel(Button syncNow) {
 			this.syncNow = syncNow;
-			Label title = new Label("Backup location");
-			title.getStyleClass().add("subtitle");
-			Label locationHeader = new Label("Backup root (history database and archives)");
-			Label sessionNote = new Label("Changes apply to this session only.");
+			locationValue.getStyleClass().add("path-chip");
+			HBox pathRow = new HBox(10, locationValue, changeLocation);
+			pathRow.setAlignment(Pos.CENTER_LEFT);
+			Label sessionNote = new Label("Applies to this session only.");
 			sessionNote.getStyleClass().add("scope");
 			status.getStyleClass().add("status");
 			status.setWrapText(true);
-			status.setMaxWidth(540);
+			status.setMaxWidth(600);
 			changeLocation.getStyleClass().add("secondary-button");
 			changeLocation.setOnAction(event -> chooseBackupLocation());
-			root = new VBox(6, title, locationHeader, locationValue, changeLocation, sessionNote, status);
-			root.setAlignment(Pos.CENTER);
+			root = new VBox(6, pathRow, sessionNote, status);
 			hide();
 		}
 
 		Node node() {
 			return root;
+		}
+
+		void onChanged(Runnable listener) {
+			this.onChanged = listener == null ? () -> {
+			} : listener;
 		}
 
 		void show() {
@@ -755,6 +805,7 @@ public class JavaFxApplication extends Application {
 						}
 						refresh();
 						status.setText("Location changed.");
+						onChanged.run();
 					}));
 		}
 
@@ -799,9 +850,8 @@ public class JavaFxApplication extends Application {
 
 		private static Label pathLabel() {
 			Label label = new Label();
-			label.setStyle("-fx-font-family: monospace; -fx-text-fill: #172033;");
 			label.setWrapText(true);
-			label.setMaxWidth(540);
+			label.setMaxWidth(480);
 			return label;
 		}
 	}
