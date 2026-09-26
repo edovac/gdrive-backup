@@ -29,6 +29,11 @@ public final class BackupSummaryText {
 		return text.toString();
 	}
 
+	/** The headline alone, e.g. for the Backup tab's footer once each drive's own row shows its own outcome. */
+	public static String headline(List<BackupResult> results, boolean cancelled) {
+		return headline(results.stream().filter(BackupResult::failed).count(), cancelled);
+	}
+
 	private static String headline(long failed, boolean cancelled) {
 		if (cancelled) {
 			return "Synchronization cancelled." + (failed > 0 ? " " + failed + " drive(s) failed." : "");

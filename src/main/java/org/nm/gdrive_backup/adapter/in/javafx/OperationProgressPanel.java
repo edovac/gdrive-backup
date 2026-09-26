@@ -1,6 +1,7 @@
 package org.nm.gdrive_backup.adapter.in.javafx;
 
 import java.time.Instant;
+import java.util.function.Consumer;
 
 import org.nm.gdrive_backup.domain.model.BackupProgress;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
@@ -38,6 +39,8 @@ public final class OperationProgressPanel {
 	private final Button cancelButton = new Button("Cancel");
 	private final VBox root;
 	private Timeline timeline;
+	private Consumer<BackupProgress> progressListener = progress -> {
+	};
 
 	/** @param startingText what the panel says before the first progress snapshot arrives */
 	public OperationProgressPanel(BackupProgressPort progressPort, BackupCancellationUseCase cancellationUseCase,
@@ -61,6 +64,12 @@ public final class OperationProgressPanel {
 		return root;
 	}
 
+	/** Notified with each progress snapshot while the panel is running; pass null to stop listening. */
+	public void setProgressListener(Consumer<BackupProgress> listener) {
+		this.progressListener = listener == null ? progress -> {
+		} : listener;
+	}
+
 	public void start() {
 		root.setVisible(true);
 		root.setManaged(true);
@@ -80,6 +89,8 @@ public final class OperationProgressPanel {
 			timeline = null;
 		}
 		hide();
+		progressListener = progress -> {
+		};
 	}
 
 	private void handleCancelClick() {
@@ -130,6 +141,7 @@ public final class OperationProgressPanel {
 			operationLabel.setText(OperationProgressText.operation(progress));
 			driveJobLabel.setText(progress.totalDrives() > 1 ? OperationProgressText.multiDrive(progress) : "");
 			timeLabel.setText(OperationProgressText.time(progress, Instant.now()));
+			progressListener.accept(progress);
 		});
 	}
 }

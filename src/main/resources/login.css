@@ -6,6 +6,12 @@
 	-fx-text-fill: #172033;
 }
 
+/* RadioButton/CheckBox captions aren't Labels, so they don't pick up the rule above and would otherwise
+   fall back to the platform's (possibly dark-mode) default text color. */
+.radio-button, .check-box {
+	-fx-text-fill: #172033;
+}
+
 .window-controls {
 	-fx-padding: 12px;
 }
@@ -67,4 +73,124 @@
 	-fx-text-fill: #344054;
 	-fx-padding: 9px 18px;
 	-fx-background-radius: 5px;
+}
+
+.step-card {
+	-fx-background-color: white;
+	-fx-background-radius: 8px;
+	-fx-border-color: #e3e7ee;
+	-fx-border-radius: 8px;
+	-fx-padding: 16px 18px;
+}
+
+.step-number {
+	-fx-background-color: #1a73e8;
+	-fx-text-fill: white;
+	-fx-font-weight: bold;
+	-fx-font-size: 13px;
+	-fx-background-radius: 100px;
+	-fx-min-width: 26px;
+	-fx-min-height: 26px;
+	-fx-max-width: 26px;
+	-fx-max-height: 26px;
+	-fx-alignment: center;
+}
+
+.step-title {
+	-fx-font-size: 14px;
+	-fx-font-weight: bold;
+	-fx-text-fill: #172033;
+}
+
+.drive-name {
+	-fx-font-weight: bold;
+	-fx-text-fill: #172033;
+}
+
+.drive-icon {
+	-fx-font-size: 13px;
+	-fx-min-width: 26px;
+	-fx-min-height: 26px;
+	-fx-max-width: 26px;
+	-fx-max-height: 26px;
+	-fx-alignment: center;
+	-fx-background-radius: 6px;
+}
+
+.drive-icon.personal {
+	-fx-background-color: #e8f0fe;
+	-fx-text-fill: #1a73e8;
+}
+
+.drive-icon.shared {
+	-fx-background-color: #e6f4ea;
+	-fx-text-fill: #1e8e3e;
+}
+
+.pill {
+	-fx-font-size: 11px;
+	-fx-font-weight: bold;
+	-fx-padding: 2px 9px;
+	-fx-background-radius: 10px;
+}
+
+.pill-ok {
+	-fx-background-color: #e6f4ea;
+	-fx-text-fill: #137333;
+}
+
+.pill-warn {
+	-fx-background-color: #fef7e0;
+	-fx-text-fill: #b06000;
+}
+
+.pill-error {
+	-fx-background-color: #fce8e6;
+	-fx-text-fill: #b3261e;
+}
+
+.pill-info {
+	-fx-background-color: #e8f0fe;
+	-fx-text-fill: #1967d2;
+}
+
+.pill-neutral {
+	-fx-background-color: #eef0f4;
+	-fx-text-fill: #596579;
+}
+
+.mode-option {
+	-fx-border-color: #e3e7ee;
+	-fx-border-radius: 7px;
+	-fx-border-width: 1.5px;
+	-fx-padding: 10px 12px;
+	-fx-background-radius: 7px;
+	-fx-cursor: hand;
+}
+
+.mode-option.selected {
+	-fx-border-color: #1a73e8;
+	-fx-background-color: #f3f7fe;
+}
+
+.footer-bar {
+	-fx-background-color: white;
+	-fx-border-color: #e3e7ee transparent transparent transparent;
+	-fx-border-width: 1px 0 0 0;
+	-fx-padding: 12px 20px;
+}
+
+.path-chip {
+	-fx-font-family: monospace;
+	-fx-text-fill: #172033;
+	-fx-background-color: #f1f3f7;
+	-fx-background-radius: 4px;
+	-fx-padding: 4px 8px;
+}
+
+.link-button {
+	-fx-text-fill: #1a73e8;
+	-fx-font-size: 12px;
+	-fx-font-weight: bold;
+	-fx-padding: 0;
 }
