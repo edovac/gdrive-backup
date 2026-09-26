@@ -9,6 +9,7 @@ import java.util.function.Supplier;
 
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
+import org.nm.gdrive_backup.domain.model.ApplicationInfo;
 import org.nm.gdrive_backup.domain.port.in.DriveUsageQuotaUseCase;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUsageReportUseCase;
@@ -24,9 +25,10 @@ import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.VBox;
 
 /**
- * The Technical info view: a dashboard of three cards (Drive storage usage, Workspace usage report, Cloud API quota
- * limits). Nothing is fetched until the admin presses a card's Refresh button, so no Google API quota is spent just by
- * opening the view. Each card loads and fails independently.
+ * The Technical info view: a dashboard of three refreshable cards (Drive storage usage, Workspace usage report,
+ * Cloud API quota limits) plus a static Application card (running app version). Nothing is fetched until the admin
+ * presses a card's Refresh button, so no Google API quota is spent just by opening the view. Each card loads and
+ * fails independently.
  */
 public final class TechnicalInfoPanel {
 
@@ -41,6 +43,7 @@ public final class TechnicalInfoPanel {
 	private final Card storageCard = new Card("Drive storage usage");
 	private final Card reportCard = new Card("Workspace usage report");
 	private final Card cloudCard = new Card("Cloud API quota limits");
+	private final Node applicationCard;
 	private final VBox root;
 
 	/**
@@ -49,12 +52,15 @@ public final class TechnicalInfoPanel {
 	 */
 	public TechnicalInfoPanel(ServiceAccountAuthenticationUseCase authenticationUseCase,
 			DriveUsageQuotaUseCase driveUsageQuotaUseCase, WorkspaceUsageReportUseCase workspaceUsageReportUseCase,
-			CloudQuotaLimitUseCase cloudQuotaLimitUseCase, Supplier<String> selectedUserEmail) {
+			CloudQuotaLimitUseCase cloudQuotaLimitUseCase, ApplicationInfo applicationInfo,
+			Supplier<String> selectedUserEmail) {
 		this.authenticationUseCase = authenticationUseCase;
 		this.driveUsageQuotaUseCase = driveUsageQuotaUseCase;
 		this.workspaceUsageReportUseCase = workspaceUsageReportUseCase;
 		this.cloudQuotaLimitUseCase = cloudQuotaLimitUseCase;
 		this.selectedUserEmail = selectedUserEmail;
+		this.applicationCard = staticCard("Application", ApplicationInfoText.status(applicationInfo),
+				ApplicationInfoText.lines(applicationInfo));
 
 		storageCard.refresh.setOnAction(event -> refreshStorage());
 		reportCard.refresh.setOnAction(event -> refreshReport());
@@ -73,7 +79,7 @@ public final class TechnicalInfoPanel {
 		note.getStyleClass().add("scope");
 		note.setWrapText(true);
 
-		FlowPane cards = new FlowPane(12, 12, storageCard.node, reportCard.node, cloudCard.node);
+		FlowPane cards = new FlowPane(12, 12, storageCard.node, reportCard.node, cloudCard.node, applicationCard);
 		cards.setAlignment(Pos.TOP_LEFT);
 		root = new VBox(12, title, note, refreshAll, cards);
 		root.setPadding(new Insets(12));
@@ -135,6 +141,24 @@ public final class TechnicalInfoPanel {
 		load(cloudCard, TechnicalInfoText.cloudLoading(), cloudQuotaLimitUseCase::listQuotaLimits,
 				limits -> limits.stream().map(TechnicalInfoText::cloudLine).toList(),
 				limits -> TechnicalInfoText.cloudStatus(), TechnicalInfoText::cloudFailed);
+	}
+
+	/** A card with no Refresh button, for information that's already known locally (the running build). */
+	private static Node staticCard(String heading, String status, List<String> lines) {
+		Label title = new Label(heading);
+		title.getStyleClass().add("subtitle");
+		Label statusLabel = new Label(status);
+		statusLabel.getStyleClass().add("status");
+		statusLabel.setWrapText(true);
+		ListView<String> details = new ListView<>();
+		details.getItems().setAll(lines);
+		details.setPrefHeight(80);
+		VBox node = new VBox(6, title, statusLabel, details);
+		node.setPrefWidth(CARD_WIDTH);
+		node.setPadding(new Insets(10));
+		node.setStyle("-fx-background-color: white; -fx-background-radius: 8;"
+				+ " -fx-border-color: #dadce0; -fx-border-radius: 8;");
+		return node;
 	}
 
 	/** Runs the fetch off the FX thread and reports the outcome on the card when it returns. */

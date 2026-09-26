@@ -201,6 +201,21 @@ Last reviewed: 2026-09-26
   no JDK installed: Settings → import credentials → sign in → run a backup all worked
   from the app-image build.
 
+- [x] Header identity polish: the header shows the app version (from Spring
+  Boot's `BuildProperties`, via a new `ApplicationInfo` domain model and
+  `ApplicationInfoConfiguration`, with `app.version` preferred over the
+  Maven `project.version`/`-SNAPSHOT`), the admin's email-domain favicon
+  (Google's public favicon service — there is no API for a Workspace org's
+  own custom logo), and the signed-in admin's avatar. The avatar comes from
+  Drive `about.get` `user(displayName,photoLink)` via the service account
+  impersonating the admin (`DriveUserProfilePort`/`GoogleDriveUserProfileAdapter`,
+  mirroring the existing `DriveUsageQuotaPort` slice) — no new OAuth scope —
+  shown as initials right after sign-in and replaced by the photo once it
+  loads, or left as initials if there is none or it fails to load. The
+  version also appears on the login screen and in a new static Application
+  card on the Technical info tab. See **Main window layout** and
+  **Technical info tab**.
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
@@ -208,12 +223,7 @@ Last reviewed: 2026-09-26
 
 ### Not started
 
-- [ ] Header identity polish: app version (header, login screen, and a new
-  Application card on the Technical info tab, from Spring Boot's
-  `BuildProperties`/`app.version`), the admin's email-domain favicon, and the
-  signed-in admin's avatar (Drive `about.get` `user.photoLink` via the
-  service account impersonating the admin — no new OAuth scope — falling
-  back to initials). See **Main window layout** and **Technical info tab**.
+None currently.
 
 Update the status markers and the `Last reviewed` date as each vertical slice
 is completed; keep [gdrive-backup-app.md](gdrive-backup-app.md) as the source
@@ -277,8 +287,8 @@ of truth for expected behavior.
   click-per-row list.
 - [x] Windows packaging and clean-machine verification (shipped as a self-contained
   app-image, not an installer — see the Completed list).
-- [ ] Header identity polish: app version, domain favicon, admin avatar (see
-  the Not started item above).
+- [x] Header identity polish: app version, domain favicon, admin avatar (see
+  the Completed list).
 
 Implementation sequence: runtime location selection; backup-job options and
 state; drive scope selection; progress/cancellation/recovery; per-drive archive

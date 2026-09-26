@@ -32,6 +32,9 @@ import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
+import org.nm.gdrive_backup.domain.port.in.DriveUserProfileUseCase;
+import org.nm.gdrive_backup.domain.model.ApplicationInfo;
+import org.nm.gdrive_backup.adapter.in.javafx.ApplicationInfoText;
 import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.BackupDrivePanel;
 import org.nm.gdrive_backup.adapter.in.javafx.BackupModePicker;
@@ -81,6 +84,8 @@ public class JavaFxApplication extends Application {
 	private static CloudQuotaLimitUseCase cloudQuotaLimitUseCase;
 	private static DriveReadPort driveReadPort;
 	private static DriveBackupUseCase driveBackupUseCase;
+	private static DriveUserProfileUseCase driveUserProfileUseCase;
+	private static ApplicationInfo applicationInfo = ApplicationInfo.unknown();
 	private static String previewUserEmail;
 	private static BackupLocationUseCase backupLocationUseCase;
 	private static CredentialConfigurationUseCase credentialConfigurationUseCase;
@@ -119,6 +124,10 @@ public class JavaFxApplication extends Application {
 		springContext = context;
 	}
 
+	static void setApplicationInfo(ApplicationInfo info) {
+		applicationInfo = info == null ? ApplicationInfo.unknown() : info;
+	}
+
 	static void setLoginUseCase(GoogleLoginUseCase useCase) {
 		loginUseCase = useCase;
 	}
@@ -153,7 +162,8 @@ public class JavaFxApplication extends Application {
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
 			DriveReadPort readPort, WorkspaceUserListingUseCase workspaceUserUseCase,
 			DriveUsageQuotaUseCase usageQuotaUseCase, WorkspaceUsageReportUseCase usageReportUseCase,
-			CloudQuotaLimitUseCase cloudQuotaUseCase, DriveBackupUseCase backupUseCase) {
+			CloudQuotaLimitUseCase cloudQuotaUseCase, DriveBackupUseCase backupUseCase,
+			DriveUserProfileUseCase userProfileUseCase) {
 		serviceAccountUseCase = authenticationUseCase;
 		driveReadPort = readPort;
 		workspaceUserListingUseCase = workspaceUserUseCase;
@@ -161,6 +171,7 @@ public class JavaFxApplication extends Application {
 		workspaceUsageReportUseCase = usageReportUseCase;
 		cloudQuotaLimitUseCase = cloudQuotaUseCase;
 		driveBackupUseCase = backupUseCase;
+		driveUserProfileUseCase = userProfileUseCase;
 	}
 
 	@Override
@@ -195,6 +206,8 @@ public class JavaFxApplication extends Application {
 		title.getStyleClass().add("title");
 		Label subtitle = new Label("Sign in to continue");
 		subtitle.getStyleClass().add("subtitle");
+		Label version = new Label(ApplicationInfoText.versionLabel(applicationInfo));
+		version.getStyleClass().add("scope");
 		Label scope = new Label("Read-only access to Google Drive");
 		scope.getStyleClass().add("scope");
 		connectionStatus.getStyleClass().add("status");
@@ -205,7 +218,7 @@ public class JavaFxApplication extends Application {
 		Button settingsButton = new Button("Settings");
 		settingsButton.getStyleClass().add("secondary-button");
 		settingsButton.setOnAction(event -> showSettings());
-		VBox box = new VBox(12, title, subtitle, signIn, settingsButton, scope, connectionStatus);
+		VBox box = new VBox(12, title, version, subtitle, signIn, settingsButton, scope, connectionStatus);
 		box.setAlignment(Pos.CENTER);
 		return box;
 	}
@@ -233,9 +246,10 @@ public class JavaFxApplication extends Application {
 	/** Builds the signed-in window: the common header above the Backup, Archives and Technical info tabs. */
 	private void buildMainView() {
 		loginView = buildLoginView();
-		header = new SessionHeaderPanel(user -> reloadForSelectedUser(), this::signOut, this::showSettings);
+		header = new SessionHeaderPanel(applicationInfo, user -> reloadForSelectedUser(), this::signOut,
+				this::showSettings);
 		technicalInfoPanel = new TechnicalInfoPanel(serviceAccountUseCase, driveUsageQuotaUseCase,
-				workspaceUsageReportUseCase, cloudQuotaLimitUseCase, this::selectedUserEmail);
+				workspaceUsageReportUseCase, cloudQuotaLimitUseCase, applicationInfo, this::selectedUserEmail);
 
 		locationsPanel = new LocationsPanel(syncNow);
 		locationsPanel.onChanged(() -> {
@@ -396,11 +410,13 @@ public class JavaFxApplication extends Application {
 					connectionStatus.setText("");
 					header.show();
 					header.setStatus("Google connected");
+					header.showAdmin(loginSession.userEmail());
 					showMainView();
 					locationsPanel.show();
 					archiveManagerPanel.show();
 					fileHistoryPanel.show();
 					loadWorkspaceUsers();
+					loadAdminProfile(loginSession);
 				}));
 	}
 
@@ -460,6 +476,25 @@ public class JavaFxApplication extends Application {
 				show(syncNow);
 			}
 			reloadForSelectedUser();
+		}));
+	}
+
+	/**
+	 * Fetches the signed-in admin's Drive profile (name, photo) for the header avatar. Best-effort: on failure the
+	 * header keeps showing initials from the email alone. Guarded against a sign-out that happens while this is
+	 * in flight, since the result would otherwise land on a header that has moved on to a new session or none.
+	 */
+	private void loadAdminProfile(GoogleLoginSession loginSession) {
+		if (serviceAccountUseCase == null || driveUserProfileUseCase == null) {
+			return;
+		}
+		CompletableFuture.supplyAsync(() -> {
+			ServiceAccountAccess access = serviceAccountUseCase.authenticateAs(loginSession.userEmail());
+			return driveUserProfileUseCase.getProfile(access);
+		}).whenComplete((profile, error) -> Platform.runLater(() -> {
+			if (error == null && session == loginSession) {
+				header.showAdminProfile(profile);
+			}
 		}));
 	}
 
