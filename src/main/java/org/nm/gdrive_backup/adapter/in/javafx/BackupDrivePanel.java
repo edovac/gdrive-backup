@@ -13,6 +13,9 @@ import org.nm.gdrive_backup.domain.model.BackupProgress;
 import org.nm.gdrive_backup.domain.model.BackupResult;
 import org.nm.gdrive_backup.domain.model.ScopeArchives;
 
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleObjectProperty;
+import javafx.beans.value.ChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -30,6 +33,10 @@ import javafx.scene.layout.VBox;
  * The "What" step on the Backup tab: which drive(s) to back up, each row showing its last archive (or chain
  * problem) when idle, and live/final status once a job has started. Selection state lives here rather than in
  * {@code JavaFxApplication}, keyed by drive identity, so it survives cell reuse as the list scrolls.
+ *
+ * <p>Each drive's status is an {@link ObjectProperty} that its (at most one) rendered cell listens to. A progress
+ * tick updates only the running drives' properties, so the affected cell's own labels repaint in place; nothing
+ * calls {@link ListView#refresh()} on that hot path, which would rebuild every visible cell and visibly flicker.
  */
 public final class BackupDrivePanel {
 
@@ -41,6 +48,7 @@ public final class BackupDrivePanel {
 
 	private final Set<AvailableDrive> checkedDrives = new HashSet<>();
 	private final Map<String, ScopeArchives> catalogByKey = new HashMap<>();
+	private final Map<AvailableDrive, ObjectProperty<BackupDriveText.DriveStatus>> statusProperties = new HashMap<>();
 
 	private String userEmail;
 	private List<AvailableDrive> runningDrives;
@@ -59,10 +67,15 @@ public final class BackupDrivePanel {
 		selectNone.getStyleClass().add("link-button");
 		selectAll.setOnAction(event -> {
 			checkedDrives.addAll(list.getItems());
+			// Individual checkboxes reflect their own click immediately; a bulk change needs every row's
+			// checkbox resynced, which is what list.refresh() is for here — a rare, one-off action, unlike the
+			// per-progress-tick updates below, so it doesn't cause the same flicker.
+			list.refresh();
 			selectionChanged();
 		});
 		selectNone.setOnAction(event -> {
 			checkedDrives.clear();
+			list.refresh();
 			selectionChanged();
 		});
 		Region spacer = new Region();
@@ -89,6 +102,7 @@ public final class BackupDrivePanel {
 	public void setDrives(List<AvailableDrive> drives, String userEmail) {
 		this.userEmail = userEmail;
 		checkedDrives.clear();
+		statusProperties.clear();
 		runningDrives = null;
 		finishedResults = null;
 		latestProgress = null;
@@ -100,6 +114,7 @@ public final class BackupDrivePanel {
 		userEmail = null;
 		checkedDrives.clear();
 		catalogByKey.clear();
+		statusProperties.clear();
 		runningDrives = null;
 		finishedResults = null;
 		latestProgress = null;
@@ -118,24 +133,29 @@ public final class BackupDrivePanel {
 		for (ScopeArchives scope : scopes) {
 			catalogByKey.put(scope.scope().key(), scope);
 		}
-		list.refresh();
+		refreshAllStatuses();
 	}
 
 	public void runStarted(List<AvailableDrive> drives) {
 		runningDrives = List.copyOf(drives);
 		finishedResults = null;
 		latestProgress = null;
-		list.refresh();
+		refreshAllStatuses();
 	}
 
+	/** Called on every progress tick (a few times a second): touches only the running drives' own properties. */
 	public void onProgress(BackupProgress progress) {
 		latestProgress = progress;
-		list.refresh();
+		if (runningDrives != null) {
+			runningDrives.forEach(this::refreshStatus);
+		}
 	}
 
 	public void runFinished(List<BackupResult> results) {
 		finishedResults = results;
-		list.refresh();
+		if (runningDrives != null) {
+			runningDrives.forEach(this::refreshStatus);
+		}
 	}
 
 	public void setDisabled(boolean disabled) {
@@ -162,7 +182,6 @@ public final class BackupDrivePanel {
 
 	private void selectionChanged() {
 		countLabel.setText(BackupDriveText.selectionCount(checkedDrives.size(), list.getItems().size()));
-		list.refresh();
 		selectionListener.run();
 	}
 
@@ -170,7 +189,7 @@ public final class BackupDrivePanel {
 		return userEmail == null ? null : catalogByKey.get(BackupDriveText.scopeKey(drive, userEmail));
 	}
 
-	private BackupDriveText.DriveStatus statusFor(AvailableDrive drive) {
+	private BackupDriveText.DriveStatus computeStatus(AvailableDrive drive) {
 		if (runningDrives != null) {
 			int index = runningDrives.indexOf(drive);
 			if (index >= 0) {
@@ -183,6 +202,19 @@ public final class BackupDrivePanel {
 			}
 		}
 		return BackupDriveText.idleStatus(catalogFor(drive), ZoneId.systemDefault());
+	}
+
+	/** The observable status a drive's (at most one) rendered cell listens to; lazily seeded on first access. */
+	private ObjectProperty<BackupDriveText.DriveStatus> statusProperty(AvailableDrive drive) {
+		return statusProperties.computeIfAbsent(drive, d -> new SimpleObjectProperty<>(computeStatus(d)));
+	}
+
+	private void refreshStatus(AvailableDrive drive) {
+		statusProperty(drive).set(computeStatus(drive));
+	}
+
+	private void refreshAllStatuses() {
+		list.getItems().forEach(this::refreshStatus);
 	}
 
 	private static void applyTone(Label pill, BackupDriveText.Tone tone) {
@@ -209,7 +241,9 @@ public final class BackupDrivePanel {
 		private final HBox top = new HBox(10, checkBox, icon, nameBox, spacer, pill);
 		private final Label detailLabel = new Label();
 		private final VBox layout = new VBox(4, top, detailLabel);
+		private final ChangeListener<BackupDriveText.DriveStatus> statusListener = (observable, was, now) -> applyStatus(now);
 		private AvailableDrive current;
+		private ObjectProperty<BackupDriveText.DriveStatus> boundStatus;
 
 		DriveCell() {
 			icon.getStyleClass().add("drive-icon");
@@ -237,6 +271,10 @@ public final class BackupDrivePanel {
 		@Override
 		protected void updateItem(AvailableDrive drive, boolean empty) {
 			super.updateItem(drive, empty);
+			if (boundStatus != null) {
+				boundStatus.removeListener(statusListener);
+				boundStatus = null;
+			}
 			current = drive;
 			if (empty || drive == null) {
 				setGraphic(null);
@@ -249,13 +287,19 @@ public final class BackupDrivePanel {
 			icon.setText(drive.shared() ? "⧉" : "▲");
 			nameLabel.setText(drive.name());
 			subtitleLabel.setText(BackupDriveText.subtitle(drive, userEmail));
-			BackupDriveText.DriveStatus status = statusFor(drive);
+			boundStatus = statusProperty(drive);
+			applyStatus(boundStatus.get());
+			boundStatus.addListener(statusListener);
+			setGraphic(layout);
+		}
+
+		private void applyStatus(BackupDriveText.DriveStatus status) {
 			pill.setText(status.label());
 			applyTone(pill, status.tone());
 			detailLabel.setText(status.detail());
-			detailLabel.setVisible(!status.detail().isEmpty());
-			detailLabel.setManaged(!status.detail().isEmpty());
-			setGraphic(layout);
+			boolean hasDetail = !status.detail().isEmpty();
+			detailLabel.setVisible(hasDetail);
+			detailLabel.setManaged(hasDetail);
 		}
 	}
 }
