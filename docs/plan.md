@@ -194,7 +194,10 @@ Last reviewed: 2026-09-26
   environment nor GitHub's Windows runners are guaranteed to have; distributed as a
   zipped folder instead. A `windows-package` Maven profile (Windows-only activation)
   builds it, and a non-blocking `windows-latest` CI job builds and uploads it as an
-  artifact on every push. Verified end to end on a second, clean Windows machine with
+  artifact on every push. Pushing a `v*` tag runs `.github/workflows/release.yml`,
+  which gates on `./mvnw verify`, builds the app-image with `-Dapp.version` taken
+  from the tag, and publishes it as `gdrive-backup-<version>-windows-x64.zip` on a
+  GitHub Release with generated notes. Verified end to end on a second, clean Windows machine with
   no JDK installed: Settings → import credentials → sign in → run a backup all worked
   from the app-image build.
 

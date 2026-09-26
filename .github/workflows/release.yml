@@ -1,0 +1,69 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds the Windows app-image, zips it and publishes
+# it as a GitHub Release. Rerun manually from the Actions tab with the tag selected.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Same gate as CI: never release a build whose tests fail.
+      - name: Build and test
+        run: ./mvnw -B verify
+
+  windows-release:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # jpackage only accepts a plain dotted numeric version, so drop the tag's "v".
+      - name: Resolve version
+        run: |
+          if ($env:GITHUB_REF_TYPE -ne 'tag') { throw "Run this workflow from a v* tag, not '$env:GITHUB_REF_NAME'." }
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($version -notmatch '^\d+(\.\d+){0,2}$') { throw "Tag '$env:GITHUB_REF_NAME' is not vMAJOR[.MINOR[.PATCH]]." }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build self-contained app-image
+        run: ./mvnw.cmd -B -P windows-package -DskipTests "-Dapp.version=$env:VERSION" package
+
+      - name: Zip app-image
+        run: Compress-Archive -Path "target/app-image/Google Drive Backup" -DestinationPath "gdrive-backup-$env:VERSION-windows-x64.zip"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME "gdrive-backup-$env:VERSION-windows-x64.zip" --title "v$env:VERSION" --generate-notes

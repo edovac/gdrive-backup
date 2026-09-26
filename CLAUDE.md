@@ -40,6 +40,15 @@ Integration tests hit real Google accounts. They are skipped unless the matching
 ./mvnw verify -Dgoogle.oauth.integration=true             # interactive OAuth IT
 ```
 
+### Releasing
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It runs the tests, builds the Windows app-image, which bundles the `.exe` and the JRE, and publishes it as a zip on a GitHub Release. The tag must be numeric (`vMAJOR[.MINOR[.PATCH]]`) because jpackage rejects other versions.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+./mvnw.cmd -P windows-package -DskipTests -Dapp.version=0.1.0 package   # local build of the same app-image
+```
+
 ### Runtime configuration
 
 Configuration comes from environment variables bound through Spring relaxed binding. The gitignored `.env` holds local values. Spring Boot does not load `.env` itself, so export it first (`set -a; source .env; set +a`).
