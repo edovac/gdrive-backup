@@ -28,7 +28,8 @@
 
 ## Project Context
 
-- The product requirements, planned Google Drive sync algorithm, data model, security constraints, and build order are documented in [gdrive-backup-app.md](docs/gdrive-backup-app.md).
+- The product requirements, Google Drive sync algorithm, data model, and security constraints are documented in [gdrive-backup-app.md](docs/gdrive-backup-app.md).
+- Implementation progress, priorities, and build order are tracked in [plan.md](docs/plan.md); keep status there, not in the requirements document.
 - Keep service-account domain-wide delegation as the backend data path and OAuth as the admin UI access gate; do not introduce a second Drive-fetching path for previews.
 - Treat service-account keys and OAuth tokens as sensitive credentials: never commit them or store them in plain files.
 - Add domain/application ports before framework adapters, and add focused tests for use cases and adapter boundaries as features are implemented.

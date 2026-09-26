@@ -1,7 +1,7 @@
 # Claude Model Selection Guide
 
 Which Claude model to use in Claude Code for each task on the
-[gdrive-backup-app.md](gdrive-backup-app.md) roadmap, on the **Claude Pro**
+[plan.md](docs/plan.md) roadmap, on the **Claude Pro**
 subscription.
 
 **Constraint: use only models included in the Pro plan. Never use usage
@@ -115,7 +115,7 @@ Legend:
 | Localized bug fixes and compile errors | 🟢 at `medium` effort | |
 | Non-deterministic bugs (FX thread, `CompletableFuture`, SQLite locking, WSL browser interop) | 🔵 at `xhigh` | Follow the safeguards in §4 |
 | Code review before merging a P0 slice | 🔵 | |
-| Updating roadmap status markers in `gdrive-backup-app.md` | ⚪ | Mechanical, but check the progress note against what was actually built |
+| Updating roadmap status markers in `docs/plan.md` | ⚪ | Mechanical, but check the progress note against what was actually built |
 | Setup guides (e.g. `google-admin-console-setup.md`) | 🟢 | |
 
 ---

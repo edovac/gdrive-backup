@@ -10,11 +10,11 @@ AGENTS.md is the canonical source for architecture rules, build conventions, and
 
 ## Use cases and project tracking
 
-[gdrive-backup-app.md](docs/gdrive-backup-app.md) is both the requirements spec and the working roadmap:
+Requirements and the implementation plan are kept in separate documents:
 
-- **Implementation progress** (`[x]` / `[-]` / `[ ]`) and the **Approved prioritization** (P0–P3 plus the implementation sequence) decide what to work on next.
-- When a vertical slice is completed or advanced, update its status marker (and progress note) and bump the `Last reviewed` date.
-- The sections below the roadmap (core requirements, auth model, data model, sync algorithm, export rules, storage layout, UI) define expected behavior. Check new work against them and flag conflicts instead of silently diverging.
+- [gdrive-backup-app.md](docs/gdrive-backup-app.md) is the requirements spec (core requirements, auth model, data model, sync algorithm, export rules, storage layout, UI, known limitations). It defines expected behavior. Check new work against it and flag conflicts instead of silently diverging.
+- [plan.md](docs/plan.md) is the working roadmap. Its **Implementation progress** (`[x]` / `[-]` / `[ ]`) and **Approved prioritization** (P0–P3 plus the implementation sequence) decide what to work on next.
+- When a vertical slice is completed or advanced, update its status marker (and progress note) in `plan.md` and bump its `Last reviewed` date. When the work changes expected behavior, update the requirements spec too.
 
 [google-admin-console-setup.md](docs/google-admin-console-setup.md) documents the manual domain-wide delegation setup.
 
