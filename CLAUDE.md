@@ -51,13 +51,17 @@ git tag v0.1.0 && git push origin v0.1.0
 
 ### Runtime configuration
 
-Configuration comes from environment variables bound through Spring relaxed binding. The gitignored `.env` holds local values. Spring Boot does not load `.env` itself, so export it first (`set -a; source .env; set +a`).
+The app reads no credentials from environment variables or files at runtime. The admin imports them in the **Settings** dialog (`SettingsPanel`, reachable signed in or out) through `CredentialConfigurationUseCase`, which validates each file with the Google parsers that later use it and stores it through `CredentialStoragePort`. On Windows that is `WindowsCredentialManagerAdapter` (Windows Credential Manager, each value chunked under `gdrive-backup/<name>/chunk-N` plus a `manifest` written last); elsewhere, including Linux CI, `InMemoryCredentialStorageAdapter`, which forgets everything on exit. Import and clear take the `BackupActivity` write lock, so they fail while a backup runs. The diagram in the spec's **Security configuration and storage** section shows the whole picture.
 
-| Env var | Property | Effect when unset |
+| Stored value | Read by | Effect when missing |
 |---|---|---|
-| `GOOGLE_OAUTH_CLIENT_SECRETS` | `google.oauth.client-secrets` | Sign-in fails with a "not configured" message |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | `google.service-account.key` | All Google-backed beans are replaced by fallbacks (see below) |
-| `GOOGLE_CLOUD_PROJECT_ID` | `google.service-account.project-id` | Cloud quota limits unavailable |
+| OAuth client secrets JSON | `GoogleOAuthClientAdapter` at sign-in | Sign-in fails with a "not configured" message |
+| Service-account key JSON | `GoogleServiceAccountAdapter` on each `authenticateAs` | Every Drive/Admin call throws `GoogleOAuthException` pointing to Settings |
+| Cloud project id | `GoogleCloudQuotaLimitAdapter` | Cloud quota limits unavailable |
+
+OAuth and delegated access tokens are held in memory only (`MemoryDataStoreFactory`); the admin signs in on every launch.
+
+The `*IT` tests are the exception: they read `GOOGLE_SERVICE_ACCOUNT_KEY`, `GOOGLE_IMPERSONATED_USER` and `GOOGLE_OAUTH_CLIENT_SECRETS` from the environment. The gitignored `.env` can hold them; export it first (`set -a; source .env; set +a`).
 
 There is no env var for the impersonated/preview user. OAuth login requests `openid` and the email scope alongside `drive.readonly`; the admin's email comes back in the ID token and is impersonated for Admin SDK calls and used as the default preview user (see `GoogleOAuthClientAdapter`, `GoogleLoginSession.userEmail()`).
 
@@ -67,7 +71,7 @@ The backup location is deliberately not configurable through the environment. Ev
 
 **Startup and UI wiring.** `GdriveBackupApplication.main` starts the Spring context (non-headless) and pulls the use-case beans out of it. It passes them into static setters on `JavaFxApplication`, then calls `Application.launch`. `JavaFxApplication` builds most of the UI in code in that one class, with no FXML. The panels live in the `adapter.in.javafx` package (`ArchiveManagerPanel`, `FileHistoryPanel`, `TechnicalInfoPanel`, `SessionHeaderPanel`, `OperationProgressPanel`), each with its JavaFX-free wording in a matching `*Text` class (e.g. `ArchiveManagerText`); `JavaFxApplication` only assembles them into the header and the Backup / Archives / History / Technical info tabs. New UI should follow that pattern instead of growing `JavaFxApplication`. To expose a new use case in the UI, pass it in through `GdriveBackupApplication` and a static setter on `JavaFxApplication`. Long operations from the panel reuse the shared progress panel through two hooks (start and finish) the application supplies. UI work runs off the FX thread with `CompletableFuture.supplyAsync(...)` and returns to it with `Platform.runLater(...)`.
 
-**Bean composition.** Domain services are plain Java with no Spring annotations. They are built in `@Bean` methods in `configuration/*Configuration`. The SQLite adapters are the exception: they are `@Component`s. Google-backed beans are guarded by `@ConditionalOnExpression` on `google.service-account.key`. When the key is missing, `ServiceAccountConfiguration` registers a fallback lambda for each use case/port that throws `GoogleOAuthException` with a configuration hint. This keeps the app and `GdriveBackupApplicationTest` (a plain `@SpringBootTest`) booting with no credentials; new Google-backed beans should follow the same pattern. `GoogleDriveAdapter` implements several Drive ports, and each port gets its own bean, with `@Qualifier`/`@Primary` choosing between them.
+**Bean composition.** Domain services are plain Java with no Spring annotations. They are built in `@Bean` methods in `configuration/*Configuration`. The SQLite adapters are the exception: they are `@Component`s. Google-backed beans are always registered and read their credentials lazily from `CredentialStoragePort` on each call, throwing `GoogleOAuthException` with a "configure it in Settings" hint when a value is missing. Nothing is read at startup, so the app and `GdriveBackupApplicationTest` (a plain `@SpringBootTest`) boot with no credentials, and a credential imported in Settings takes effect without a restart; new Google-backed beans should follow the same pattern. `GoogleDriveAdapter` implements several Drive ports, and each port gets its own bean, with `@Qualifier`/`@Primary` choosing between them.
 
 **Access flow.** Every Drive/Admin operation starts with `ServiceAccountAuthenticationUseCase.authenticateAs(userEmail)`, which returns an opaque `ServiceAccountAccess`. That value is passed into the use case or port, and the adapter turns it into delegated Google credentials. The admin OAuth session only unlocks the UI.
 

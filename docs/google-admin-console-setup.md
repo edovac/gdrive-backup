@@ -199,36 +199,31 @@ The signed-in user must have access to the Drive data that the application is ex
 
 ## 9. Configure the application
 
-Set the following environment variables before starting the application:
+Credentials are configured inside the application, not through environment
+variables:
 
-```bash
-export GOOGLE_SERVICE_ACCOUNT_KEY=/home/edoardo/gdrive-service-account.json
-export GOOGLE_CLOUD_PROJECT_ID=your-cloud-project-id
-```
+1. Start the application (the `.exe` in the release zip, or
+   `./mvnw spring-boot:run` from a checkout).
+2. On the sign-in screen, click **Settings**.
+3. Under **Service-account key**, click **Import file...** and pick the
+   service-account JSON key.
+4. Under **OAuth client secrets**, click **Import file...** and pick the
+   desktop OAuth client-secrets JSON.
+5. Enter the **Cloud project id** and click **Save**.
+6. Close Settings and sign in.
 
-The OAuth UI login also requires a desktop OAuth client-secrets file:
+Each file is checked with the same Google libraries that later use it, and an
+invalid file is rejected. Valid values are stored in Windows Credential
+Manager, so they survive restarts. Once imported, delete the downloaded JSON
+files: the application does not read them again. On non-Windows machines the
+values are kept in memory only and must be imported again after every restart.
 
-```bash
-export GOOGLE_OAUTH_CLIENT_SECRETS=/home/edoardo/client_secret.json
-```
+There is no setting for the impersonated/preview user: it is derived from
+whoever signs in through the OAuth login (step 8 above).
 
-There is no environment variable for the impersonated/preview user: it is
-derived from whoever signs in through the OAuth login (step 8 above).
-
-Start the application:
-
-```bash
-./mvnw spring-boot:run
-```
-
-Or provide the values for one command:
-
-```bash
-GOOGLE_OAUTH_CLIENT_SECRETS=/home/edoardo/client_secret.json \
-GOOGLE_SERVICE_ACCOUNT_KEY=/home/edoardo/gdrive-service-account.json \
-GOOGLE_CLOUD_PROJECT_ID=your-cloud-project-id \
-./mvnw spring-boot:run
-```
+The opt-in integration tests (`*IT`) are the only place that still read
+`GOOGLE_SERVICE_ACCOUNT_KEY`, `GOOGLE_IMPERSONATED_USER` and
+`GOOGLE_OAUTH_CLIENT_SECRETS` from the environment.
 
 ## 10. Verify the setup
 
@@ -246,7 +241,7 @@ If the UI shows `Google connected, Drive preview unavailable`, check:
 4. Both scopes are authorized exactly as shown above.
 5. The Drive API and Admin SDK API are enabled.
 6. The Workspace user exists and has access to the expected Drive data.
-7. `GOOGLE_CLOUD_PROJECT_ID` is the project that owns the service account and
+7. The Cloud project id in **Settings** is the project that owns the service account and
 	has the Service Usage Viewer role if Cloud quota limits are unavailable.
 8. Changes to domain-wide delegation or IAM have had a few minutes to propagate.
 
@@ -255,6 +250,7 @@ If the UI shows `Google connected, Drive preview unavailable`, check:
 - Keep service-account JSON keys outside the repository.
 - Do not commit OAuth client-secrets JSON, access tokens, refresh tokens, or service-account keys.
 - Use the minimum required scopes.
-- Restrict local key-file permissions.
+- Delete the downloaded key and client-secrets files after importing them in **Settings**; until then, restrict their file permissions.
+- Credential Manager entries are readable by any process running as the same Windows user; run the app under a dedicated admin account.
 - Rotate and revoke keys if they are exposed.
 - Use a dedicated service account for this application.

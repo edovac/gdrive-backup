@@ -254,8 +254,11 @@ This is what actually performs the org-wide backup sweep.
   `ServiceAccountCredentials.createDelegated(userEmail)` (from
   `google-auth-library-oauth2-http`) to act as that user and read their My
   Drive + the Shared Drives they can see.
-- The service account JSON key is highly sensitive — restrict file
-  permissions; consider encrypting at rest (e.g. Jasypt).
+- The service account JSON key is highly sensitive. The admin imports it
+  through the **Settings** dialog into Windows Credential Manager (see
+  **Security configuration and storage**); the app never reads it from a
+  file path or environment variable at runtime, so the downloaded file can be
+  deleted after import.
 
 ### 2. OAuth login (admin UI access gate + preview)
 
@@ -275,8 +278,125 @@ This is what actually performs the org-wide backup sweep.
   impersonation** path (pick an org user → impersonate → browse) so there's
   only one Drive-fetching code path shared between backend sweep and UI
   preview.
-- Store the admin's OAuth token in Windows Credential Manager (e.g. via
-  `com.microsoft.credentialstorage` or a JNA wrapper), not a plain file.
+- The OAuth client secrets JSON is imported through **Settings** into
+  Windows Credential Manager, like the service-account key.
+- The admin's OAuth token is never persisted: it lives in memory for the
+  session only, so the admin signs in again on every launch. Nothing is
+  written to a plain file.
+
+### Security configuration and storage
+
+Where each secret lives, who writes it and who reads it. The three
+configuration values (service-account key JSON, OAuth client secrets JSON,
+Cloud project id) are imported by the admin in the **Settings** dialog
+(reachable before and after sign-in, since sign-in itself needs the OAuth
+client secrets), validated
+with the same Google parsers that later use them, and stored in Windows
+Credential Manager through `CredentialStoragePort`. The chosen JSON file is
+read once at import and never referenced again, so the admin can delete it
+afterwards. Nothing secret is written under `backupRoot`: that folder holds
+only backup data.
+
+```mermaid
+flowchart LR
+    subgraph Admin["Admin workstation"]
+        File["Downloaded JSON files<br/>(service-account key,<br/>OAuth client secrets)"]
+        subgraph App["gdrive-backup app"]
+            Settings["SettingsPanel<br/>(Settings dialog)"]
+            ConfigSvc["CredentialConfigurationService<br/>validate, then import<br/>(blocked while a backup runs)"]
+            Port[["CredentialStoragePort"]]
+            OAuth["GoogleOAuthClientAdapter<br/>admin sign-in"]
+            SA["GoogleServiceAccountAdapter<br/>delegated credentials"]
+            Quota["GoogleCloudQuotaLimitAdapter"]
+            Memory[("In-memory only<br/>OAuth access/refresh token,<br/>delegated access tokens")]
+        end
+        subgraph WCM["Windows Credential Manager (per Windows user)"]
+            K1["gdrive-backup/service-account-key<br/>chunk-0..N + manifest"]
+            K2["gdrive-backup/oauth-client-secrets<br/>chunk-0..N + manifest"]
+            K3["gdrive-backup/project-id"]
+        end
+        subgraph Root["backupRoot (default ~/.gdrive-backup)"]
+            DB[("backup.db<br/>metadata, events, cursors")]
+            Arch[("archives/*.zip<br/>file content + manifest")]
+        end
+    end
+
+    subgraph Google["Google"]
+        Login["OAuth consent<br/>(drive.readonly, openid, email)"]
+        DWD["Domain-wide delegation<br/>(drive.readonly,<br/>admin.directory.user.readonly)"]
+        APIs["Drive API / Admin SDK"]
+        CloudQ["Cloud quota API"]
+    end
+
+    File -- "file chooser, read once" --> Settings --> ConfigSvc --> Port
+    Port -- "chunked write" --> K1 & K2 & K3
+    K2 -. "read at sign-in" .-> OAuth
+    K1 -. "read per impersonation" .-> SA
+    K3 -. "read" .-> Quota
+    OAuth <--> Login
+    OAuth -- "ID token email =<br/>who to impersonate" --> SA
+    OAuth --- Memory
+    SA --- Memory
+    SA <--> DWD --> APIs
+    Quota --> CloudQ
+    APIs -- "streamed content" --> Arch
+    APIs -- "metadata, committed after publish" --> DB
+```
+
+Rules the diagram encodes:
+
+- **Two credentials, two jobs.** The OAuth client secrets only drive the admin
+  sign-in; the resulting token unlocks the UI and yields the admin's email. All
+  Drive and Admin SDK data comes through the service-account key with
+  domain-wide delegation, impersonating either the signed-in admin (directory
+  listing, default preview) or the org user being backed up.
+- **Secrets at rest live only in Credential Manager**, scoped to the Windows
+  account running the app. Each value is split into chunks of at most 1000
+  characters (a single Credential Manager entry is too small for a key JSON)
+  plus a manifest written last, so a half-written value is never readable.
+  Clearing a value in Settings deletes the manifest and every chunk.
+- **Tokens are never persisted.** The OAuth token and the delegated access
+  tokens are kept in memory for the session only, so the admin signs in again
+  on every launch.
+- **Off Windows** (developer machines, CI), `InMemoryCredentialStorageAdapter`
+  replaces Credential Manager: imported values are lost when the app exits.
+- **Credential changes are exclusive with backups.** Import and clear go
+  through `BackupActivity.changeLocations`, the same write lock a backup-root
+  change takes, so the credentials cannot change under a running backup.
+- **`backupRoot` holds data, not secrets.** It is not encrypted by the app;
+  protect it with file-system permissions or disk encryption (BitLocker), since
+  the archives contain every backed-up user's file content.
+
+The runtime sequence for a sign-in followed by a backup:
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant UI as JavaFX UI
+    participant OAuth as GoogleOAuthClientAdapter
+    participant WCM as Credential Manager
+    participant SA as GoogleServiceAccountAdapter
+    participant G as Google (OAuth / Drive / Admin SDK)
+    participant Root as backupRoot
+
+    Admin->>UI: Sign in
+    UI->>OAuth: login()
+    OAuth->>WCM: read oauth-client-secrets
+    OAuth->>G: loopback OAuth flow in browser
+    G-->>OAuth: access token + ID token (email)
+    OAuth-->>UI: opaque login session (email only)
+    Note over OAuth: token kept in memory, never stored
+
+    Admin->>UI: Start backup for selected drives
+    UI->>SA: authenticateAs(user email)
+    SA->>WCM: read service-account-key
+    SA->>G: delegated credentials (impersonate user)
+    G-->>SA: short-lived access token
+    SA-->>UI: opaque ServiceAccountAccess
+    UI->>G: list / changes / download (via Drive ports)
+    G-->>Root: content streamed into staged ZIP, then published
+    Note over Root: DB commit only after the ZIP is published
+```
 
 ---
 
