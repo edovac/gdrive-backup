@@ -30,7 +30,7 @@
 	<properties>
 		<java.version>25</java.version>
 		<javafx.version>25.0.1</javafx.version>
-		<mockito.version>5.23.0</mockito.version>
+		<mockito.version>5.24.0</mockito.version>
 		<!-- jpackage needs a plain dotted numeric version; the release workflow overrides it from the tag. -->
 		<app.version>0.0.1</app.version>
 	</properties>
