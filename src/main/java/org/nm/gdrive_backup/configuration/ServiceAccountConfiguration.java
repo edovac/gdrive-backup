@@ -4,6 +4,7 @@ import org.nm.gdrive_backup.adapter.out.google.GoogleDriveAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleServiceAccountAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleWorkspaceUserDirectoryAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleDriveUsageQuotaAdapter;
+import org.nm.gdrive_backup.adapter.out.google.GoogleDriveUserProfileAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleWorkspaceUsageReportAdapter;
 import org.nm.gdrive_backup.adapter.out.google.GoogleCloudQuotaLimitAdapter;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
@@ -12,18 +13,21 @@ import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
 import org.nm.gdrive_backup.domain.port.out.DriveUsageQuotaPort;
+import org.nm.gdrive_backup.domain.port.out.DriveUserProfilePort;
 import org.nm.gdrive_backup.domain.port.out.WorkspaceUsageReportPort;
 import org.nm.gdrive_backup.domain.port.out.CloudQuotaLimitPort;
 import org.nm.gdrive_backup.domain.port.out.WorkspaceUserDirectoryPort;
 import org.nm.gdrive_backup.domain.port.out.CredentialStoragePort;
 import org.nm.gdrive_backup.domain.port.in.ServiceAccountAuthenticationUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveUsageQuotaUseCase;
+import org.nm.gdrive_backup.domain.port.in.DriveUserProfileUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUsageReportUseCase;
 import org.nm.gdrive_backup.domain.port.in.CloudQuotaLimitUseCase;
 import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.out.ServiceAccountCredentialPort;
 import org.nm.gdrive_backup.domain.service.ServiceAccountAuthenticationService;
 import org.nm.gdrive_backup.domain.service.DriveUsageQuotaService;
+import org.nm.gdrive_backup.domain.service.DriveUserProfileService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUsageReportService;
 import org.nm.gdrive_backup.domain.service.CloudQuotaLimitService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
@@ -190,6 +194,11 @@ public class ServiceAccountConfiguration {
 	}
 
 	@Bean
+	DriveUserProfilePort driveUserProfilePort(GoogleServiceAccountAdapter adapter) {
+		return new GoogleDriveUserProfileAdapter(adapter);
+	}
+
+	@Bean
 	WorkspaceUsageReportPort workspaceUsageReportPort(GoogleServiceAccountAdapter adapter) {
 		return new GoogleWorkspaceUsageReportAdapter(adapter);
 	}
@@ -215,6 +224,11 @@ public class ServiceAccountConfiguration {
 	@Bean
 	DriveUsageQuotaUseCase driveUsageQuotaUseCase(DriveUsageQuotaPort port) {
 		return new DriveUsageQuotaService(port);
+	}
+
+	@Bean
+	DriveUserProfileUseCase driveUserProfileUseCase(DriveUserProfilePort port) {
+		return new DriveUserProfileService(port);
 	}
 
 	@Bean

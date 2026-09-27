@@ -140,6 +140,24 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<!--
+							Writes META-INF/build-info.properties so Spring's ProjectInfoAutoConfiguration
+							exposes a BuildProperties bean at runtime; app.version overrides project.version
+							(which carries -SNAPSHOT) with the plain tag version the release workflow passes.
+						-->
+						<id>build-info</id>
+						<goals>
+							<goal>build-info</goal>
+						</goals>
+						<configuration>
+							<additionalProperties>
+								<app.version>${app.version}</app.version>
+							</additionalProperties>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
