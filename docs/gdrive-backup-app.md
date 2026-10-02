@@ -600,17 +600,23 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
    **Settings** dialog (`DownloadConcurrencyUseCase`). Like the backup
    location it is not saved, so each launch starts from the property again;
    a change applies to the next backup run (each run reads the value when it
-   starts), and is refused while a backup is running. A ZIP can only be written by one thread, so each
-   download is first copied into a spool file next to the staged archive
-   (`.spool-*.tmp`), and a single writer then appends the spooled files to the
-   ZIP **in listing order** (full run) or change-feed order (incremental).
-   Entry order and entry names (including PDF-fallback renames, which depend on
-   the names already taken) are therefore identical to a one-at-a-time run.
-   Progress is the one exception: a file counts as processed when its download
-   finishes, not when the writer reaches it, so the counter follows download
-   completion rather than list order and does not stall behind one slow file.
-   At most twice the concurrency of fetched files wait to be
-   written, which bounds spool disk use. A stop request, a failed download or a
+   starts), and is refused while a backup is running. A ZIP can only be written
+   by one thread, so each download is first copied into a spool file next to the
+   staged archive (`.spool-*.tmp`), and a single writer then appends each
+   spooled file to the ZIP **as soon as its download completes**, not in listing
+   order. Writing in completion order is what keeps all the download slots busy:
+   one very large file occupies only its own slot while the others keep flowing,
+   instead of every file queued behind it waiting for it and the run degrading to
+   that single download. So the order of the entries inside a ZIP is not the
+   listing order and can differ between runs; nothing depends on it, because the
+   manifest lists the files in listing order and records each entry's name. The
+   entry names themselves do not depend on the order either: a full run
+   precomputes the name of every file it will write, and a PDF-fallback rename
+   avoids all of those as well as the names already written. A file counts as
+   processed in the progress when its download finishes. At most twice the
+   concurrency of downloads are submitted but not yet written, which bounds
+   spool disk use (the writer drains each as it completes, so a spool file rarely
+   waits long). A stop request, a failed download or a
    failed write aborts the run exactly as before: outstanding downloads are
    cancelled, spool files are deleted, the staged ZIP is discarded and nothing
    is committed. Content that is already in a compressed container (Office and

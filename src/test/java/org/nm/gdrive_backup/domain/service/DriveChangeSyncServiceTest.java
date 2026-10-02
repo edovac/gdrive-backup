@@ -456,7 +456,7 @@ class DriveChangeSyncServiceTest {
 	}
 
 	@Test
-	void downloadsChangedFilesInParallelButArchivesThemInTheOrderTheFeedReportedThem() throws Exception {
+	void downloadsChangedFilesInParallelAndKeepsTheManifestInTheOrderTheFeedReportedThem() throws Exception {
 		int count = 8;
 		stubNewFiles(count);
 		CountDownLatch firstWindowStarted = new CountDownLatch(4);
@@ -476,14 +476,45 @@ class DriveChangeSyncServiceTest {
 
 		assertFalse(result.cancelled());
 		List<String> expectedEntries = IntStream.range(0, count).mapToObj(i -> "content/file-" + i).toList();
-		assertEquals(expectedEntries, List.copyOf(sessions.entries.keySet()));
-		assertEquals(expectedEntries, commits.commits.getFirst().captures().stream().map(FileCapture::entryName).toList());
+		// Each file is written as it completes, so the entries are in completion order; the manifest keeps the feed order.
+		assertEquals(new java.util.HashSet<>(expectedEntries), sessions.entries.keySet());
+		assertEquals(new java.util.HashSet<>(expectedEntries),
+				commits.commits.getFirst().captures().stream().map(FileCapture::entryName).collect(java.util.stream.Collectors.toSet()));
 		assertEquals(expectedEntries, sessions.publishedManifest.files().stream().map(file -> file.entry()).toList());
 		for (int i = 0; i < count; i++) {
 			assertEquals(i, sessions.entries.get("content/file-" + i)[0]);
 		}
 		assertEquals(List.of("open", "publish", "commit"), log);
 		assertTrue(sessions.allStagedReleased());
+	}
+
+	@Test
+	void aVeryLargeChangedFileDoesNotStopTheOtherDownloadsFromStarting() throws Exception {
+		int count = 20;
+		stubNewFiles(count);
+		// Twelve other downloads, three times the concurrency, must start while the big file is still going.
+		CountDownLatch othersStarted = new CountDownLatch(12);
+		for (int i = 0; i < count; i++) {
+			if (i == 0) {
+				when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+					if (!othersStarted.await(5, TimeUnit.SECONDS)) {
+						throw new IllegalStateException("the other downloads waited for the big file");
+					}
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			} else {
+				when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+					othersStarted.countDown();
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			}
+		}
+
+		SyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		assertEquals(count, sessions.entries.size());
+		assertEquals(List.of("open", "publish", "commit"), log);
 	}
 
 	@Test

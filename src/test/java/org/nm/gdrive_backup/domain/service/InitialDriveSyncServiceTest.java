@@ -268,7 +268,7 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
-	void downloadsInParallelButWritesTheArchiveInListingOrderAndReportsEveryFileOnce() throws Exception {
+	void downloadsInParallelWritesEveryFileAndKeepsTheManifestInListingOrder() throws Exception {
 		int count = 8;
 		List<StoredFile> files = new ArrayList<>();
 		CountDownLatch firstWindowStarted = new CountDownLatch(4);
@@ -290,13 +290,14 @@ class InitialDriveSyncServiceTest {
 
 		assertFalse(result.cancelled());
 		assertEquals(count, result.fileCount());
-		List<String> expectedEntries = files.stream().map(StoredFile::name).toList();
-		assertEquals(expectedEntries, List.copyOf(sessions.entries.keySet()));
+		// Each file is written as it completes, so the entries are in completion order; the manifest stays in listing order.
+		Set<String> expectedEntries = files.stream().map(StoredFile::name).collect(java.util.stream.Collectors.toSet());
+		assertEquals(expectedEntries, sessions.entries.keySet());
 		for (int i = 0; i < count; i++) {
 			assertEquals(i, sessions.entries.get("F" + i + ".pdf")[0]);
 		}
-		assertEquals(expectedEntries,
-				commits.commits.getFirst().captures().stream().map(capture -> capture.entryName()).toList());
+		assertEquals(expectedEntries, commits.commits.getFirst().captures().stream().map(capture -> capture.entryName())
+				.collect(java.util.stream.Collectors.toSet()));
 		assertEquals(files.stream().map(StoredFile::fileId).toList(),
 				sessions.publishedManifest.files().stream().map(record -> record.fileId()).toList());
 		// Progress follows download completion, which is not list order, so only the count and the end are fixed.
@@ -486,7 +487,7 @@ class InitialDriveSyncServiceTest {
 		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
 
 		assertFalse(result.cancelled());
-		assertEquals(List.of("F0.pdf", "F1.pdf", "F2.pdf", "F3.pdf", "F4.pdf"), List.copyOf(sessions.entries.keySet()));
+		assertEquals(Set.of("F0.pdf", "F1.pdf", "F2.pdf", "F3.pdf", "F4.pdf"), sessions.entries.keySet());
 		verify(progressTracker, times(5)).itemProcessed(anyString());
 	}
 
@@ -522,7 +523,7 @@ class InitialDriveSyncServiceTest {
 
 		parallelService.synchronize(ACCESS, SCOPE, null);
 
-		assertEquals(List.of("Docs/A.pdf", "Docs/B.pdf"), List.copyOf(sessions.entries.keySet()));
+		assertEquals(Set.of("Docs/A.pdf", "Docs/B.pdf"), sessions.entries.keySet());
 		assertEquals(List.of(folder, first, form, second), commits.commits.getFirst().files());
 		verify(contentPort, never()).download(ACCESS, "file-2");
 	}
@@ -546,21 +547,79 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
-	void aPdfFallbackDuringParallelDownloadsIsRenamedAgainstTheNamesAlreadyInTheArchive() throws Exception {
+	void aPdfFallbackDuringParallelDownloadsIsRenamedAgainstTheNamesOfTheOtherFiles() throws Exception {
 		StoredFile existingPdf = file("file-1", "Report.pdf", "", "application/pdf", "r1");
 		StoredFile doc = file("file-2", "Report", "", "application/vnd.google-apps.document", "v3");
 		stubDrive("token", existingPdf, doc);
 		stubDownload("file-1", "pdf");
-		when(contentPort.export(ACCESS, "file-2",
-				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
-				.thenThrow(new org.nm.gdrive_backup.domain.model.DriveExportLimitException("too large", null));
-		when(contentPort.export(ACCESS, "file-2", "application/pdf"))
-				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		stubDocWhoseDocxExportIsTooLarge("file-2");
 
 		parallelService.synchronize(ACCESS, SCOPE, null);
 
-		assertEquals(List.of("Report.pdf", "Report (2).pdf"), List.copyOf(sessions.entries.keySet()));
+		assertEquals(Set.of("Report.pdf", "Report (2).pdf"), sessions.entries.keySet());
 		assertEquals("Report (2).pdf", sessions.publishedManifest.files().get(1).entry());
+	}
+
+	/**
+	 * Files are written as they complete. Here the Doc, listed first, finishes long before the ordinary PDF that
+	 * owns the name "Report.pdf", so at the time the Doc's fallback is written that name is not written yet. The
+	 * fallback must still steer clear of it, or the PDF would collide with it later.
+	 */
+	@Test
+	void aPdfFallbackThatIsWrittenBeforeAFileOwningItsNameDoesNotTakeThatName() throws Exception {
+		StoredFile doc = file("file-1", "Report", "", "application/vnd.google-apps.document", "v3");
+		StoredFile existingPdf = file("file-2", "Report.pdf", "", "application/pdf", "r1");
+		stubDrive("token", doc, existingPdf);
+		stubDocWhoseDocxExportIsTooLarge("file-1");
+		when(contentPort.download(ACCESS, "file-2")).thenAnswer(invocation -> {
+			Thread.sleep(300);
+			return new ByteArrayInputStream("pdf".getBytes());
+		});
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(Set.of("Report (2).pdf", "Report.pdf"), sessions.entries.keySet());
+		assertEquals("pdf", new String(sessions.entries.get("Report.pdf")), "the PDF kept its own name");
+		assertEquals("Report (2).pdf", sessions.publishedManifest.files().get(0).entry());
+		assertEquals("Report.pdf", sessions.publishedManifest.files().get(1).entry());
+	}
+
+	@Test
+	void aVeryLargeFileDoesNotStopTheOtherDownloadsFromStarting() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		// Twelve other downloads, three times the concurrency, must start while the big file is still going.
+		CountDownLatch othersStarted = new CountDownLatch(12);
+		for (int i = 0; i < 20; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 0) {
+				when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+					if (!othersStarted.await(5, TimeUnit.SECONDS)) {
+						throw new IllegalStateException("the other downloads waited for the big file");
+					}
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			} else {
+				when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+					othersStarted.countDown();
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		assertEquals(20, sessions.entries.size());
+		assertTrue(List.copyOf(sessions.entries.keySet()).indexOf("F0.pdf") > 0, "the big file is not written first");
+	}
+
+	private void stubDocWhoseDocxExportIsTooLarge(String fileId) throws Exception {
+		when(contentPort.export(ACCESS, fileId,
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+				.thenThrow(new org.nm.gdrive_backup.domain.model.DriveExportLimitException("too large", null));
+		when(contentPort.export(ACCESS, fileId, "application/pdf"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
 	}
 
 	@Test

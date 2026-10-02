@@ -188,6 +188,39 @@ class FileContentStreamingServiceTest {
 	}
 
 	@Test
+	void aPdfFallbackAvoidsTheNamesReservedForFilesNotWrittenYet() throws Exception {
+		StoredFile file = file("file-1", "Report", "application/vnd.google-apps.document");
+		when(contentPort.export(ACCESS, "file-1", DOCX)).thenThrow(new DriveExportLimitException("too large", null));
+		when(contentPort.export(ACCESS, "file-1", "application/pdf"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		try (var session = sessions.open("archives/x.zip")) {
+			FetchedFile fetched = service.fetch(ACCESS, file, session);
+
+			// Nothing is written yet, but another file is going to take "Report.pdf" and "Report (2).pdf".
+			StreamedFile streamed = service.write(file, fetched, session, "Docs/Report.docx",
+					Set.of("Docs/Report.pdf", "Docs/Report (2).pdf", "Docs/Report.docx"));
+
+			assertEquals("Docs/Report (3).pdf", streamed.capture().entryName());
+		}
+	}
+
+	@Test
+	void reservedNamesDoNotAffectAFileThatWasNotFallenBack() throws Exception {
+		StoredFile file = file("file-1", "Report.pdf", "application/pdf");
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		try (var session = sessions.open("archives/x.zip")) {
+			FetchedFile fetched = service.fetch(ACCESS, file, session);
+
+			StreamedFile streamed = service.write(file, fetched, session, "Docs/Report.pdf",
+					Set.of("Docs/Report.pdf", "Docs/Other.pdf"));
+
+			assertEquals("Docs/Report.pdf", streamed.capture().entryName(), "it owns that reserved name itself");
+		}
+	}
+
+	@Test
 	void fetchLeavesNothingStagedWhenTheExportFailsOutright() throws Exception {
 		StoredFile file = file("file-1", "Report", "application/vnd.google-apps.document");
 		when(contentPort.export(ACCESS, "file-1", DOCX)).thenThrow(new DriveExportLimitException("too large", null));

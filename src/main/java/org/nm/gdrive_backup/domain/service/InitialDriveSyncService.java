@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.IntSupplier;
 
 import org.nm.gdrive_backup.domain.model.Archive;
@@ -74,13 +75,21 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 			DrivePathResolver drivePaths = new DrivePathResolver(
 					DrivePathResolver.rootLabel(scope, scopeDisplayNameOrNull), driveFilesById(files)::get);
+			// Every entry the run is going to write, so a PDF fallback never takes a name another file is about to
+			// use, whichever order the downloads finish in.
+			Map<String, String> entryNames = new HashMap<>();
+			for (StoredFile file : files) {
+				if (isEligible(file)) {
+					entryNames.put(file.fileId(), resolver.resolveEntryName(file));
+				}
+			}
+			Set<String> reservedEntryNames = Set.copyOf(entryNames.values());
 			int[] processed = {0};
 			// Read per run, so a change in Settings applies to the next run and never mid-run.
 			ParallelContentFetcher contentFetcher = new ParallelContentFetcher(downloadConcurrency.getAsInt());
-			// Downloads overlap, but results come back here in listing order, so the archive and its entry names are
-			// the same as a one-at-a-time run. Progress is the exception: a file counts as soon as its download
-			// finishes, because counting at hand-over would hold back every file queued behind a slow one and then
-			// release them all at once.
+			// Downloads overlap and each is written to the archive as soon as it completes, so one very large file
+			// occupies a single slot instead of holding back every file queued behind it. The entries therefore are
+			// not in listing order (the manifest still is, and entry names do not depend on the order).
 			boolean completed = contentFetcher.process(files, InitialDriveSyncService::isEligible,
 					file -> {
 						progressTracker.downloadStarted(file.fileId(), file.name(), drivePaths.pathOf(file),
@@ -103,7 +112,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 					(file, fetched) -> {
 						if (fetched != null) {
 							streamedByFileId.put(file.fileId(), contentStreamingService.write(file, fetched, session,
-									resolver.resolveEntryName(file)));
+									entryNames.get(file.fileId()), reservedEntryNames));
 						} else {
 							progressTracker.itemProcessed(file.name());
 						}

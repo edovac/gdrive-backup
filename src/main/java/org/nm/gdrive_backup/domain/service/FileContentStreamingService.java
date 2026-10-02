@@ -94,10 +94,20 @@ public class FileContentStreamingService {
 	 * that writes the archive: a PDF fallback renames the entry against the names already taken.
 	 */
 	public StreamedFile write(StoredFile file, FetchedFile fetched, ArchiveSession session, String entryName) {
+		return write(file, fetched, session, entryName, Set.of());
+	}
+
+	/**
+	 * As {@link #write(StoredFile, FetchedFile, ArchiveSession, String)}, for a run that writes its files in no
+	 * particular order. {@code reservedEntryNames} are the names the other files are going to take: a PDF fallback
+	 * avoids them as well as the names already written, so it can never claim the name of a file written later.
+	 */
+	public StreamedFile write(StoredFile file, FetchedFile fetched, ArchiveSession session, String entryName,
+			Set<String> reservedEntryNames) {
 		try (fetched) {
 			String finalName = fetched.fallbackFromExtension() == null
 					? entryName
-					: pdfEntryName(entryName, fetched.fallbackFromExtension(), session);
+					: pdfEntryName(entryName, fetched.fallbackFromExtension(), session, reservedEntryNames);
 			String contentMimeType = fetched.exportMimeType() == null ? file.mimeType() : fetched.exportMimeType();
 			long size = session.writeEntry(finalName, fetched.content(), !isAlreadyCompressed(contentMimeType));
 			FileCapture capture = new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(), null,
@@ -169,14 +179,15 @@ public class FileContentStreamingService {
 				.findFirst();
 	}
 
-	private static String pdfEntryName(String entryName, String exportExtension, ArchiveSession session) {
+	private static String pdfEntryName(String entryName, String exportExtension, ArchiveSession session,
+			Set<String> reservedEntryNames) {
 		String base = entryName.endsWith(exportExtension)
 				? entryName.substring(0, entryName.length() - exportExtension.length())
 				: entryName;
 		String extension = entryName.endsWith(exportExtension) ? ".pdf" : "";
 		String candidate = base + extension;
 		int suffix = 2;
-		while (session.containsEntry(candidate)) {
+		while (session.containsEntry(candidate) || reservedEntryNames.contains(candidate)) {
 			candidate = base + " (" + suffix + ")" + extension;
 			suffix++;
 		}

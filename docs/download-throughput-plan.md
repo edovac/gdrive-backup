@@ -2,6 +2,13 @@
 
 ## Status
 
+**Superseded in one respect (2026-10-02):** the plan below hands fetched content to the writer in
+submission order. That let one very large file at the head of the window stall everything: the other
+`2 × concurrency - 1` results finished and queued behind it, no new download was submitted, and only the big
+file kept downloading. `ParallelContentFetcher` now hands results over as they complete, so a large file
+occupies a single slot. ZIP entry order is therefore completion order, and a full run reserves every planned
+entry name so a PDF-fallback rename cannot depend on write order.
+
 Implemented 2026-10-01. Differences from the plan below:
 
 - **Retries live in the adapter, not the HTTP transport.** The plan used

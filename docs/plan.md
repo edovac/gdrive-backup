@@ -279,8 +279,10 @@ of truth for expected behavior.
 - [x] Download throughput: both sync services download several files at once
   (`gdrive-backup.backup.download-concurrency`, default 4) through
   `ParallelContentFetcher`. Downloads are spooled next to the staged ZIP and
-  written by a single thread in list order, so archives, entry names, progress
-  and the commit protocol are unchanged. Already-compressed content is stored
+  written by a single thread as each download completes (not in list order, so
+  one very large file cannot stall the other slots), with the manifest still in
+  listing order and entry names independent of the write order; the commit
+  protocol is unchanged. Already-compressed content is stored
   rather than deflated, and Drive content calls retry with backoff (`DriveRetry`).
   The admin can change the concurrency for the session in the Settings dialog
   (`DownloadConcurrencyUseCase`); it is not persisted across launches. The

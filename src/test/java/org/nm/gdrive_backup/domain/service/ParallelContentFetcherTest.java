@@ -3,16 +3,18 @@ package org.nm.gdrive_backup.domain.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
@@ -28,14 +30,14 @@ class ParallelContentFetcherTest {
 	}
 
 	@Test
-	void handsResultsOverInListOrderEvenWhenFetchesFinishOutOfOrder() {
+	void handsEveryResultOverExactlyOnceWhateverOrderTheyCompleteIn() {
 		List<Integer> items = items(8);
 		List<Integer> handedOver = new ArrayList<>();
 
 		boolean completed = new ParallelContentFetcher(4).process(items, item -> true,
 				item -> {
-					// Earlier items take longer, so they finish after the later ones.
-					Thread.sleep((8 - item) * 15L);
+					// Earlier items tend to take longer, so results complete in a shuffled order.
+					Thread.sleep((8 - item) * 25L);
 					return result(item);
 				},
 				() -> false,
@@ -45,8 +47,79 @@ class ParallelContentFetcherTest {
 				});
 
 		assertTrue(completed);
-		assertEquals(items, handedOver);
+		assertEquals(new HashSet<>(items), new HashSet<>(handedOver));
+		assertEquals(items.size(), handedOver.size(), "each item exactly once");
 		assertTrue(created.stream().allMatch(result -> result.closed));
+	}
+
+	/**
+	 * The regression test for one huge file stalling everything: the first item cannot finish until six others have
+	 * been handed over. A design that hands results over in list order, or that stops submitting once a window of
+	 * results is waiting behind the first, never gets there and the first item gives up after five seconds.
+	 */
+	@Test
+	void aSlowFetchDoesNotStopTheOtherFetchesFromFlowing() {
+		int concurrency = 2;
+		CountDownLatch othersHandedOver = new CountDownLatch(6);
+		AtomicInteger running = new AtomicInteger();
+		AtomicInteger mostRunning = new AtomicInteger();
+		List<Integer> handedOver = Collections.synchronizedList(new ArrayList<>());
+
+		boolean completed = new ParallelContentFetcher(concurrency).process(items(10), item -> true,
+				item -> {
+					mostRunning.accumulateAndGet(running.incrementAndGet(), Math::max);
+					try {
+						if (item == 0 && !othersHandedOver.await(5, TimeUnit.SECONDS)) {
+							throw new IllegalStateException("the other files were held back by the slow one");
+						}
+						return result(item);
+					} finally {
+						running.decrementAndGet();
+					}
+				},
+				() -> false,
+				(item, fetched) -> {
+					handedOver.add(item);
+					if (item != 0) {
+						othersHandedOver.countDown();
+					}
+					fetched.close();
+				});
+
+		assertTrue(completed);
+		assertEquals(10, handedOver.size());
+		assertTrue(handedOver.indexOf(0) >= 6, "at least six others were handed over before the slow one");
+		assertTrue(mostRunning.get() <= concurrency, "ran " + mostRunning.get() + " at once");
+	}
+
+	@Test
+	void keepsTheOtherSlotsBusyWhileOneSlotHoldsAVeryLargeFile() {
+		int concurrency = 4;
+		AtomicInteger startedWhileTheFirstIsRunning = new AtomicInteger();
+		CountDownLatch firstStarted = new CountDownLatch(1);
+		CountDownLatch enoughOthersStarted = new CountDownLatch(12);
+
+		boolean completed = new ParallelContentFetcher(concurrency).process(items(20), item -> true,
+				item -> {
+					if (item == 0) {
+						firstStarted.countDown();
+						// Stays in flight until twelve other fetches have started, three times the concurrency.
+						if (!enoughOthersStarted.await(5, TimeUnit.SECONDS)) {
+							throw new IllegalStateException("only " + startedWhileTheFirstIsRunning.get()
+									+ " other fetches started while the first was running");
+						}
+					} else {
+						firstStarted.await();
+						startedWhileTheFirstIsRunning.incrementAndGet();
+						enoughOthersStarted.countDown();
+					}
+					return result(item);
+				},
+				() -> false,
+				(item, fetched) -> fetched.close());
+
+		assertTrue(completed);
+		assertEquals(20, created.size());
 	}
 
 	@Test
@@ -132,7 +205,7 @@ class ParallelContentFetcherTest {
 	}
 
 	@Test
-	void skipsTheFetchForItemsThatNeedNoneButStillHandsThemOverInOrder() {
+	void anItemThatNeedsNoFetchIsHandedOverWithoutOneAndEveryItemExactlyOnce() {
 		List<String> handedOver = new ArrayList<>();
 		AtomicInteger fetches = new AtomicInteger();
 
@@ -150,7 +223,11 @@ class ParallelContentFetcherTest {
 				});
 
 		assertEquals(3, fetches.get());
-		assertEquals(List.of("0:fetched", "1:none", "2:fetched", "3:none", "4:fetched", "5:none"), handedOver);
+		assertEquals(Set.of("0:fetched", "1:none", "2:fetched", "3:none", "4:fetched", "5:none"),
+				new HashSet<>(handedOver));
+		assertEquals(6, handedOver.size());
+		List<String> none = handedOver.stream().filter(entry -> entry.endsWith(":none")).toList();
+		assertEquals(List.of("1:none", "3:none", "5:none"), none, "the items needing no fetch keep their list order");
 	}
 
 	@Test
@@ -176,7 +253,7 @@ class ParallelContentFetcherTest {
 				() -> stop[0],
 				(item, fetched) -> {
 					fetched.close();
-					// Hold the stop until the fetches already submitted (item 0 to 2 * concurrency - 1) are done.
+					// Hold the stop until the fetches already submitted (the first 2 * concurrency) are done.
 					awaitCount(finished, 2 * concurrency);
 					stop[0] = true;
 				});
@@ -187,9 +264,40 @@ class ParallelContentFetcherTest {
 	}
 
 	@Test
+	void aStopRequestIsNoticedWhileWaitingForASlowFetch() throws Exception {
+		CountDownLatch fetchStarted = new CountDownLatch(1);
+		CountDownLatch neverOpened = new CountDownLatch(1);
+		AtomicBoolean stop = new AtomicBoolean();
+		Thread stopper = Thread.ofVirtual().start(() -> {
+			try {
+				fetchStarted.await();
+				Thread.sleep(150);
+			} catch (InterruptedException ignored) {
+				Thread.currentThread().interrupt();
+			}
+			stop.set(true);
+		});
+
+		long begin = System.nanoTime();
+		boolean completed = new ParallelContentFetcher(2).process(items(1), item -> true,
+				item -> {
+					fetchStarted.countDown();
+					neverOpened.await(30, TimeUnit.SECONDS);
+					return result(item);
+				},
+				() -> stop.get(),
+				(item, fetched) -> fetched.close());
+		long seconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - begin);
+
+		stopper.join();
+		assertFalse(completed);
+		assertTrue(seconds < 10, "the run ended after " + seconds + " s instead of waiting out the fetch");
+	}
+
+	@Test
 	void aFailedFetchAbortsTheRunRethrowsAndReleasesTheRest() {
 		AtomicInteger finished = new AtomicInteger();
-		List<Integer> handedOver = new ArrayList<>();
+		List<Integer> handedOver = Collections.synchronizedList(new ArrayList<>());
 
 		IllegalStateException failure = assertThrows(IllegalStateException.class,
 				() -> new ParallelContentFetcher(3).process(items(10), item -> true,
@@ -210,7 +318,7 @@ class ParallelContentFetcherTest {
 						}));
 
 		assertEquals("connection reset", failure.getMessage());
-		assertEquals(List.of(0, 1), handedOver);
+		assertFalse(handedOver.contains(2), "the failed item is never handed over");
 		assertTrue(created.stream().allMatch(result -> result.closed), "every fetched result was released");
 	}
 
@@ -270,8 +378,9 @@ class ParallelContentFetcherTest {
 				});
 
 		assertTrue(completed);
-		assertEquals(items, handedOver);
-		assertNull(created.stream().filter(result -> !result.closed).findFirst().orElse(null));
+		assertEquals(200, handedOver.size());
+		assertEquals(new HashSet<>(items), new HashSet<>(handedOver), "no item lost or repeated");
+		assertTrue(created.stream().allMatch(result -> result.closed));
 	}
 
 	private Result result(int item) {
