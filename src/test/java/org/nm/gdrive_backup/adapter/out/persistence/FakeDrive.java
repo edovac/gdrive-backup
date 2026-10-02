@@ -1,12 +1,15 @@
 package org.nm.gdrive_backup.adapter.out.persistence;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.DriveChange;
@@ -28,6 +31,7 @@ class FakeDrive implements DriveFileListingPort, DriveChangePort, DriveContentPo
 
 
 	private final Map<String, Node> nodes = new LinkedHashMap<>();
+	private final Set<String> blocked = new HashSet<>();
 	private final List<DriveChange> log = new ArrayList<>();
 
 	void create(String id, String name, String parents, String mime, String content) {
@@ -89,13 +93,25 @@ class FakeDrive implements DriveFileListingPort, DriveChangePort, DriveContentPo
 				Integer.toString(log.size()));
 	}
 
+	/** Drive refuses to give this file's content, as it does when downloading is disabled for it. */
+	void block(String id) {
+		blocked.add(id);
+	}
+
+	void unblock(String id) {
+		blocked.remove(id);
+	}
+
 	@Override
-	public InputStream download(ServiceAccountAccess access, String fileId) {
+	public InputStream download(ServiceAccountAccess access, String fileId) throws IOException {
+		if (blocked.contains(fileId)) {
+			throw new IOException("403 Forbidden: downloading is disabled for this file");
+		}
 		return new ByteArrayInputStream(nodes.get(fileId).content.getBytes(StandardCharsets.UTF_8));
 	}
 
 	@Override
-	public InputStream export(ServiceAccountAccess access, String fileId, String exportMimeType) {
+	public InputStream export(ServiceAccountAccess access, String fileId, String exportMimeType) throws IOException {
 		return download(access, fileId);
 	}
 
