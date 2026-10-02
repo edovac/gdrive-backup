@@ -46,7 +46,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`. It runs the tests, buil
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
-./mvnw.cmd -P windows-package -DskipTests -Dapp.version=0.1.0 package   # local build of the same app-image
+./mvnw.cmd -P windows-package -DskipTests -Dapp.version=0.1.0 clean package   # local build of the same app-image
 ```
 
 ### Runtime configuration
@@ -66,6 +66,8 @@ The `*IT` tests are the exception: they read `GOOGLE_SERVICE_ACCOUNT_KEY`, `GOOG
 There is no env var for the impersonated/preview user. OAuth login requests `openid` and the email scope alongside `drive.readonly`; the admin's email comes back in the ID token and is impersonated for Admin SDK calls and used as the default preview user (see `GoogleOAuthClientAdapter`, `GoogleLoginSession.userEmail()`).
 
 The backup location is deliberately not configurable through the environment. Every launch starts with `~/.gdrive-backup` as the single root for the backup history database (`backup.db`) and the archive output; the admin changes it for the current session in the UI through `BackupLocationUseCase`. There is no separate database-location setting — `backup.db` always lives inside the chosen root.
+
+Logging goes to the console everywhere except the Windows app-image, whose windowed launcher has no console. Its jpackage `javaOptions` activate the `windows-package` Spring profile and set `logging.file.path` to `$ROOTDIR/log`. `logback-spring.xml` then writes `log/gdrive-backup.log` beside the `.exe` and rolls it at 5 MB, keeping at most 20 files (`gdrive-backup.1.log` to `.19.log`). Output the JVM prints before Logback starts, such as its own startup warnings, doesn't reach that file.
 
 ## Architecture: how the pieces connect
 

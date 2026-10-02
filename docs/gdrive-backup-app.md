@@ -441,7 +441,7 @@ sequenceDiagram
 | Local DB | `org.xerial:sqlite-jdbc` over plain JDBC (no JPA) |
 | UI | JavaFX (`javafx-controls`), built in code without FXML |
 | Credential storage | `com.microsoft.credentialstorage:credential-secure-storage` (Windows Credential Manager) |
-| Logging | SLF4J + Logback (Spring Boot defaults) |
+| Logging | SLF4J + Logback (`logback-spring.xml`): console, except the Windows app-image, which writes rolling files (5 MB each, at most 20) to the `log` folder beside the `.exe` |
 | Packaging | `jpackage` (`jpackage-maven-plugin`, `windows-package` profile) with a trimmed bundled runtime |
 
 ---

@@ -36,11 +36,13 @@
 		<google-http-client.version>2.2.0</google-http-client.version>
 		<google-oauth-client.version>1.39.0</google-oauth-client.version>
 		<google-auth-library.version>1.54.0</google-auth-library.version>
+		<guava.version>33.7.2-jre</guava.version>
 	</properties>
 	<!--
 		google-api-client drags in older google-http-client, google-oauth-client and
 		google-auth-library-credentials versions, which would otherwise win over the newer
-		siblings declared below; pin each family to one version.
+		siblings declared below; pin each family to one version. It also drags in Guava 33.1,
+		whose AbstractFuture calls the deprecated sun.misc.Unsafe and logs a warning at startup.
 	-->
 	<dependencyManagement>
 		<dependencies>
@@ -55,6 +57,13 @@
 				<groupId>com.google.auth</groupId>
 				<artifactId>google-auth-library-bom</artifactId>
 				<version>${google-auth-library.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+			<dependency>
+				<groupId>com.google.guava</groupId>
+				<artifactId>guava-bom</artifactId>
+				<version>${guava.version}</version>
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
@@ -153,6 +162,14 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<!--
+						JNA (via credential-secure-storage, for Windows Credential Manager) calls
+						System.load; without this flag the JDK warns about a restricted method and
+						will block it in a future release. The jpackage launcher passes the same flag.
+					-->
+					<jvmArguments>--enable-native-access=ALL-UNNAMED</jvmArguments>
+				</configuration>
 				<executions>
 					<execution>
 						<!--
@@ -239,6 +256,17 @@
 			</activation>
 			<build>
 				<plugins>
+					<!--
+						jpackage copies the launcher .exe from the JDK with its read-only attribute,
+						which `clean` otherwise refuses to delete on the next build.
+					-->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-clean-plugin</artifactId>
+						<configuration>
+							<force>true</force>
+						</configuration>
+					</plugin>
 					<!--
 						jpackage's input directory (the "input" option below) is copied wholesale into
 						the app image, so stage just the repackaged Spring Boot fat jar here rather than
@@ -346,6 +374,17 @@
 									<modulePaths>
 										<modulePath>${project.build.directory}/jpackage-modules</modulePath>
 									</modulePaths>
+									<!--
+										Native access lets JNA load its native library; see
+										spring-boot-maven-plugin above. The windowed launcher has no
+										console, so the profile switches logback-spring.xml to rolling
+										files in the log folder beside the .exe ($ROOTDIR).
+									-->
+									<javaOptions>
+										<option>--enable-native-access=ALL-UNNAMED</option>
+										<option>-Dspring.profiles.active=windows-package</option>
+										<option>-Dlogging.file.path=$ROOTDIR/log</option>
+									</javaOptions>
 									<!--
 										Computed by running jdeps' "print module deps" mode (multi release
 										25, ignoring missing deps) against BOOT-INF/classes of the exploded
