@@ -1,6 +1,7 @@
 package org.nm.gdrive_backup.adapter.in.javafx;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -55,51 +56,108 @@ class OperationProgressTextTest {
 	}
 
 	@Test
-	void downloadRowsShowOnlyTheFileNameWithTheFullPathAsTheHoverText() {
+	void downloadingRowsShowOnlyTheFileNameWithTheFullPathAsTheHoverText() {
 		BackupProgress progress = withDownloads(
 				new FileDownload("id-1", "Q3.pdf", "My Drive/Reports/2026/Q3.pdf", START, null));
 
-		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
-
 		assertEquals(List.of(new OperationProgressText.DownloadRow("id-1", "Q3.pdf", "My Drive/Reports/2026/Q3.pdf",
-				"0 B", false)), rows);
+				"0 B", false)), OperationProgressText.downloadingRows(progress));
 	}
 
 	@Test
-	void downloadRowsKeepFilesInFlightAndRecentlyFinishedOnesOnly() {
-		Instant justNow = NOW.minusSeconds(1);
-		Instant longAgo = NOW.minus(OperationProgressText.FINISHED_VISIBLE_FOR).minusMillis(1);
+	void theTwoListsSplitTheDownloadsByWhetherTheyHaveFinished() {
 		BackupProgress progress = withDownloads(
 				new FileDownload("id-1", "Running.pdf", "My Drive/Running.pdf", START, null),
-				new FileDownload("id-2", "Done.pdf", "My Drive/Done.pdf", START, justNow),
-				new FileDownload("id-3", "Old.pdf", "My Drive/Old.pdf", START, longAgo));
+				new FileDownload("id-2", "Done.pdf", "My Drive/Done.pdf", START, START.plusSeconds(1)),
+				new FileDownload("id-3", "AlsoRunning.pdf", "My Drive/AlsoRunning.pdf", START.plusSeconds(2), null));
 
-		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
-
-		assertEquals(List.of("Running.pdf", "Done.pdf"), rows.stream().map(OperationProgressText.DownloadRow::text).toList());
-		assertEquals(List.of(false, true), rows.stream().map(OperationProgressText.DownloadRow::finished).toList());
+		assertEquals(List.of("Running.pdf", "AlsoRunning.pdf"), OperationProgressText.downloadingRows(progress).stream()
+				.map(OperationProgressText.DownloadRow::text).toList());
+		assertEquals(List.of("Done.pdf"), OperationProgressText.downloadedRows(progress).stream()
+				.map(OperationProgressText.DownloadRow::text).toList());
 	}
 
 	@Test
-	void aFinishedRowDisappearsExactlyWhenItsVisibleTimeRunsOut() {
-		Instant finishedAt = NOW.minus(OperationProgressText.FINISHED_VISIBLE_FOR).plusMillis(1);
-		BackupProgress progress = withDownloads(new FileDownload("id-1", "A.pdf", "My Drive/A.pdf", START, finishedAt));
+	void aFinishedDownloadStaysInTheDownloadedListHoweverOldItIs() {
+		BackupProgress progress = withDownloads(
+				new FileDownload("id-1", "Old.pdf", "My Drive/Old.pdf", START, START.plusSeconds(1)));
 
-		assertEquals(1, OperationProgressText.downloadRows(progress, NOW).size());
-		assertEquals(0, OperationProgressText.downloadRows(progress, NOW.plusMillis(1)).size());
+		assertEquals(1, OperationProgressText.downloadedRows(progress).size());
 	}
 
 	@Test
-	void downloadRowsFallBackToTheIdAndNameWhenNameOrPathIsMissing() {
+	void downloadingRowsStayInStartOrder() {
+		BackupProgress progress = withDownloads(
+				new FileDownload("id-3", "Third", "My Drive/Third", START.plusSeconds(3), null),
+				new FileDownload("id-1", "First", "My Drive/First", START.plusSeconds(1), null),
+				new FileDownload("id-2", "Second", "My Drive/Second", START.plusSeconds(2), null));
+
+		assertEquals(List.of("First", "Second", "Third"), OperationProgressText.downloadingRows(progress).stream()
+				.map(OperationProgressText.DownloadRow::text).toList());
+	}
+
+	@Test
+	void downloadsStartedAtTheSameInstantAreOrderedByFileId() {
+		BackupProgress progress = withDownloads(
+				new FileDownload("b", "B", "My Drive/B", START, null),
+				new FileDownload("a", "A", "My Drive/A", START, null));
+
+		assertEquals(List.of("a", "b"), OperationProgressText.downloadingRows(progress).stream()
+				.map(OperationProgressText.DownloadRow::fileId).toList());
+	}
+
+	@Test
+	void downloadedRowsListTheNewestFinishFirst() {
+		BackupProgress progress = withDownloads(
+				new FileDownload("id-1", "First", "My Drive/First", START, START.plusSeconds(10)),
+				new FileDownload("id-2", "Second", "My Drive/Second", START, START.plusSeconds(30)),
+				new FileDownload("id-3", "Third", "My Drive/Third", START, START.plusSeconds(20)));
+
+		assertEquals(List.of("Second", "Third", "First"), OperationProgressText.downloadedRows(progress).stream()
+				.map(OperationProgressText.DownloadRow::text).toList());
+	}
+
+	@Test
+	void downloadedRowsShowTheFinalSizeAndKeepThePathAsTheHoverText() {
+		BackupProgress progress = withDownloads(new FileDownload("id-1", "Big.pdf", "My Drive/Big.pdf", START,
+				START.plusSeconds(5), 83_886_080L, 83_886_080L));
+
+		OperationProgressText.DownloadRow row = OperationProgressText.downloadedRows(progress).get(0);
+
+		assertEquals("Big.pdf", row.text());
+		assertEquals("80.0 MB", row.sizeText());
+		assertEquals("My Drive/Big.pdf", row.tooltip());
+		assertTrue(row.finished());
+	}
+
+	@Test
+	void rowsFallBackToTheIdAndNameWhenNameOrPathIsMissing() {
 		BackupProgress progress = withDownloads(
 				new FileDownload("id-1", " ", "My Drive/x", START, null),
-				new FileDownload("id-2", "B.pdf", null, START, null));
+				new FileDownload("id-2", "B.pdf", null, START.plusSeconds(1), null));
 
-		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
+		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadingRows(progress);
 
 		assertEquals("id-1", rows.get(0).text());
 		assertEquals("B.pdf", rows.get(1).text());
 		assertEquals("B.pdf", rows.get(1).tooltip());
+	}
+
+	@Test
+	void noDownloadsGiveNoRows() {
+		BackupProgress progress = progress(BackupPhase.BACKING_UP, null, 0, null, 1);
+
+		assertEquals(List.of(), OperationProgressText.downloadingRows(progress));
+		assertEquals(List.of(), OperationProgressText.downloadedRows(progress));
+	}
+
+	@Test
+	void theHeadingsCountTheFilesAndTheDownloadedCountUsesThousandsSeparators() {
+		assertEquals("Downloading (0)", OperationProgressText.downloadingHeading(0));
+		assertEquals("Downloading (4)", OperationProgressText.downloadingHeading(4));
+		assertEquals("Downloaded (0)", OperationProgressText.downloadedHeading(0));
+		assertEquals("Downloaded (123)", OperationProgressText.downloadedHeading(123));
+		assertEquals("Downloaded (1,284)", OperationProgressText.downloadedHeading(1284));
 	}
 
 	@Test
@@ -140,45 +198,13 @@ class OperationProgressTextTest {
 	}
 
 	@Test
-	void downloadRowsCarryTheSizeText() {
+	void runningRowsCarryTheSizeText() {
 		BackupProgress progress = withDownloads(
 				new FileDownload("id-1", "Big.pdf", "My Drive/Big.pdf", START, null, 13_002_342, 83_886_080L),
-				new FileDownload("id-2", "Doc", "My Drive/Doc", START, null, 2048, null),
-				new FileDownload("id-3", "Done.pdf", "My Drive/Done.pdf", START, NOW.minusSeconds(1), 1024, 1024L));
+				new FileDownload("id-2", "Doc", "My Drive/Doc", START.plusSeconds(1), null, 2048, null));
 
-		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
-
-		assertEquals(List.of("12.4 MB of 80.0 MB", "2.0 KB", "1.0 KB"),
-				rows.stream().map(OperationProgressText.DownloadRow::sizeText).toList());
-	}
-
-	@Test
-	void downloadRowsStayInStartOrderWhenOneFinishes() {
-		BackupProgress progress = withDownloads(
-				new FileDownload("id-3", "Third", "My Drive/Third", START.plusSeconds(3), null),
-				new FileDownload("id-1", "First", "My Drive/First", START.plusSeconds(1), NOW.minusSeconds(1)),
-				new FileDownload("id-2", "Second", "My Drive/Second", START.plusSeconds(2), null));
-
-		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
-
-		assertEquals(List.of("First", "Second", "Third"),
-				rows.stream().map(OperationProgressText.DownloadRow::text).toList());
-	}
-
-	@Test
-	void downloadsStartedAtTheSameInstantAreOrderedByFileId() {
-		BackupProgress progress = withDownloads(
-				new FileDownload("b", "B", "My Drive/B", START, null),
-				new FileDownload("a", "A", "My Drive/A", START, null));
-
-		assertEquals(List.of("a", "b"), OperationProgressText.downloadRows(progress, NOW).stream()
-				.map(OperationProgressText.DownloadRow::fileId).toList());
-	}
-
-	@Test
-	void noDownloadsGiveNoRows() {
-		assertEquals(List.of(), OperationProgressText.downloadRows(
-				progress(BackupPhase.BACKING_UP, null, 0, null, 1), NOW));
+		assertEquals(List.of("12.4 MB of 80.0 MB", "2.0 KB"), OperationProgressText.downloadingRows(progress).stream()
+				.map(OperationProgressText.DownloadRow::sizeText).toList());
 	}
 
 	private static BackupProgress withDownloads(FileDownload... downloads) {

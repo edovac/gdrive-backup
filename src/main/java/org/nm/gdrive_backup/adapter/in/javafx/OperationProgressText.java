@@ -29,31 +29,49 @@ final class OperationProgressText {
 				: progress.processedItems() + " changes processed" + item;
 	}
 
-	/** How long a finished download stays in the list, so one that completes between two refreshes is still seen. */
-	static final Duration FINISHED_VISIBLE_FOR = Duration.ofSeconds(3);
-
 	/**
 	 * One line under the progress bar: just the file's name, its full Drive path as the hover text, and how much of
-	 * it has been downloaded.
+	 * it has been downloaded (the final size once it is done).
 	 */
 	record DownloadRow(String fileId, String text, String tooltip, String sizeText, boolean finished) {
 	}
 
-	/**
-	 * The downloads still running and those that finished within {@link #FINISHED_VISIBLE_FOR} of {@code now}, in
-	 * the order they started, so a row keeps its place when its download finishes.
-	 */
-	static List<DownloadRow> downloadRows(BackupProgress progress, Instant now) {
+	/** The files being downloaded right now, in the order they started. */
+	static List<DownloadRow> downloadingRows(BackupProgress progress) {
 		return progress.downloads().stream()
-				.filter(download -> !download.finished()
-						|| now.isBefore(download.finishedAt().plus(FINISHED_VISIBLE_FOR)))
+				.filter(download -> !download.finished())
 				.sorted(Comparator.comparing(FileDownload::startedAt).thenComparing(FileDownload::fileId))
-				.map(download -> new DownloadRow(download.fileId(),
-						download.name() == null || download.name().isBlank() ? download.fileId() : download.name(),
-						download.path() == null || download.path().isBlank() ? download.name() : download.path(),
-						sizeText(download.bytesDownloaded(), download.totalBytes(), download.finished()),
-						download.finished()))
+				.map(OperationProgressText::row)
 				.toList();
+	}
+
+	/** The most recently downloaded files, newest first; the snapshot carries only the last few. */
+	static List<DownloadRow> downloadedRows(BackupProgress progress) {
+		return progress.downloads().stream()
+				.filter(FileDownload::finished)
+				.sorted(Comparator.comparing(FileDownload::finishedAt).reversed().thenComparing(FileDownload::fileId))
+				.map(OperationProgressText::row)
+				.toList();
+	}
+
+	static String downloadingHeading(int count) {
+		return "Downloading (" + count + ")";
+	}
+
+	/** The count is every file finished in this drive, not just the few rows listed. */
+	static String downloadedHeading(int count) {
+		return String.format(Locale.ROOT, "Downloaded (%,d)", count);
+	}
+
+	static final String NOTHING_DOWNLOADING = "No downloads in progress";
+	static final String NOTHING_DOWNLOADED = "Nothing downloaded yet";
+
+	private static DownloadRow row(FileDownload download) {
+		return new DownloadRow(download.fileId(),
+				download.name() == null || download.name().isBlank() ? download.fileId() : download.name(),
+				download.path() == null || download.path().isBlank() ? download.name() : download.path(),
+				sizeText(download.bytesDownloaded(), download.totalBytes(), download.finished()),
+				download.finished());
 	}
 
 	/**

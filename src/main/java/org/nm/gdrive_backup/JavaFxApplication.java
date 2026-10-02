@@ -263,7 +263,7 @@ public class JavaFxApplication extends Application {
 			refreshArchiveCatalog();
 		});
 		progressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
-				"Starting synchronization...");
+				"Starting synchronization...", true);
 		archiveProgressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
 				"Starting archive operation...");
 		archiveManagerPanel = new ArchiveManagerPanel(archiveCatalogUseCase, archiveMergeUseCase,

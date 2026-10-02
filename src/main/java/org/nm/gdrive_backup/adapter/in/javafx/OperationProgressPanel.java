@@ -25,6 +25,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -46,20 +47,30 @@ public final class OperationProgressPanel {
 	private final Label driveJobLabel = new Label();
 	private final Label timeLabel = new Label();
 	private final Button cancelButton = new Button("Cancel");
-	private final VBox downloadList = new VBox(2);
-	private List<OperationProgressText.DownloadRow> shownDownloads = List.of();
-	private final Map<String, DownloadRowNodes> downloadRows = new HashMap<>();
+	private final boolean listsDownloads;
+	private final DownloadSection downloading = new DownloadSection(OperationProgressText.NOTHING_DOWNLOADING, false);
+	private final DownloadSection downloaded = new DownloadSection(OperationProgressText.NOTHING_DOWNLOADED, true);
 	private final VBox root;
 	private Timeline timeline;
 	private Consumer<BackupProgress> progressListener = progress -> {
 	};
 
-	/** @param startingText what the panel says before the first progress snapshot arrives */
+	/** A panel for an operation that downloads nothing, such as a merge, so it shows no download lists. */
 	public OperationProgressPanel(BackupProgressPort progressPort, BackupCancellationUseCase cancellationUseCase,
 			String startingText) {
+		this(progressPort, cancellationUseCase, startingText, false);
+	}
+
+	/**
+	 * @param startingText what the panel says before the first progress snapshot arrives
+	 * @param listsDownloads whether to list the files being downloaded and the ones already downloaded under the bar
+	 */
+	public OperationProgressPanel(BackupProgressPort progressPort, BackupCancellationUseCase cancellationUseCase,
+			String startingText, boolean listsDownloads) {
 		this.progressPort = progressPort;
 		this.cancellationUseCase = cancellationUseCase;
 		this.startingText = startingText;
+		this.listsDownloads = listsDownloads;
 		progressBar.setMaxWidth(Double.MAX_VALUE);
 		operationLabel.getStyleClass().add("status");
 		operationLabel.setWrapText(true);
@@ -67,11 +78,13 @@ public final class OperationProgressPanel {
 		timeLabel.getStyleClass().add("scope");
 		cancelButton.getStyleClass().add("secondary-button");
 		cancelButton.setOnAction(event -> handleCancelClick());
-		downloadList.setFillWidth(true);
-		downloadList.setVisible(false);
-		downloadList.setManaged(false);
-		// Below the Cancel button, so the rows appearing and disappearing never move the controls above them.
-		root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel, cancelButton, downloadList);
+		root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel, cancelButton);
+		if (listsDownloads) {
+			// Below the Cancel button, so rows coming and going never move the controls above them.
+			VBox lists = new VBox(10, downloading.node(), downloaded.node());
+			lists.setFillWidth(true);
+			root.getChildren().add(lists);
+		}
 		root.setAlignment(Pos.CENTER);
 		hide();
 	}
@@ -93,7 +106,10 @@ public final class OperationProgressPanel {
 		operationLabel.setText(startingText);
 		driveJobLabel.setText("");
 		timeLabel.setText("");
-		showDownloads(List.of());
+		if (listsDownloads) {
+			downloading.update(OperationProgressText.downloadingHeading(0), List.of());
+			downloaded.update(OperationProgressText.downloadedHeading(0), List.of());
+		}
 		cancelButton.setDisable(cancellationUseCase == null);
 		timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(250), event -> refresh()));
 		timeline.setCycleCount(Animation.INDEFINITE);
@@ -158,41 +174,93 @@ public final class OperationProgressPanel {
 			operationLabel.setText(OperationProgressText.operation(progress));
 			driveJobLabel.setText(progress.totalDrives() > 1 ? OperationProgressText.multiDrive(progress) : "");
 			timeLabel.setText(OperationProgressText.time(progress, Instant.now()));
-			showDownloads(OperationProgressText.downloadRows(progress, Instant.now()));
+			if (listsDownloads) {
+				List<OperationProgressText.DownloadRow> inFlight = OperationProgressText.downloadingRows(progress);
+				downloading.update(OperationProgressText.downloadingHeading(inFlight.size()), inFlight);
+				downloaded.update(OperationProgressText.downloadedHeading(progress.finishedDownloads()),
+						OperationProgressText.downloadedRows(progress));
+			}
 			progressListener.accept(progress);
 		});
 	}
 
 	/**
-	 * Updates the rows in place, by file id. The size changes on almost every refresh, so rebuilding the rows would
-	 * remove the name label under the mouse and close its tooltip each time; reused rows keep theirs.
+	 * A heading, a placeholder for when there is nothing to list, and the rows. The rows are updated in place, by
+	 * file id: the size changes on almost every refresh, so rebuilding them would remove the name label under the
+	 * mouse and close its tooltip each time; reused rows keep theirs.
 	 */
-	private void showDownloads(List<OperationProgressText.DownloadRow> rows) {
-		if (rows.equals(shownDownloads)) {
-			return;
-		}
-		shownDownloads = rows;
-		Set<String> current = rows.stream().map(OperationProgressText.DownloadRow::fileId)
-				.collect(Collectors.toSet());
-		downloadRows.entrySet().removeIf(entry -> {
-			if (current.contains(entry.getKey())) {
-				return false;
+	private static final class DownloadSection {
+
+		private static final double LIST_HEIGHT = 150;
+
+		private final Label heading = new Label();
+		private final Label placeholder;
+		private final VBox rows = new VBox(2);
+		private final Node body;
+		private final VBox node;
+		private final Map<String, DownloadRowNodes> rowNodes = new HashMap<>();
+		private List<OperationProgressText.DownloadRow> shown = List.of();
+
+		/** @param scrolling whether the rows sit in a fixed-height scrollable box, for a list that keeps growing */
+		DownloadSection(String placeholderText, boolean scrolling) {
+			heading.getStyleClass().add("download-heading");
+			placeholder = new Label(placeholderText);
+			placeholder.getStyleClass().add("scope");
+			rows.setFillWidth(true);
+			if (scrolling) {
+				ScrollPane scroll = new ScrollPane(rows);
+				scroll.setFitToWidth(true);
+				scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+				scroll.setMinHeight(LIST_HEIGHT);
+				scroll.setPrefHeight(LIST_HEIGHT);
+				scroll.setMaxHeight(LIST_HEIGHT);
+				scroll.getStyleClass().add("download-scroll");
+				body = scroll;
+			} else {
+				body = rows;
 			}
-			downloadList.getChildren().remove(entry.getValue().box);
-			return true;
-		});
-		for (int index = 0; index < rows.size(); index++) {
-			OperationProgressText.DownloadRow row = rows.get(index);
-			DownloadRowNodes nodes = downloadRows.get(row.fileId());
-			if (nodes == null) {
-				nodes = new DownloadRowNodes();
-				downloadRows.put(row.fileId(), nodes);
-				downloadList.getChildren().add(Math.min(index, downloadList.getChildren().size()), nodes.box);
-			}
-			nodes.update(row);
+			node = new VBox(4, heading, placeholder, body);
+			node.setFillWidth(true);
+			// Nothing to list yet: the placeholder shows and the (empty) rows do not take up space.
+			body.setVisible(false);
+			body.setManaged(false);
 		}
-		downloadList.setVisible(!rows.isEmpty());
-		downloadList.setManaged(!rows.isEmpty());
+
+		Node node() {
+			return node;
+		}
+
+		void update(String headingText, List<OperationProgressText.DownloadRow> newRows) {
+			heading.setText(headingText);
+			if (newRows.equals(shown)) {
+				return;
+			}
+			shown = newRows;
+			Set<String> current = newRows.stream().map(OperationProgressText.DownloadRow::fileId)
+					.collect(Collectors.toSet());
+			rowNodes.entrySet().removeIf(entry -> {
+				if (current.contains(entry.getKey())) {
+					return false;
+				}
+				rows.getChildren().remove(entry.getValue().box);
+				return true;
+			});
+			for (int index = 0; index < newRows.size(); index++) {
+				OperationProgressText.DownloadRow row = newRows.get(index);
+				DownloadRowNodes nodes = rowNodes.get(row.fileId());
+				if (nodes == null) {
+					nodes = new DownloadRowNodes();
+					rowNodes.put(row.fileId(), nodes);
+					rows.getChildren().add(Math.min(index, rows.getChildren().size()), nodes.box);
+				}
+				nodes.update(row);
+			}
+			boolean empty = newRows.isEmpty();
+			placeholder.setVisible(empty);
+			placeholder.setManaged(empty);
+			body.setVisible(!empty);
+			body.setManaged(!empty);
+		}
 	}
 
 	/** One line: the file name on the left, how much of it has arrived on the right. */

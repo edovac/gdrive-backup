@@ -26,8 +26,8 @@ public class BackupProgressTracker {
 	/** A tracker with no port to report to; used where no progress observer is wired. */
 	public static final BackupProgressTracker NO_OP = new BackupProgressTracker(null, Clock.systemUTC());
 
-	/** How many finished downloads a snapshot carries; the UI shows the ones finished only moments ago. */
-	static final int MAX_FINISHED_DOWNLOADS = 8;
+	/** How many of the most recently finished downloads a snapshot carries; the count of all of them is separate. */
+	static final int MAX_FINISHED_DOWNLOADS = 20;
 
 	private final BackupProgressPort port;
 	private final Clock clock;
@@ -35,6 +35,7 @@ public class BackupProgressTracker {
 	/** Downloads in flight, in start order, and the last few that finished, newest first. */
 	private final Map<String, FileDownload> downloading = new LinkedHashMap<>();
 	private final Deque<FileDownload> finished = new ArrayDeque<>();
+	private int finishedDownloads;
 
 	private int totalDrives;
 	private int driveIndex = -1;
@@ -74,6 +75,7 @@ public class BackupProgressTracker {
 		currentItem = null;
 		downloading.clear();
 		finished.clear();
+		finishedDownloads = 0;
 		report();
 	}
 
@@ -117,7 +119,8 @@ public class BackupProgressTracker {
 		if (started == null) {
 			return;
 		}
-		finished.addFirst(started.finishedAt(clock.instant()));
+		finishedDownloads++;
+		finished.addFirst(started.withFinishedAt(clock.instant()));
 		while (finished.size() > MAX_FINISHED_DOWNLOADS) {
 			finished.removeLast();
 		}
@@ -163,7 +166,7 @@ public class BackupProgressTracker {
 		downloads.addAll(finished);
 		port.report(new BackupProgress(driveName, sharedDrive, driveIndex + 1, totalDrives, completedDrives, phase,
 				currentItem, processedItems, totalItems, jobStartedAt, driveStartedAt, driveRemaining, jobRemaining,
-				downloads));
+				downloads, finishedDownloads));
 	}
 
 	private Duration driveRemaining(Instant now) {

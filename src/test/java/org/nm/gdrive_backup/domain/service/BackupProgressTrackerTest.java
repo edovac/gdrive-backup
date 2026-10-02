@@ -357,6 +357,68 @@ class BackupProgressTrackerTest {
 	}
 
 	@Test
+	void countsEveryFinishedDownloadEvenThoughOnlyTheLastFewAreListed() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		int count = BackupProgressTracker.MAX_FINISHED_DOWNLOADS * 3 + 5;
+		for (int i = 0; i < count; i++) {
+			tracker.downloadStarted("id-" + i, "F" + i, "My Drive/F" + i, null);
+			tracker.downloadFinished("id-" + i);
+		}
+		tracker.downloadStarted("running", "Running", "My Drive/Running", null);
+
+		BackupProgress snapshot = lastSnapshot();
+
+		assertEquals(count, snapshot.finishedDownloads());
+		assertEquals(BackupProgressTracker.MAX_FINISHED_DOWNLOADS + 1, snapshot.downloads().size());
+		assertEquals(20, BackupProgressTracker.MAX_FINISHED_DOWNLOADS);
+	}
+
+	@Test
+	void anAbortedDownloadIsNotCounted() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A", "My Drive/A", null);
+		tracker.downloadStarted("id-2", "B", "My Drive/B", null);
+
+		tracker.downloadAborted("id-1");
+		tracker.downloadFinished("id-2");
+		tracker.downloadFinished("never-started");
+
+		assertEquals(1, lastSnapshot().finishedDownloads());
+	}
+
+	@Test
+	void theFinishedCountStartsOverWithEachDrive() {
+		tracker.jobStarted(List.of(PERSONAL, SHARED));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A", "My Drive/A", null);
+		tracker.downloadFinished("id-1");
+		assertEquals(1, lastSnapshot().finishedDownloads());
+		tracker.driveCompleted();
+
+		tracker.driveStarted(SHARED);
+
+		assertEquals(0, lastSnapshot().finishedDownloads());
+	}
+
+	@Test
+	void aSnapshotBuiltWithoutAnExplicitCountDerivesItFromTheFinishedDownloads() {
+		Instant now = Instant.parse("2026-01-01T00:00:00Z");
+		List<FileDownload> downloads = List.of(
+				new FileDownload("a", "A", "My Drive/A", now, null),
+				new FileDownload("b", "B", "My Drive/B", now, now),
+				new FileDownload("c", "C", "My Drive/C", now, now));
+
+		BackupProgress progress = new BackupProgress("My Drive", false, 1, 1, 0, BackupPhase.BACKING_UP, null, 0, null,
+				now, now, null, null, downloads);
+
+		assertEquals(2, progress.finishedDownloads());
+		assertEquals(0, new BackupProgress("My Drive", false, 1, 1, 0, BackupPhase.BACKING_UP, null, 0, null, now, now,
+				null, null).finishedDownloads());
+	}
+
+	@Test
 	void anAbortedDownloadLeavesTheListWithoutBeingShownAsDone() {
 		tracker.jobStarted(List.of(PERSONAL));
 		tracker.driveStarted(PERSONAL);
@@ -444,6 +506,7 @@ class BackupProgressTrackerTest {
 		List<FileDownload> downloads = lastSnapshot().downloads();
 		assertEquals(BackupProgressTracker.MAX_FINISHED_DOWNLOADS, downloads.size());
 		assertTrue(downloads.stream().allMatch(FileDownload::finished), "nothing is left in flight");
+		assertEquals(threads * perThread, lastSnapshot().finishedDownloads(), "no finish was lost");
 	}
 
 	private BackupProgress lastSnapshot() {

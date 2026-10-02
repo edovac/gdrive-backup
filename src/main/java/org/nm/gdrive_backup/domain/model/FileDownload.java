@@ -29,7 +29,7 @@ public record FileDownload(String fileId, String name, String path, Instant star
 		return new FileDownload(fileId, name, path, startedAt, finishedAt, bytes, totalBytes);
 	}
 
-	public FileDownload finishedAt(Instant finished) {
+	public FileDownload withFinishedAt(Instant finished) {
 		return new FileDownload(fileId, name, path, startedAt, finished, bytesDownloaded, totalBytes);
 	}
 }

@@ -284,9 +284,10 @@ of truth for expected behavior.
   rather than deflated, and Drive content calls retry with backoff (`DriveRetry`).
   The admin can change the concurrency for the session in the Settings dialog
   (`DownloadConcurrencyUseCase`); it is not persisted across launches. The
-  progress panel lists the files being downloaded under the bar (file name,
-  full Drive path as a tooltip, finished ones dimmed for a few seconds) for
-  both full and incremental runs, with the live downloaded size beside each
+  Backup tab's progress panel shows two lists under the bar, "Downloading" and
+  "Downloaded" (the last 20, with the total in the heading), with each file's
+  name, full Drive path as a tooltip, for both full and incremental runs, and
+  the live downloaded size beside each
   name ("12.4 MB of 80.0 MB" when Drive reports a size, the running amount for
   Google-native exports).
   See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
