@@ -39,6 +39,7 @@ import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.BackupDrivePanel;
 import org.nm.gdrive_backup.adapter.in.javafx.BackupModePicker;
 import org.nm.gdrive_backup.adapter.in.javafx.BackupSummaryText;
+import org.nm.gdrive_backup.adapter.in.javafx.FailedFilesPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.FileHistoryPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.OperationProgressPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.SessionHeaderPanel;
@@ -98,6 +99,7 @@ public class JavaFxApplication extends Application {
 	private static ArchiveCatalogUseCase archiveCatalogUseCase;
 	private static ArchiveMergeUseCase archiveMergeUseCase;
 	private static org.nm.gdrive_backup.domain.port.in.FileHistoryUseCase fileHistoryUseCase;
+	private static org.nm.gdrive_backup.domain.port.in.DownloadFailureReportUseCase downloadFailureReportUseCase;
 	private static ArchiveDeletionUseCase archiveDeletionUseCase;
 
 	private final Button signIn = new Button("Sign in with Google");
@@ -121,6 +123,7 @@ public class JavaFxApplication extends Application {
 	private OperationProgressPanel archiveProgressPanel;
 	private ArchiveManagerPanel archiveManagerPanel;
 	private FileHistoryPanel fileHistoryPanel;
+	private FailedFilesPanel failedFilesPanel;
 	private SettingsPanel settingsPanel;
 	private Tab backupTab;
 
@@ -158,6 +161,11 @@ public class JavaFxApplication extends Application {
 
 	static void setBackupCancellation(BackupCancellationUseCase cancellationUseCase) {
 		backupCancellationUseCase = cancellationUseCase;
+	}
+
+	static void setDownloadFailureReport(
+			org.nm.gdrive_backup.domain.port.in.DownloadFailureReportUseCase reportUseCase) {
+		downloadFailureReportUseCase = reportUseCase;
 	}
 
 	static void setHistoryService(org.nm.gdrive_backup.domain.port.in.FileHistoryUseCase historyUseCase) {
@@ -285,12 +293,14 @@ public class JavaFxApplication extends Application {
 				});
 
 		fileHistoryPanel = new FileHistoryPanel(fileHistoryUseCase);
+		failedFilesPanel = new FailedFilesPanel(downloadFailureReportUseCase);
 
 		backupTab = new Tab("Backup", buildBackupTab());
 		tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
 		tabs.getTabs().addAll(backupTab,
 				new Tab("Archives", scrollable(buildArchivesTab())),
 				new Tab("History", scrollable(fileHistoryPanel.node())),
+				new Tab("Failed files", scrollable(failedFilesPanel.node())),
 				new Tab("Technical info", scrollable(technicalInfoPanel.node())));
 		tabs.getSelectionModel().selectedItemProperty().addListener((observable, was, now) -> {
 			if (now == backupTab) {
@@ -428,6 +438,7 @@ public class JavaFxApplication extends Application {
 					locationsPanel.show();
 					archiveManagerPanel.show();
 					fileHistoryPanel.show();
+					failedFilesPanel.show();
 					loadWorkspaceUsers();
 					loadAdminProfile(loginSession);
 				}));
@@ -450,6 +461,7 @@ public class JavaFxApplication extends Application {
 		locationsPanel.hide();
 		archiveManagerPanel.hide();
 		fileHistoryPanel.hide();
+		failedFilesPanel.hide();
 		technicalInfoPanel.hide();
 		tabs.getSelectionModel().selectFirst();
 		showLoginView();
@@ -559,6 +571,7 @@ public class JavaFxApplication extends Application {
 			drivePanel.runFinished(results);
 			status.setText(BackupSummaryText.summary(results, selectedDrives, cancelled));
 			footerSummary.setText(BackupSummaryText.headline(results, cancelled));
+			failedFilesPanel.refresh();
 			refreshArchiveCatalog();
 		}));
 	}

@@ -71,3 +71,18 @@ CREATE TABLE IF NOT EXISTS sync_state (
 CREATE INDEX IF NOT EXISTS idx_file_captures_file_id ON file_captures(file_id);
 CREATE INDEX IF NOT EXISTS idx_file_events_file_id ON file_events(file_id);
 CREATE INDEX IF NOT EXISTS idx_archives_scope_key ON archives(scope_key);
+
+CREATE TABLE IF NOT EXISTS download_failures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_key TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    drive_path TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    failed_at TEXT NOT NULL,
+    archive_id INTEGER REFERENCES archives(id),
+    open INTEGER NOT NULL DEFAULT 1,
+    resolved_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_failures_open ON download_failures(scope_key, open);

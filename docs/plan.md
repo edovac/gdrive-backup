@@ -220,6 +220,22 @@ Last reviewed: 2026-10-02
   card on the Technical info tab. See **Main window layout** and
   **Technical info tab**.
 
+- [x] Skip files that cannot be downloaded instead of failing the drive. A
+  per-file fetch failure (`FileDownloadException`) is collected by
+  `DownloadFailureLimit`, the run commits everything else, and the skipped files
+  are stored in the new `download_failures` table in the run's own commit
+  (`FailureChanges` in `PendingCommit`). Every later incremental run retries the
+  drive's open failures (`DriveChangeSyncService`, `PendingChanges.addRetries`);
+  a full run attempts everything anyway; a file that downloads, is trashed or is
+  deleted is closed. More than `gdrive-backup.backup.max-download-failures`
+  (default 50) skips, or ten failures in a row, end the run as a failed drive.
+  Read paths: the per-drive list in the completion summary
+  (`BackupSummaryText`/`FailedFilesText`) and the new **Failed files** tab
+  (`FailedFilesPanel`, `DownloadFailureReportUseCase`). Also retried: Drive
+  listing/token calls (`DriveRetry`) and a stream that drops mid-download
+  (`FileContentStreamingService`, three attempts). See **Sync algorithm**,
+  step 9, and **Known limitations**.
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.

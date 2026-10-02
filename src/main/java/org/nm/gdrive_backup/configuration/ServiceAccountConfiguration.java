@@ -31,6 +31,9 @@ import org.nm.gdrive_backup.domain.service.DriveUserProfileService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUsageReportService;
 import org.nm.gdrive_backup.domain.service.CloudQuotaLimitService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
+import org.nm.gdrive_backup.domain.port.in.DownloadFailureReportUseCase;
+import org.nm.gdrive_backup.domain.port.out.DownloadFailurePort;
+import org.nm.gdrive_backup.domain.service.DownloadFailureReportService;
 import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
 import org.nm.gdrive_backup.domain.service.DownloadConcurrencyService;
 import org.nm.gdrive_backup.domain.port.in.DownloadConcurrencyUseCase;
@@ -164,6 +167,11 @@ public class ServiceAccountConfiguration {
 		return new DownloadConcurrencyService(backupProperties.downloadConcurrency(), backupActivity);
 	}
 
+	@Bean
+	DownloadFailureReportUseCase downloadFailureReportUseCase(DownloadFailurePort downloadFailurePort) {
+		return new DownloadFailureReportService(downloadFailurePort);
+	}
+
 	/** Starts at the configured value; the admin changes it for the session in Settings. */
 	@Bean
 	PersonalDriveContentUseCase personalDriveContentUseCase(BackupProperties backupProperties,
@@ -177,10 +185,12 @@ public class ServiceAccountConfiguration {
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
 			BackupProgressTracker progressTracker, BackupCancellation cancellation,
-			DownloadConcurrencyUseCase downloadConcurrency, PersonalDriveContentUseCase personalDriveContent) {
+			DownloadConcurrencyUseCase downloadConcurrency, PersonalDriveContentUseCase personalDriveContent,
+			DownloadFailurePort downloadFailurePort, BackupProperties backupProperties) {
 		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, contentStreamingService,
 				archiveSessionPort, archiveRunPlanner, syncCommitPort, progressTracker, cancellation,
-				downloadConcurrency::current, personalDriveContent::current);
+				downloadConcurrency::current, personalDriveContent::current,
+				downloadFailurePort, backupProperties::maxDownloadFailures);
 	}
 
 	@Bean
@@ -190,10 +200,12 @@ public class ServiceAccountConfiguration {
 			FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
 			BackupProgressTracker progressTracker, BackupCancellation cancellation,
-			DownloadConcurrencyUseCase downloadConcurrency, PersonalDriveContentUseCase personalDriveContent) {
+			DownloadConcurrencyUseCase downloadConcurrency, PersonalDriveContentUseCase personalDriveContent,
+			DownloadFailurePort downloadFailurePort, BackupProperties backupProperties) {
 		return new InitialDriveSyncService(fileListingPort, changePort, contentStreamingService, archiveSessionPort,
 				archiveRunPlanner, syncCommitPort, progressTracker, cancellation, downloadConcurrency::current,
-				personalDriveContent::current);
+				personalDriveContent::current,
+				downloadFailurePort, backupProperties::maxDownloadFailures);
 	}
 
 	@Bean

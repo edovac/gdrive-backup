@@ -2,6 +2,7 @@ package org.nm.gdrive_backup.domain.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,6 +38,7 @@ import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest.ManifestFile;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
+import org.nm.gdrive_backup.domain.model.DownloadFailure;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveScope;
@@ -49,6 +51,7 @@ import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.model.SyncResult;
 import org.nm.gdrive_backup.domain.model.SyncState;
 import org.nm.gdrive_backup.domain.port.out.ArchivePort;
+import org.nm.gdrive_backup.domain.port.out.DownloadFailurePort;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
@@ -70,15 +73,25 @@ class DriveChangeSyncServiceTest {
 	private final RecordingSyncCommitPort commits = new RecordingSyncCommitPort(log);
 	private final BackupCancellation cancellation = new BackupCancellation();
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
-	private final DriveChangeSyncService service = new DriveChangeSyncService(changePort, statePort, metadataPort,
-			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation, () -> 1,
-				() -> PersonalDriveContent.OWNED_ONLY);
+	private final DownloadFailurePort failurePort = mock(DownloadFailurePort.class);
+	private final DriveChangeSyncService service = limitedService(50);
 
 	private final DriveChangeSyncService parallelService = new DriveChangeSyncService(changePort, statePort,
 			metadataPort, new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort),
 			commits, progressTracker, cancellation, () -> 4,
-				() -> PersonalDriveContent.OWNED_ONLY);
+				() -> PersonalDriveContent.OWNED_ONLY, failurePort, () -> 50);
+
+	private DriveChangeSyncService limitedService(int maxDownloadFailures) {
+		return new DriveChangeSyncService(changePort, statePort, metadataPort,
+				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+				progressTracker, cancellation, () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY, failurePort, () -> maxDownloadFailures);
+	}
+
+	private static DownloadFailure openFailure(String fileId) {
+		return new DownloadFailure(1L, "user@example.com", fileId, fileId + ".pdf", "My Drive/" + fileId + ".pdf",
+				"forbidden", Instant.now(), 1L, true, null);
+	}
 
 	/** Stubs a feed that adds {@code count} new PDFs (file-0 ...) in one page. */
 	private void stubNewFiles(int count) {
@@ -343,7 +356,7 @@ class DriveChangeSyncServiceTest {
 	}
 
 	@Test
-	void aDownloadFailureDiscardsTheDeltaAndCommitsNothing() throws Exception {
+	void aFileThatCannotBeDownloadedIsSkippedReportedAndTheCursorStillMoves() throws Exception {
 		baseline("old-token");
 		StoredFile current = new StoredFile("file-1", "user@example.com", "Report.pdf", "", null, "application/pdf",
 				false, "revision-2", null);
@@ -352,8 +365,90 @@ class DriveChangeSyncServiceTest {
 		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 
-		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
 
+		assertEquals(List.of("open", "publish", "commit"), log);
+		PendingCommit commit = commits.commits.getFirst();
+		assertEquals(new SyncState("user@example.com", "new-token"), commit.newSyncState());
+		assertTrue(commit.captures().isEmpty());
+		DownloadFailure failure = commit.failureChanges().failed().getFirst();
+		assertEquals("file-1", failure.fileId());
+		assertEquals("My Drive/Report.pdf", failure.drivePath());
+		assertTrue(failure.reason().contains("connection reset"), failure.reason());
+		assertEquals(List.of(failure), result.failures());
+	}
+
+	@Test
+	void aSkippedFileIsFetchedAgainEvenWhenDriveReportsNoChangeToIt() throws Exception {
+		baseline("old-token");
+		StoredFile stored = new StoredFile("file-1", "user@example.com", "Report.pdf", "", null, "application/pdf",
+				false, "revision-2", null);
+		when(failurePort.findOpenByScopeKey("user@example.com")).thenReturn(List.of(openFailure("file-1")));
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(stored));
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1, 2 }));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
+				.thenReturn(new DriveChangePage(List.of(), null, "new-token"));
+
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		PendingCommit commit = commits.commits.getFirst();
+		assertEquals(1, commit.captures().size());
+		assertEquals("revision-2", commit.captures().getFirst().revisionId());
+		assertEquals(List.of("file-1"), commit.failureChanges().resolvedFileIds());
+		assertTrue(commit.failureChanges().failed().isEmpty());
+		assertNotNull(result.archive());
+	}
+
+	@Test
+	void aRetryThatFailsAgainPublishesNoArchiveButKeepsTheReport() throws Exception {
+		baseline("old-token");
+		StoredFile stored = new StoredFile("file-1", "user@example.com", "Report.pdf", "", null, "application/pdf",
+				false, "revision-2", null);
+		when(failurePort.findOpenByScopeKey("user@example.com")).thenReturn(List.of(openFailure("file-1")));
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(stored));
+		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("forbidden"));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
+				.thenReturn(new DriveChangePage(List.of(), null, "new-token"));
+
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		assertNull(result.archive());
+		assertEquals(List.of("open", "commit", "discard"), log);
+		PendingCommit commit = commits.commits.getFirst();
+		assertNull(commit.archiveOrNull());
+		assertEquals(1, commit.failureChanges().failed().size());
+		assertEquals(new SyncState("user@example.com", "new-token"), commit.newSyncState());
+	}
+
+	@Test
+	void aSkippedFileThatIsTrashedOrDeletedIsClosedWithoutBeingFetched() throws Exception {
+		baseline("old-token");
+		StoredFile trashed = new StoredFile("file-1", "user@example.com", "Report.pdf", "", null, "application/pdf",
+				true, "revision-2", null);
+		when(failurePort.findOpenByScopeKey("user@example.com")).thenReturn(List.of(openFailure("file-1"),
+				openFailure("file-2")));
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(trashed));
+		when(metadataPort.findByFileId("file-2")).thenReturn(Optional.empty());
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
+				.thenReturn(new DriveChangePage(List.of(), null, "new-token"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		verify(contentPort, never()).download(any(), any());
+		assertEquals(List.of("file-1", "file-2"), commits.commits.getFirst().failureChanges().resolvedFileIds());
+	}
+
+	@Test
+	void tooManySkippedFilesEndTheRunWithoutCommittingAnything() throws Exception {
+		stubNewFiles(3);
+		when(contentPort.download(ACCESS, "file-0")).thenThrow(new IOException("forbidden"));
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		when(contentPort.download(ACCESS, "file-2")).thenThrow(new IOException("forbidden"));
+
+		IllegalStateException stopped = assertThrows(IllegalStateException.class,
+				() -> limitedService(1).synchronize(ACCESS, SCOPE, null));
+
+		assertTrue(stopped.getMessage().contains("limit is 1"), stopped.getMessage());
 		assertEquals(List.of("open", "discard"), log);
 		assertTrue(commits.commits.isEmpty());
 	}
@@ -708,7 +803,7 @@ class DriveChangeSyncServiceTest {
 		stubNewFiles(1);
 		when(contentPort.download(ACCESS, "file-0")).thenThrow(new IOException("connection reset"));
 
-		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
+		parallelService.synchronize(ACCESS, SCOPE, null);
 
 		verify(progressTracker).downloadStarted("file-0", "F0.pdf", "My Drive/F0.pdf", null);
 		verify(progressTracker).downloadAborted("file-0");
@@ -732,7 +827,7 @@ class DriveChangeSyncServiceTest {
 	}
 
 	@Test
-	void aDownloadFailureAmongParallelDownloadsDiscardsTheDeltaAndCommitsNothing() throws Exception {
+	void aDownloadFailureAmongParallelDownloadsSkipsOnlyThatFile() throws Exception {
 		stubNewFiles(6);
 		for (int i = 0; i < 6; i++) {
 			if (i == 2) {
@@ -745,11 +840,12 @@ class DriveChangeSyncServiceTest {
 			}
 		}
 
-		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
+		SyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
 
-		assertEquals(List.of("open", "discard"), log);
-		assertTrue(commits.commits.isEmpty());
-		assertTrue(sessions.allStagedReleased(), "content fetched but never written is released");
+		assertEquals(List.of("open", "publish", "commit"), log);
+		assertEquals(5, commits.commits.getFirst().captures().size());
+		assertEquals(List.of("file-2"), result.failures().stream().map(DownloadFailure::fileId).toList());
+		assertTrue(sessions.allStagedReleased(), "every staged spool is written or released");
 	}
 
 	@Test

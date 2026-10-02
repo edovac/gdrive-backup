@@ -489,6 +489,17 @@ sync_state
   scope_key (PK)            -- user email or drive_id
   page_token                -- changes.list startPageToken
 
+download_failures           -- the report of files a run skipped (see "Files that cannot be downloaded")
+  id (PK)
+  scope_key                 -- user email or drive_id
+  file_id                   -- not a FK to files: the report outlives a file that has left it
+  file_name, drive_path     -- as they were when the run failed
+  reason                    -- the failure on one line, at most 500 characters
+  failed_at
+  archive_id                -- FK -> archives; the run's archive, null if the run published none
+  open                      -- 1 until the file is backed up, stops needing a backup, or fails again
+  resolved_at               -- set when it was backed up or stopped needing a backup; null if superseded
+
 archives                   -- one row per archive written; the chain's source of truth
   id (PK)
   scope_key                -- user email or drive_id
@@ -621,10 +632,10 @@ inferred from the value's shape.
    processed in the progress when its download finishes. At most twice the
    concurrency of downloads are submitted but not yet written, which bounds
    spool disk use (the writer drains each as it completes, so a spool file rarely
-   waits long). A stop request, a failed download or a
-   failed write aborts the run exactly as before: outstanding downloads are
-   cancelled, spool files are deleted, the staged ZIP is discarded and nothing
-   is committed. Content that is already in a compressed container (Office and
+   waits long). A stop request or a failed write aborts the run exactly as
+   before: outstanding downloads are cancelled, spool files are deleted, the
+   staged ZIP is discarded and nothing is committed. A download that fails for
+   one file does not (see **Files that cannot be downloaded**). Content that is already in a compressed container (Office and
    OpenDocument files, PDF, images such as JPEG and PNG, video, compressed audio,
    archives) is **stored** in the ZIP without compression, since deflating it
    costs CPU for almost no size gain; everything else is deflated at the fastest
@@ -654,6 +665,37 @@ inferred from the value's shape.
    running. Shared Drive backups are unaffected. A file the user owns inside a
    folder someone else owns has no listed parent and lands at the root of the
    archive.
+
+9. **Files that cannot be downloaded.** A file whose content Drive will not give
+   (a 403 because downloading is disabled or the file is flagged, a Google-native
+   file too large to export even as PDF, a stream that keeps failing after the
+   retries) is **skipped**, not allowed to fail the drive. Only a failure of that
+   one file's fetch counts: a credentials, quota or archive-writing error still
+   ends the run. The run commits everything else and moves its cursor on; the
+   archive's manifest lists the file with no entry, like a Form. Each skipped file
+   is stored in `download_failures` with its Drive path and reason, in the same
+   transaction as the rest of the run, and listed at the end of the backup
+   (first ten per drive, then a count) and in the **Failed files** tab.
+   - **Retry on every run.** Because the cursor has moved past the change that
+     first failed, an incremental run reads the drive's open failures and fetches
+     those files again, whether or not Drive reports a change to them. A file that
+     downloads is captured and its failure closed (`resolved_at`); one that is
+     trashed, deleted or has no backable content is closed without being fetched;
+     one that fails again gets a new open row (the older one is closed with no
+     `resolved_at`). A run whose only fetches were such retries, all failing
+     again, publishes no archive. A full run attempts every live file anyway and
+     closes whatever it captured or no longer lists.
+   - **Limits.** A run ends as a failed drive, committing nothing, when more than
+     `gdrive-backup.backup.max-download-failures` files (default 50) were skipped,
+     or when ten downloads in a row failed in completion order. Either looks like
+     an outage or a revoked permission, and an archive committed then would look
+     complete while being hollow.
+   - **Merging.** A skipped file's newest metadata is in the chain but its
+     newest bytes are not; a merge folds the older captured revision (if any)
+     under the newer metadata, exactly as for a metadata-only change, and the
+     deletion check's revision comparison still matches the older capture.
+   - Deleting archives re-points their `download_failures` rows at the merged
+     full, like `file_events`.
 
 ---
 
@@ -974,6 +1016,10 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   full/incremental sync, show per-user progress, package the per-drive archive
   output for the chosen mode, and surface partial failures (suspended
   accounts, revoked access, etc. are expected at org scale).
+- **Failed files**: a tab listing the open `download_failures` of every drive
+  (path, reason, when last tried), reloaded when the tab is shown after sign-in
+  and after each backup. The completion summary on the Backup tab names the
+  skipped files of each drive.
 - **Archive manager**: list each scope's archive chain in order, showing which
   archive is the full baseline and which deltas follow it, and warn when a link
   is missing. Archives made obsolete by a merge are shown as such (an older,
@@ -1035,6 +1081,12 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   impersonated user losing access — can't fully distinguish without extra
   Admin SDK checks.
 - Stale `page_token` after long downtime forces a full resync for that scope.
+- **A skipped file is a known gap.** An archive and its cursor no longer mean
+  "everything up to here is captured": files in `download_failures` are not.
+  The admin must read the Failed files tab; a file that can never be downloaded
+  stays listed until it is deleted or trashed in Drive. A disk error while
+  spooling a download is indistinguishable from a network error at that point
+  and is skipped too, though a disk that is full trips the run's streak limit.
 - **Personal drives back up owned files only by default.** A file is backed up
   with its owner, so a file owned by an account outside the Workspace domain
   (or by a user who is never backed up) is in nobody's backup unless the admin

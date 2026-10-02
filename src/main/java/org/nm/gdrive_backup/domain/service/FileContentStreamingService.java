@@ -12,6 +12,7 @@ import java.util.function.LongConsumer;
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
 import org.nm.gdrive_backup.domain.model.FetchedFile;
+import org.nm.gdrive_backup.domain.model.FileDownloadException;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
@@ -79,18 +80,28 @@ public class FileContentStreamingService {
 			return fetchContent(access, file, exportFormat, session, null, onBytesDownloaded);
 		} catch (DriveExportLimitException exception) {
 			if (exportFormat == null) {
-				throw new IllegalStateException("Unexpected export limit for a non-native Drive file", exception);
+				throw new FileDownloadException("Unexpected export limit for a non-native Drive file", exception);
 			}
 			try {
 				return fetchContent(access, file, PDF_FALLBACK, session, exportFormat.extension(), onBytesDownloaded);
 			} catch (DriveExportLimitException fallbackException) {
-				throw new IllegalStateException("Google PDF fallback also exceeded the export limit", fallbackException);
+				throw new FileDownloadException("Google PDF fallback also exceeded the export limit", fallbackException);
 			} catch (IOException fallbackException) {
-				throw new IllegalStateException("Unable to back up file content using PDF fallback", fallbackException);
+				throw downloadFailure("Unable to back up file content using PDF fallback", fallbackException);
 			}
 		} catch (IOException exception) {
-			throw new IllegalStateException("Unable to back up file content", exception);
+			throw downloadFailure("Unable to back up file content", exception);
 		}
+	}
+
+	/**
+	 * A failure of this one file, which a run may skip. An interruption is a cancel, not a bad file, so it stays a
+	 * plain failure that ends the run.
+	 */
+	private static IllegalStateException downloadFailure(String message, IOException cause) {
+		return cause instanceof InterruptedIOException
+				? new IllegalStateException(message, cause)
+				: new FileDownloadException(message, cause);
 	}
 
 	/**
