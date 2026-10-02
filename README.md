@@ -11,6 +11,14 @@ full one without contacting Google.
 Built with Java 25, Spring Boot, JavaFX and SQLite. Restore is manual (upload
 an extracted full archive); scheduled backups are out of scope.
 
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Unless required by
+applicable law or agreed to in writing, the software is distributed on an
+"AS IS" basis, without warranties or conditions of any kind. The Windows build
+bundles third-party software under its own licenses; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which ships in the release zip.
+
 ## Documentation
 
 - [Requirements spec](docs/gdrive-backup-app.md): behavior, auth model, data
