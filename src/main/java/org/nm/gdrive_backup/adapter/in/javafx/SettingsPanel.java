@@ -10,22 +10,34 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 
 import org.nm.gdrive_backup.domain.model.CredentialConfiguration;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.port.in.CredentialConfigurationUseCase;
+import org.nm.gdrive_backup.domain.port.in.DownloadConcurrencyUseCase;
+import org.nm.gdrive_backup.domain.port.in.PersonalDriveContentUseCase;
 
 /**
  * Lets the admin import or clear the Google credentials the app uses (the service-account key and
- * the OAuth client secrets) and set the Cloud project id, replacing manual env var/file setup.
+ * the OAuth client secrets), set the Cloud project id, replacing manual env var/file setup, and choose how many
+ * files a backup downloads at once and whether personal drive backups include files shared with the user, both for
+ * the session.
  */
 public final class SettingsPanel {
 
 	private final CredentialConfigurationUseCase useCase;
+	/** Null when no download-concurrency use case is wired; the section is then left out. */
+	private final DownloadConcurrencyUseCase downloadConcurrency;
+	/** Null when no personal-drive-content use case is wired; the section is then left out. */
+	private final PersonalDriveContentUseCase personalDriveContent;
 
 	private final Label serviceAccountStatus = new Label();
 	private final Button importServiceAccountKey = new Button("Import file...");
@@ -38,11 +50,19 @@ public final class SettingsPanel {
 	private final TextField projectIdField = new TextField();
 	private final Button saveProjectId = new Button("Save");
 
+	private final Spinner<Integer> downloadConcurrencyField = new Spinner<>();
+	private final Button saveDownloadConcurrency = new Button("Save");
+
+	private final CheckBox includeSharedFiles = new CheckBox(SettingsText.includeSharedFilesLabel());
+
 	private final Label message = new Label();
 	private final VBox root;
 
-	public SettingsPanel(CredentialConfigurationUseCase useCase) {
+	public SettingsPanel(CredentialConfigurationUseCase useCase, DownloadConcurrencyUseCase downloadConcurrency,
+			PersonalDriveContentUseCase personalDriveContent) {
 		this.useCase = useCase;
+		this.downloadConcurrency = downloadConcurrency;
+		this.personalDriveContent = personalDriveContent;
 
 		Label title = new Label("Settings");
 		title.getStyleClass().add("subtitle");
@@ -75,7 +95,30 @@ public final class SettingsPanel {
 		message.setWrapText(true);
 		message.setMaxWidth(440);
 
-		root = new VBox(16, title, serviceAccountSection, oauthSection, projectIdSection, message);
+		root = new VBox(16, title, serviceAccountSection, oauthSection, projectIdSection);
+		if (downloadConcurrency != null) {
+			downloadConcurrencyField.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+					downloadConcurrency.minimum(), downloadConcurrency.maximum(), downloadConcurrency.current()));
+			downloadConcurrencyField.setPrefWidth(90);
+			saveDownloadConcurrency.getStyleClass().add("secondary-button");
+			saveDownloadConcurrency.setOnAction(event -> saveDownloadConcurrency());
+			Label hint = new Label(SettingsText.downloadConcurrencyHint(
+					downloadConcurrency.minimum(), downloadConcurrency.maximum()));
+			hint.getStyleClass().add("scope");
+			hint.setWrapText(true);
+			hint.setMaxWidth(440);
+			root.getChildren().add(new VBox(4, new Label("Parallel downloads"), hint,
+					new HBox(8, downloadConcurrencyField, saveDownloadConcurrency)));
+		}
+		if (personalDriveContent != null) {
+			includeSharedFiles.setOnAction(event -> savePersonalDriveContent());
+			Label hint = new Label(SettingsText.includeSharedFilesHint());
+			hint.getStyleClass().add("scope");
+			hint.setWrapText(true);
+			hint.setMaxWidth(440);
+			root.getChildren().add(new VBox(4, new Label("Personal drives"), hint, includeSharedFiles));
+		}
+		root.getChildren().add(message);
 		root.setPadding(new Insets(16));
 		root.setMaxWidth(440);
 		root.setAlignment(Pos.TOP_LEFT);
@@ -92,7 +135,49 @@ public final class SettingsPanel {
 		serviceAccountStatus.setText(SettingsText.serviceAccountKeyStatus(configuration.serviceAccountKeyConfigured()));
 		oauthStatus.setText(SettingsText.oauthClientSecretsStatus(configuration.oauthClientSecretsConfigured()));
 		projectIdField.setText(configuration.projectId() == null ? "" : configuration.projectId());
+		refreshDownloadConcurrency();
+		refreshPersonalDriveContent();
 		message.setText("");
+	}
+
+	private void refreshDownloadConcurrency() {
+		if (downloadConcurrency != null) {
+			downloadConcurrencyField.getValueFactory().setValue(downloadConcurrency.current());
+		}
+	}
+
+	private void saveDownloadConcurrency() {
+		int value = downloadConcurrencyField.getValue();
+		setBusy(true);
+		CompletableFuture.runAsync(() -> downloadConcurrency.change(value))
+				.whenComplete((ignored, error) -> Platform.runLater(() -> {
+					setBusy(false);
+					refreshDownloadConcurrency();
+					message.setText(error != null
+							? SettingsText.downloadConcurrencySaveFailed(SettingsText.reason(error))
+							: SettingsText.downloadConcurrencySaved(value));
+				}));
+	}
+
+	private void refreshPersonalDriveContent() {
+		if (personalDriveContent != null) {
+			includeSharedFiles.setSelected(personalDriveContent.current() == PersonalDriveContent.ALL_ACCESSIBLE);
+		}
+	}
+
+	private void savePersonalDriveContent() {
+		PersonalDriveContent value = includeSharedFiles.isSelected()
+				? PersonalDriveContent.ALL_ACCESSIBLE : PersonalDriveContent.OWNED_ONLY;
+		setBusy(true);
+		CompletableFuture.runAsync(() -> personalDriveContent.change(value))
+				.whenComplete((ignored, error) -> Platform.runLater(() -> {
+					setBusy(false);
+					// Back to what is really in effect, which is the old value when the change was refused.
+					refreshPersonalDriveContent();
+					message.setText(error != null
+							? SettingsText.personalDriveContentSaveFailed(SettingsText.reason(error))
+							: SettingsText.personalDriveContentSaved(value));
+				}));
 	}
 
 	private void chooseFile(String title, Consumer<Path> importFile, String label) {
@@ -152,5 +237,8 @@ public final class SettingsPanel {
 		importOAuthClientSecrets.setDisable(busy);
 		clearOAuthClientSecrets.setDisable(busy);
 		saveProjectId.setDisable(busy);
+		saveDownloadConcurrency.setDisable(busy);
+		downloadConcurrencyField.setDisable(busy);
+		includeSharedFiles.setDisable(busy);
 	}
 }

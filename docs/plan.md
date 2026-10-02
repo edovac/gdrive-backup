@@ -11,7 +11,7 @@ document.
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-26
+Last reviewed: 2026-10-02
 
 ### Completed
 
@@ -275,6 +275,32 @@ of truth for expected behavior.
 - [x] History view: search backed-up files by name and see one file's renames,
   moves, trashing and captured revisions in time order, with the archive that
   recorded each (`FileHistoryUseCase`, `FileHistoryPanel`, in the History tab).
+
+- [x] Download throughput: both sync services download several files at once
+  (`gdrive-backup.backup.download-concurrency`, default 4) through
+  `ParallelContentFetcher`. Downloads are spooled next to the staged ZIP and
+  written by a single thread as each download completes (not in list order, so
+  one very large file cannot stall the other slots), with the manifest still in
+  listing order and entry names independent of the write order; the commit
+  protocol is unchanged. Already-compressed content is stored
+  rather than deflated, and Drive content calls retry with backoff (`DriveRetry`).
+  The admin can change the concurrency for the session in the Settings dialog
+  (`DownloadConcurrencyUseCase`); it is not persisted across launches. The
+  Backup tab's progress panel shows two lists under the bar, "Downloading" and
+  "Downloaded" (the last 20, with the total in the heading), with each file's
+  name, full Drive path as a tooltip, for both full and incremental runs, and
+  the live downloaded size beside each
+  name ("12.4 MB of 80.0 MB" when Drive reports a size, the running amount for
+  Google-native exports).
+  See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
+  algorithm**, step 7.
+
+- [x] Personal drive content: a personal drive backup takes only the files the
+  user owns by default, instead of everything Drive lists for them (files
+  shared with them and Shared Drive items too). The admin can include shared
+  files for the session in the Settings dialog (`PersonalDriveContentUseCase`,
+  starting value `gdrive-backup.backup.personal-drive-content`). See **Sync
+  algorithm**, step 8.
 
 **P3 — delivery and UX refinements**
 

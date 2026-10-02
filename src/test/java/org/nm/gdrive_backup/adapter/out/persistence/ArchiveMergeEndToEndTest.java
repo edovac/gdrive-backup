@@ -17,6 +17,7 @@ import java.util.zip.ZipFile;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.DriveScope;
@@ -67,10 +68,12 @@ class ArchiveMergeEndToEndTest {
 		ArchiveRunPlanner planner = new ArchiveRunPlanner(archives);
 		FileContentStreamingService streaming = new FileContentStreamingService(drive);
 		full = new InitialDriveSyncService(drive, drive, streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation());
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY);
 		incremental = new DriveChangeSyncService(drive, new SqliteSyncStateAdapter(database),
 				new SqliteFileMetadataAdapter(database), streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation());
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY);
 		merge = new ArchiveMergeService(archives, new LocalArchiveReaderAdapter(root), sessions, planner, commit,
 				new BackupActivity(), BackupProgressTracker.NO_OP, new BackupCancellation());
 	}

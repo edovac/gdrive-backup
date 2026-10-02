@@ -6,9 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,9 +24,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
@@ -56,7 +65,12 @@ class InitialDriveSyncServiceTest {
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
 	private final InitialDriveSyncService service = new InitialDriveSyncService(listingPort, changePort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation);
+			progressTracker, cancellation, () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY);
+	private final InitialDriveSyncService parallelService = new InitialDriveSyncService(listingPort, changePort,
+			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+			progressTracker, cancellation, () -> 4,
+				() -> PersonalDriveContent.OWNED_ONLY);
 
 	@Test
 	void streamsEveryFileIntoADriveShapedArchiveAndCommitsAfterPublishing() throws Exception {
@@ -100,7 +114,7 @@ class InitialDriveSyncServiceTest {
 
 		InOrder order = inOrder(changePort, listingPort);
 		order.verify(changePort).getStartPageToken(ACCESS, SCOPE);
-		order.verify(listingPort).listAllFiles(ACCESS, SCOPE);
+		order.verify(listingPort).listAllFiles(ACCESS, SCOPE, PersonalDriveContent.OWNED_ONLY);
 	}
 
 	@Test
@@ -257,19 +271,436 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
+	void downloadsInParallelWritesEveryFileAndKeepsTheManifestInListingOrder() throws Exception {
+		int count = 8;
+		List<StoredFile> files = new ArrayList<>();
+		CountDownLatch firstWindowStarted = new CountDownLatch(4);
+		for (int i = 0; i < count; i++) {
+			int index = i;
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "revision-" + i));
+			when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+				firstWindowStarted.countDown();
+				// Four downloads must be in flight together, which a one-at-a-time run can never reach.
+				assertTrue(firstWindowStarted.await(5, TimeUnit.SECONDS), "downloads did not overlap");
+				// Earlier files take longer, so they finish after the later ones.
+				Thread.sleep((count - index) * 10L);
+				return new ByteArrayInputStream(new byte[] { (byte) index });
+			});
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		assertEquals(count, result.fileCount());
+		// Each file is written as it completes, so the entries are in completion order; the manifest stays in listing order.
+		Set<String> expectedEntries = files.stream().map(StoredFile::name).collect(java.util.stream.Collectors.toSet());
+		assertEquals(expectedEntries, sessions.entries.keySet());
+		for (int i = 0; i < count; i++) {
+			assertEquals(i, sessions.entries.get("F" + i + ".pdf")[0]);
+		}
+		assertEquals(expectedEntries, commits.commits.getFirst().captures().stream().map(capture -> capture.entryName())
+				.collect(java.util.stream.Collectors.toSet()));
+		assertEquals(files.stream().map(StoredFile::fileId).toList(),
+				sessions.publishedManifest.files().stream().map(record -> record.fileId()).toList());
+		// Progress follows download completion, which is not list order, so only the count and the end are fixed.
+		for (StoredFile file : files) {
+			verify(progressTracker, times(1)).itemProcessed(file.name());
+		}
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker, times(count)).itemProcessed(anyString());
+		order.verify(progressTracker).packaging();
+		assertEquals(List.of("open", "publish", "commit"), log);
+		assertTrue(sessions.allStagedReleased());
+	}
+
+	@Test
+	void reportsEachDownloadWithItsNameAndItsFullDrivePath() throws Exception {
+		StoredFile docs = file("folder-1", "Docs", "root-id", FOLDER, null);
+		StoredFile reports = file("folder-2", "Reports", "folder-1", FOLDER, null);
+		StoredFile report = file("file-1", "Q3.pdf", "folder-2", "application/pdf", "r1");
+		StoredFile top = file("file-2", "Top.pdf", "", "application/pdf", "r1");
+		stubDrive("token", docs, reports, report, top);
+		stubDownload("file-1", "a");
+		stubDownload("file-2", "b");
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).downloadStarted("file-1", "Q3.pdf", "My Drive/Docs/Reports/Q3.pdf", null);
+		order.verify(progressTracker).downloadFinished("file-1");
+		order.verify(progressTracker).itemProcessed("Q3.pdf");
+		order.verify(progressTracker).downloadStarted("file-2", "Top.pdf", "My Drive/Top.pdf", null);
+		order.verify(progressTracker).downloadFinished("file-2");
+		verify(progressTracker, never()).downloadAborted(anyString());
+	}
+
+	@Test
+	void passesDrivesReportedSizeAndTheFinalDownloadedSizeToTheProgress() throws Exception {
+		StoredFile big = new StoredFile("file-1", "user@example.com", "Big.pdf", "", null, "application/pdf", false,
+				"r1", null, 12L);
+		stubDrive("token", big);
+		stubDownload("file-1", "report-bytes");
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).downloadStarted("file-1", "Big.pdf", "My Drive/Big.pdf", 12L);
+		order.verify(progressTracker, atLeastOnce()).downloadProgressed("file-1", 12L);
+		order.verify(progressTracker).downloadFinished("file-1");
+	}
+
+	@Test
+	void aNativeFileHasNoTotalButItsFinalDownloadedSizeIsStillReported() throws Exception {
+		stubDrive("token", file("file-1", "Budget", "", "application/vnd.google-apps.spreadsheet", "v3"));
+		when(contentPort.export(ACCESS, "file-1",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+				.thenReturn(new ByteArrayInputStream(new byte[7]));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		verify(progressTracker).downloadStarted("file-1", "Budget", "My Drive/Budget", null);
+		verify(progressTracker, atLeastOnce()).downloadProgressed("file-1", 7L);
+	}
+
+	@Test
+	void theDrivePathKeepsTheRealNameOfANativeFileWithoutTheExportExtension() throws Exception {
+		stubDrive("token", file("file-1", "Budget", "", "application/vnd.google-apps.spreadsheet", "v3"));
+		when(contentPort.export(ACCESS, "file-1",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		verify(progressTracker).downloadStarted("file-1", "Budget", "My Drive/Budget", null);
+		assertEquals(Set.of("Budget.xlsx"), sessions.entries.keySet());
+	}
+
+	@Test
+	void aSharedDrivesPathsStartWithItsName() throws Exception {
+		DriveScope shared = DriveScope.sharedDrive("drive-1");
+		StoredFile folder = file("folder-1", "Budgets", "drive-1", FOLDER, null);
+		StoredFile sheet = file("file-1", "2026.pdf", "folder-1", "application/pdf", "r1");
+		when(changePort.getStartPageToken(ACCESS, shared)).thenReturn("token");
+		when(listingPort.listAllFiles(ACCESS, shared, PersonalDriveContent.OWNED_ONLY)).thenReturn(List.of(folder, sheet));
+		stubDownload("file-1", "a");
+
+		service.synchronize(ACCESS, shared, "Finance");
+
+		verify(progressTracker).downloadStarted("file-1", "2026.pdf", "Finance/Budgets/2026.pdf", null);
+	}
+
+	@Test
+	void filesWithNoContentToDownloadAreNeverListedAsDownloads() throws Exception {
+		stubDrive("token", file("folder-1", "Docs", "", FOLDER, null),
+				file("file-2", "Survey", "", "application/vnd.google-apps.form", "v1"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		verify(progressTracker, never()).downloadStarted(anyString(), anyString(), anyString(), any());
+	}
+
+	@Test
+	void aFailedDownloadLeavesTheListInsteadOfBeingShownAsDone() throws Exception {
+		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"));
+		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("connection reset"));
+
+		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
+
+		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/A.pdf", null);
+		verify(progressTracker).downloadAborted("file-1");
+		verify(progressTracker, never()).downloadFinished(anyString());
+	}
+
+	@Test
+	void parallelDownloadsAreEachListedOnceFromStartToFinish() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			stubDownload("file-" + i, "bytes");
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		for (StoredFile file : files) {
+			verify(progressTracker, times(1)).downloadStarted(file.fileId(), file.name(), "My Drive/" + file.name(), null);
+			verify(progressTracker, times(1)).downloadFinished(file.fileId());
+		}
+		verify(progressTracker, never()).downloadAborted(anyString());
+	}
+
+	@Test
+	void readsTheDownloadConcurrencyAtTheStartOfEachRun() throws Exception {
+		AtomicInteger concurrency = new AtomicInteger(1);
+		InitialDriveSyncService adjustable = new InitialDriveSyncService(listingPort, changePort,
+				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+				progressTracker, cancellation, concurrency::get,
+				() -> PersonalDriveContent.OWNED_ONLY);
+		AtomicInteger inFlight = new AtomicInteger();
+		AtomicInteger mostInFlight = new AtomicInteger();
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+				mostInFlight.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+				Thread.sleep(40);
+				inFlight.decrementAndGet();
+				return new ByteArrayInputStream(new byte[] { 1 });
+			});
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		adjustable.synchronize(ACCESS, SCOPE, null);
+		assertEquals(1, mostInFlight.get(), "a concurrency of 1 downloads one file at a time");
+
+		concurrency.set(4);
+		mostInFlight.set(0);
+		adjustable.synchronize(ACCESS, SCOPE, null);
+		assertTrue(mostInFlight.get() > 1, "the new value applies to the next run");
+		assertTrue(mostInFlight.get() <= 4, "but never exceeds it, saw " + mostInFlight.get());
+	}
+
+	@Test
+	void aSlowDownloadDoesNotHoldBackTheProgressOfTheFilesQueuedBehindIt() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		CountDownLatch othersReported = new CountDownLatch(4);
+		doAnswer(invocation -> {
+			if (!"F0.pdf".equals(invocation.getArgument(0))) {
+				othersReported.countDown();
+			}
+			return null;
+		}).when(progressTracker).itemProcessed(anyString());
+		for (int i = 0; i < 5; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 0) {
+				when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+					// The first file only finishes once the four behind it were counted. Counting at hand-over
+					// instead would leave them waiting on this file, so this would time out.
+					if (!othersReported.await(5, TimeUnit.SECONDS)) {
+						throw new IllegalStateException("progress was held back by the slow file");
+					}
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			} else {
+				stubDownload("file-" + i, "bytes");
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		assertEquals(Set.of("F0.pdf", "F1.pdf", "F2.pdf", "F3.pdf", "F4.pdf"), sessions.entries.keySet());
+		verify(progressTracker, times(5)).itemProcessed(anyString());
+	}
+
+	@Test
+	void filesWithNoContentToDownloadAreReportedOnceEachAlongsideTheDownloadedOnes() throws Exception {
+		StoredFile folder = file("folder-1", "Docs", "", FOLDER, null);
+		StoredFile trashed = new StoredFile("file-1", "user@example.com", "Old.pdf", "", null, "application/pdf", true,
+				"revision-1", null);
+		StoredFile form = file("file-2", "Survey", "folder-1", "application/vnd.google-apps.form", "v1");
+		StoredFile first = file("file-3", "A.pdf", "folder-1", "application/pdf", "r1");
+		StoredFile second = file("file-4", "B.pdf", "folder-1", "application/pdf", "r1");
+		stubDrive("token", folder, trashed, form, first, second);
+		stubDownload("file-3", "a");
+		stubDownload("file-4", "b");
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		for (String name : List.of("Docs", "Old.pdf", "Survey", "A.pdf", "B.pdf")) {
+			verify(progressTracker, times(1)).itemProcessed(name);
+		}
+		verify(progressTracker, times(5)).itemProcessed(anyString());
+	}
+
+	@Test
+	void parallelDownloadsStillSkipFoldersAndFilesWithoutContentAndKeepEveryFileInTheListing() throws Exception {
+		StoredFile folder = file("folder-1", "Docs", "", FOLDER, null);
+		StoredFile first = file("file-1", "A.pdf", "folder-1", "application/pdf", "r1");
+		StoredFile form = file("file-2", "Survey", "folder-1", "application/vnd.google-apps.form", "v1");
+		StoredFile second = file("file-3", "B.pdf", "folder-1", "application/pdf", "r1");
+		stubDrive("token", folder, first, form, second);
+		stubDownload("file-1", "a");
+		stubDownload("file-3", "b");
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(Set.of("Docs/A.pdf", "Docs/B.pdf"), sessions.entries.keySet());
+		assertEquals(List.of(folder, first, form, second), commits.commits.getFirst().files());
+		verify(contentPort, never()).download(ACCESS, "file-2");
+	}
+
+	@Test
+	void contentIsStoredOrCompressedPerFileType() throws Exception {
+		stubDrive("token", file("file-1", "Report.pdf", "", "application/pdf", "r1"),
+				file("file-2", "notes.txt", "", "text/plain", "r1"),
+				file("file-3", "Budget", "", "application/vnd.google-apps.spreadsheet", "v3"));
+		stubDownload("file-1", "pdf");
+		stubDownload("file-2", "text");
+		when(contentPort.export(ACCESS, "file-3",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(false, sessions.compressedByEntry.get("Report.pdf"));
+		assertEquals(true, sessions.compressedByEntry.get("notes.txt"));
+		assertEquals(false, sessions.compressedByEntry.get("Budget.xlsx"));
+	}
+
+	@Test
+	void aPdfFallbackDuringParallelDownloadsIsRenamedAgainstTheNamesOfTheOtherFiles() throws Exception {
+		StoredFile existingPdf = file("file-1", "Report.pdf", "", "application/pdf", "r1");
+		StoredFile doc = file("file-2", "Report", "", "application/vnd.google-apps.document", "v3");
+		stubDrive("token", existingPdf, doc);
+		stubDownload("file-1", "pdf");
+		stubDocWhoseDocxExportIsTooLarge("file-2");
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(Set.of("Report.pdf", "Report (2).pdf"), sessions.entries.keySet());
+		assertEquals("Report (2).pdf", sessions.publishedManifest.files().get(1).entry());
+	}
+
+	/**
+	 * Files are written as they complete. Here the Doc, listed first, finishes long before the ordinary PDF that
+	 * owns the name "Report.pdf", so at the time the Doc's fallback is written that name is not written yet. The
+	 * fallback must still steer clear of it, or the PDF would collide with it later.
+	 */
+	@Test
+	void aPdfFallbackThatIsWrittenBeforeAFileOwningItsNameDoesNotTakeThatName() throws Exception {
+		StoredFile doc = file("file-1", "Report", "", "application/vnd.google-apps.document", "v3");
+		StoredFile existingPdf = file("file-2", "Report.pdf", "", "application/pdf", "r1");
+		stubDrive("token", doc, existingPdf);
+		stubDocWhoseDocxExportIsTooLarge("file-1");
+		when(contentPort.download(ACCESS, "file-2")).thenAnswer(invocation -> {
+			Thread.sleep(300);
+			return new ByteArrayInputStream("pdf".getBytes());
+		});
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(Set.of("Report (2).pdf", "Report.pdf"), sessions.entries.keySet());
+		assertEquals("pdf", new String(sessions.entries.get("Report.pdf")), "the PDF kept its own name");
+		assertEquals("Report (2).pdf", sessions.publishedManifest.files().get(0).entry());
+		assertEquals("Report.pdf", sessions.publishedManifest.files().get(1).entry());
+	}
+
+	@Test
+	void aVeryLargeFileDoesNotStopTheOtherDownloadsFromStarting() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		// Twelve other downloads, three times the concurrency, must start while the big file is still going.
+		CountDownLatch othersStarted = new CountDownLatch(12);
+		for (int i = 0; i < 20; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 0) {
+				when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+					if (!othersStarted.await(5, TimeUnit.SECONDS)) {
+						throw new IllegalStateException("the other downloads waited for the big file");
+					}
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			} else {
+				when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+					othersStarted.countDown();
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		assertEquals(20, sessions.entries.size());
+		assertTrue(List.copyOf(sessions.entries.keySet()).indexOf("F0.pdf") > 0, "the big file is not written first");
+	}
+
+	private void stubDocWhoseDocxExportIsTooLarge(String fileId) throws Exception {
+		when(contentPort.export(ACCESS, fileId,
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+				.thenThrow(new org.nm.gdrive_backup.domain.model.DriveExportLimitException("too large", null));
+		when(contentPort.export(ACCESS, fileId, "application/pdf"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+	}
+
+	@Test
+	void aDownloadFailureAmongParallelDownloadsDiscardsTheStagedArchiveAndCommitsNothing() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 2) {
+				when(contentPort.download(ACCESS, "file-2")).thenAnswer(invocation -> {
+					Thread.sleep(100);
+					throw new IOException("connection reset");
+				});
+			} else {
+				stubDownload("file-" + i, "bytes");
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
+
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
+		assertTrue(sessions.allStagedReleased(), "content fetched but never written is released");
+	}
+
+	@Test
+	void anImmediateStopDuringParallelDownloadsDiscardsTheStagedArchiveAndCommitsNothing() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 0) {
+				when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+					cancellation.requestStop(BackupStopMode.IMMEDIATE);
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			} else {
+				stubDownload("file-" + i, "bytes");
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertTrue(result.cancelled());
+		assertNull(result.archive());
+		assertNull(result.pageToken());
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
+	}
+
+	@Test
 	void carriesTheDisplayNameIntoTheSharedDriveArchiveFolder() {
 		DriveScope shared = DriveScope.sharedDrive("drive-1");
 		when(changePort.getStartPageToken(ACCESS, shared)).thenReturn("token");
-		when(listingPort.listAllFiles(ACCESS, shared)).thenReturn(List.of());
+		when(listingPort.listAllFiles(ACCESS, shared, PersonalDriveContent.OWNED_ONLY)).thenReturn(List.of());
 
 		service.synchronize(ACCESS, shared, "Finance");
 
 		assertEquals("archives/Finance (drive-1)/archive-0001-full.zip", sessions.openedPaths.getFirst());
 	}
 
+	@Test
+	void listsThePersonalDriveContentChosenInSettings() {
+		InitialDriveSyncService allAccessible = new InitialDriveSyncService(listingPort, changePort,
+				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+				progressTracker, cancellation, () -> 1, () -> PersonalDriveContent.ALL_ACCESSIBLE);
+		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn("token");
+		when(listingPort.listAllFiles(ACCESS, SCOPE, PersonalDriveContent.ALL_ACCESSIBLE)).thenReturn(List.of());
+
+		allAccessible.synchronize(ACCESS, SCOPE, null);
+
+		verify(listingPort).listAllFiles(ACCESS, SCOPE, PersonalDriveContent.ALL_ACCESSIBLE);
+	}
+
 	private void stubDrive(String token, StoredFile... files) {
 		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn(token);
-		when(listingPort.listAllFiles(ACCESS, SCOPE)).thenReturn(List.of(files));
+		when(listingPort.listAllFiles(ACCESS, SCOPE, PersonalDriveContent.OWNED_ONLY)).thenReturn(List.of(files));
 	}
 
 	private void stubDownload(String fileId, String content) throws IOException {

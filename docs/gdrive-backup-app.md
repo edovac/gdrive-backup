@@ -194,6 +194,32 @@ build order live in [plan.md](plan.md).
   a scope), scoped to the **drive currently being synced** — the fraction shown
   reflects that drive's own progress, not a blended figure across every
   selected drive. Progress resets as the job moves to the next drive.
+- **Files being downloaded**: under the progress bar (on the Backup tab; the
+  Archives tab's merge progress has none), two stacked lists, each with a
+  heading and both always on screen, with a short placeholder when empty:
+  **Downloading (N)** lists each file the run is downloading right now (up to
+  the parallel-download setting), in the order they started; **Downloaded (N)**
+  is a fixed-height scrollable list of the **last 20** files to finish, newest
+  first, and its heading counts **every** file finished in the current drive
+  (for example `Downloaded (1,284)`). A file moves from the first list to the
+  second the moment its download finishes, and a download that fails drops out
+  instead of moving. Each row is **only the file's name**, cut in the
+  middle with an ellipsis when it is too long; hovering shows its **full Drive
+  path** as a tooltip, such as `My Drive/Reports/2026/Q3.pdf` or
+  `Finance/Budgets/2026.pdf` for a Shared Drive. A right-aligned column beside
+  each name shows **how much of the file has been downloaded so far**, live
+  (for example `12.4 MB`), and `12.4 MB of 80.0 MB` when Drive reported the
+  file's size. Drive reports a size only for ordinary files, so a Docs, Sheets or
+  Slides export shows just the running amount, since its size is not known
+  until it ends; a finished row keeps the final size. The count is of the bytes
+  received, updated a few times a second. Paths use the real Drive
+  names (no sanitizing), the first parent for a file with several, and the
+  drive's name as the root; a chain too deep or cyclic to follow is cut with a
+  leading `…`. A full run knows every folder from its listing; an incremental
+  run resolves ancestors from the run's own changes, then from the metadata of
+  earlier runs. Files with no content to download (folders, Forms) are not
+  listed. Both lists are empty outside the download phase, and the counts start
+  over for each drive.
 - **Multi-drive job status**: when a job covers more than one selected drive,
   the UI shows, distinct from the per-drive progress bar above:
   - **which drive is current**, identified by name (e.g. "Shared: Finance" or
@@ -408,7 +434,7 @@ sequenceDiagram
 | Admin SDK (user enumeration) | `google-api-services-admin-directory` |
 | Auth / credentials | `google-auth-library-oauth2-http` (`ServiceAccountCredentials`, `UserCredentials`) |
 | OAuth loopback flow | `google-oauth-client-jetty` or a manual local HTTP listener |
-| Backoff/retry | `google-http-client`'s `ExponentialBackOff` |
+| Backoff/retry | `DriveRetry` in `GoogleDriveAdapter` (exponential backoff with jitter on the parsed Drive error, so rate-limit 403s are told apart from export-size 403s) |
 | Local DB | `org.xerial:sqlite-jdbc`, optionally Spring Data JPA on top |
 | UI | JavaFX (+ `javafx-weaver` for Spring DI into controllers) |
 | Credential storage | `com.microsoft.credentialstorage` (Windows Credential Manager) or JNA |
@@ -566,6 +592,63 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
    or cancelled run writes nothing and the next run replays the change feed
    from the last committed cursor. A full run likewise commits its metadata
    snapshot and baseline cursor only after its archive is published.
+7. **Parallel downloads.** Downloads are latency-bound (connection setup and,
+   for Google-native files, Drive's server-side export), so both sync services
+   fetch several files at once — `gdrive-backup.backup.download-concurrency`,
+   default 4, range 1–16. The property is only the starting value: the admin
+   can change it for the session under **Parallel downloads** in the
+   **Settings** dialog (`DownloadConcurrencyUseCase`). Like the backup
+   location it is not saved, so each launch starts from the property again;
+   a change applies to the next backup run (each run reads the value when it
+   starts), and is refused while a backup is running. A ZIP can only be written
+   by one thread, so each download is first copied into a spool file next to the
+   staged archive (`.spool-*.tmp`), and a single writer then appends each
+   spooled file to the ZIP **as soon as its download completes**, not in listing
+   order. Writing in completion order is what keeps all the download slots busy:
+   one very large file occupies only its own slot while the others keep flowing,
+   instead of every file queued behind it waiting for it and the run degrading to
+   that single download. So the order of the entries inside a ZIP is not the
+   listing order and can differ between runs; nothing depends on it, because the
+   manifest lists the files in listing order and records each entry's name. The
+   entry names themselves do not depend on the order either: a full run
+   precomputes the name of every file it will write, and a PDF-fallback rename
+   avoids all of those as well as the names already written. A file counts as
+   processed in the progress when its download finishes. At most twice the
+   concurrency of downloads are submitted but not yet written, which bounds
+   spool disk use (the writer drains each as it completes, so a spool file rarely
+   waits long). A stop request, a failed download or a
+   failed write aborts the run exactly as before: outstanding downloads are
+   cancelled, spool files are deleted, the staged ZIP is discarded and nothing
+   is committed. Content that is already in a compressed container (Office and
+   OpenDocument files, PDF, images such as JPEG and PNG, video, compressed audio,
+   archives) is **stored** in the ZIP without compression, since deflating it
+   costs CPU for almost no size gain; everything else is deflated at the fastest
+   level. The spool step is what makes stored entries possible: a ZIP stored
+   entry needs its size and CRC-32 before it is written, and both are known once
+   the content is spooled. Content calls to Drive are retried with exponential
+   backoff on HTTP 429, 5xx, a 403 whose reason is a rate limit, and connection
+   resets or timeouts; any other 403 (for example an export that is too large)
+   is never retried.
+8. **What a personal drive includes.** Drive's default `user` corpus lists every
+   file the impersonated user can open: their own files, files other people
+   shared with them, and (with `includeItemsFromAllDrives`) items in Shared
+   Drives. By default a personal drive backup takes **only the files the user
+   owns**, so each file is backed up once, under its owner, and Shared Drive
+   items only in their own Shared Drive backup. The full listing adds
+   `'me' in owners` to its query and leaves Shared Drive items out. The change
+   feed cannot be queried, so each change's `ownedByMe` and `driveId` are
+   checked: a change to a file the user does not own, or one in a Shared Drive,
+   is out of scope. An out-of-scope change to a file the backup already holds
+   (its ownership moved to someone else, say) is recorded as a removal
+   (`delete` event, removed manifest record); one it never held is ignored. The
+   admin can choose to include files shared with the user under **Personal
+   drives** in the **Settings** dialog (`PersonalDriveContentUseCase`; starting
+   value `gdrive-backup.backup.personal-drive-content`, `OWNED_ONLY` or
+   `ALL_ACCESSIBLE`, default `OWNED_ONLY`). Like the download concurrency, it is
+   not saved, applies from the next run and is refused while a backup is
+   running. Shared Drive backups are unaffected. A file the user owns inside a
+   folder someone else owns has no listed parent and lands at the root of the
+   archive.
 
 ---
 
@@ -694,8 +777,9 @@ stateDiagram-v2
 subtree. **There is no capture store** — file content is never written to disk
 as loose files or as an id-keyed or Drive-shaped folder tree. Content streams
 from Drive (or, for a full archive built from deltas, from earlier archives)
-directly into the ZIP being written, so the only other thing ever on disk is
-the single temp ZIP being staged next to its final location.
+directly into the ZIP being written, so the only other things ever on disk are
+the single temp ZIP being staged next to its final location and the short-lived
+spool files of in-flight downloads beside it.
 
 - A **full** archive gets its folder tree from the `files` metadata at the
   moment the archive is written: real names, collision suffixes, live files
@@ -709,7 +793,10 @@ the single temp ZIP being staged next to its final location.
   re-downloading from Drive (for the current state) or a complete surviving
   chain.
 - Peak extra disk use during a run is one temp ZIP, on the same volume as the
-  final archive so the publishing move stays atomic.
+  final archive so the publishing move stays atomic, plus the spool files of
+  downloads fetched but not yet written (at most twice the download concurrency;
+  see **Sync algorithm**, step 7). Spool files are deleted as they are written
+  and when a run ends or is discarded.
 
 The per-archive manifest identifies its scope (personal drive or a specific
 Shared Drive), backup mode, the files it touched (with enough metadata to place
@@ -941,6 +1028,12 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   impersonated user losing access — can't fully distinguish without extra
   Admin SDK checks.
 - Stale `page_token` after long downtime forces a full resync for that scope.
+- **Personal drives back up owned files only by default.** A file is backed up
+  with its owner, so a file owned by an account outside the Workspace domain
+  (or by a user who is never backed up) is in nobody's backup unless the admin
+  includes shared files. Switching that setting mid-chain affects only files
+  that change afterwards: an incremental run never revisits unchanged files, so
+  run a Full backup to apply the new choice to the whole drive.
 - `files.export` 10MB cap needs a defined fallback before it's hit in
   production.
 - Domain-wide delegation setup is a manual, one-time Admin Console step and

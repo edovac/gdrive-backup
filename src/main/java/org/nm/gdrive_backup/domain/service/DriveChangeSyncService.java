@@ -3,6 +3,7 @@ package org.nm.gdrive_backup.domain.service;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -10,6 +11,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
@@ -19,10 +22,12 @@ import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.FetchedFile;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.RevisionMode;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -51,11 +56,14 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final SyncCommitPort syncCommitPort;
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
+	private final IntSupplier downloadConcurrency;
+	private final Supplier<PersonalDriveContent> personalDriveContent;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation, IntSupplier downloadConcurrency,
+			Supplier<PersonalDriveContent> personalDriveContent) {
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
@@ -65,6 +73,8 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		this.syncCommitPort = syncCommitPort;
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
+		this.downloadConcurrency = downloadConcurrency;
+		this.personalDriveContent = personalDriveContent;
 	}
 
 	@Override
@@ -72,6 +82,8 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		String fromPageToken = syncStatePort.findByScopeKey(scope.key())
 				.map(SyncState::pageToken)
 				.orElseGet(() -> changePort.getStartPageToken(access, scope));
+		// Read per run, like the download concurrency, so a change in Settings never applies mid-run.
+		PersonalDriveContent content = personalDriveContent.get();
 		PendingChanges pending = new PendingChanges();
 		String pageToken = fromPageToken;
 		int changeCount = 0;
@@ -80,7 +92,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			if (cancellation.isImmediateStopRequested()) {
 				return new SyncResult(scope, changeCount, null, null, true);
 			}
-			DriveChangePage page = changePort.listChanges(access, scope, pageToken);
+			DriveChangePage page = changePort.listChanges(access, scope, pageToken, content);
 			changeCount += page.changes().size();
 			page.changes().forEach(change -> {
 				pending.apply(change);
@@ -106,12 +118,36 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planIncremental(scope, scopeDisplayNameOrNull);
 		Map<String, StreamedFile> streamedByFileId = new LinkedHashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
-			for (String fileId : pending.contentFileIds) {
-				if (cancellation.isImmediateStopRequested()) {
-					return new SyncResult(scope, changeCount, null, null, true);
-				}
-				streamedByFileId.put(fileId, contentStreamingService.stream(access, pending.files.get(fileId), session,
-						"content/" + fileId));
+			// Read per run, so a change in Settings applies to the next run and never mid-run.
+			ParallelContentFetcher contentFetcher = new ParallelContentFetcher(downloadConcurrency.getAsInt());
+			// Ancestors come from this run's changes first, then from the metadata of earlier runs.
+			Map<String, Optional<StoredFile>> earlierRuns = new HashMap<>();
+			DrivePathResolver drivePaths = new DrivePathResolver(
+					DrivePathResolver.rootLabel(scope, scopeDisplayNameOrNull),
+					id -> pending.files.containsKey(id) ? pending.files.get(id)
+							: earlierRuns.computeIfAbsent(id, fileMetadataPort::findByFileId).orElse(null));
+			boolean completed = contentFetcher.process(List.copyOf(pending.contentFileIds), fileId -> true,
+					fileId -> {
+						StoredFile file = pending.files.get(fileId);
+						progressTracker.downloadStarted(fileId, file.name(), drivePaths.pathOf(file), file.sizeBytes());
+						FetchedFile fetched;
+						try {
+							fetched = contentStreamingService.fetch(access, file, session,
+									bytes -> progressTracker.downloadProgressed(fileId, bytes));
+						} catch (RuntimeException | Error exception) {
+							progressTracker.downloadAborted(fileId);
+							throw exception;
+						}
+						// The exact size, even for a file too quick to report while it streamed.
+						progressTracker.downloadProgressed(fileId, fetched.content().size());
+						progressTracker.downloadFinished(fileId);
+						return fetched;
+					},
+					cancellation::isImmediateStopRequested,
+					(fileId, fetched) -> streamedByFileId.put(fileId, contentStreamingService.write(
+							pending.files.get(fileId), fetched, session, "content/" + fileId)));
+			if (!completed) {
+				return new SyncResult(scope, changeCount, null, null, true);
 			}
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();
@@ -168,10 +204,16 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		}
 
 		void apply(DriveChange change) {
+			if (change.outOfScope()) {
+				// A file this scope already holds has left it (its ownership moved away, say), so for this backup it
+				// is gone; one it never held is not its business.
+				if (files.containsKey(change.fileId()) || fileMetadataPort.findByFileId(change.fileId()).isPresent()) {
+					remove(change.fileId());
+				}
+				return;
+			}
 			if (change.removed()) {
-				events.add(event(change.fileId(), "delete", null, null));
-				contentFileIds.remove(change.fileId());
-				removedFileIds.add(change.fileId());
+				remove(change.fileId());
 				return;
 			}
 			StoredFile current = change.file();
@@ -189,6 +231,12 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			if (shouldBackUpContent(previous, current)) {
 				contentFileIds.add(current.fileId());
 			}
+		}
+
+		private void remove(String fileId) {
+			events.add(event(fileId, "delete", null, null));
+			contentFileIds.remove(fileId);
+			removedFileIds.add(fileId);
 		}
 
 		private boolean shouldBackUpContent(Optional<StoredFile> previous, StoredFile current) {
@@ -223,7 +271,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 
 		private StoredFile withCurrentVersion(StoredFile file, Long versionId) {
 			return new StoredFile(file.fileId(), file.ownerScope(), file.name(), file.parents(), file.driveId(),
-					file.mimeType(), file.trashed(), file.headRevisionId(), versionId);
+					file.mimeType(), file.trashed(), file.headRevisionId(), versionId, file.sizeBytes());
 		}
 	}
 }

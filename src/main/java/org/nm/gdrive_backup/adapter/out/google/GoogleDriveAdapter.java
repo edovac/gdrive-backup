@@ -6,6 +6,7 @@ import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.services.drive.Drive;
+import com.google.api.services.drive.model.Change;
 import com.google.api.services.drive.model.File;
 import com.google.auth.http.HttpCredentialsAdapter;
 import org.nm.gdrive_backup.domain.model.DriveItem;
@@ -16,6 +17,7 @@ import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.model.StaleDrivePageTokenException;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
@@ -35,6 +37,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	private static final String DEFAULT_PARENT_ID = "root";
 
 	private final GoogleServiceAccountAdapter credentialAdapter;
+	private final DriveRetry retry = DriveRetry.standard();
 
 	public GoogleDriveAdapter(GoogleServiceAccountAdapter credentialAdapter) {
 		this.credentialAdapter = credentialAdapter;
@@ -106,7 +109,8 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	}
 
 	@Override
-	public DriveChangePage listChanges(ServiceAccountAccess access, DriveScope scope, String pageToken) {
+	public DriveChangePage listChanges(ServiceAccountAccess access, DriveScope scope, String pageToken,
+			PersonalDriveContent content) {
 		if (pageToken == null || pageToken.isBlank()) {
 			throw new IllegalArgumentException("pageToken must not be blank");
 		}
@@ -116,15 +120,12 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setSpaces("drive")
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true)
-					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId,version)),"
-							+ "nextPageToken,newStartPageToken");
+					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size,"
+							+ "ownedByMe)),nextPageToken,newStartPageToken");
 			configureDriveScope(request, scope);
 			var response = request.execute();
 			List<DriveChange> changes = response.getChanges() == null ? List.of() : response.getChanges().stream()
-				.map(change -> new DriveChange(
-						change.getFileId(),
-						Boolean.TRUE.equals(change.getRemoved()),
-						mapStoredFile(change.getFile(), scope.key())))
+				.map(change -> mapChange(change, scope, content))
 				.toList();
 			return new DriveChangePage(changes, response.getNextPageToken(), response.getNewStartPageToken());
 		} catch (GoogleJsonResponseException exception) {
@@ -138,19 +139,21 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	}
 
 	@Override
-	public List<StoredFile> listAllFiles(ServiceAccountAccess access, DriveScope scope) {
+	public List<StoredFile> listAllFiles(ServiceAccountAccess access, DriveScope scope, PersonalDriveContent content) {
+		boolean ownedOnly = ownedOnly(scope, content);
 		try {
 			List<StoredFile> files = new java.util.ArrayList<>();
 			String pageToken = null;
 			do {
 				Drive.Files.List request = drive(access).files().list()
-						.setQ("trashed = false")
+						.setQ(listQuery(scope, content))
 						.setPageSize(1000)
 						.setPageToken(pageToken)
 						.setSpaces("drive")
 						.setSupportsAllDrives(true)
-						.setIncludeItemsFromAllDrives(true)
-						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId,version),nextPageToken");
+						// Shared Drive items have no owner, so owning them is never the reason to include them.
+						.setIncludeItemsFromAllDrives(!ownedOnly)
+						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size),nextPageToken");
 				configureFileScope(request, scope);
 				var response = request.execute();
 				if (response.getFiles() != null) {
@@ -170,9 +173,9 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		if (fileId == null || fileId.isBlank()) {
 			throw new IllegalArgumentException("fileId must not be blank");
 		}
-		return drive(access).files().get(fileId)
+		return retry.call(() -> drive(access).files().get(fileId)
 				.setSupportsAllDrives(true)
-				.executeMediaAsInputStream();
+				.executeMediaAsInputStream());
 	}
 
 	@Override
@@ -181,7 +184,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 			throw new IllegalArgumentException("fileId and exportMimeType must not be blank");
 		}
 		try {
-			return drive(access).files().export(fileId, exportMimeType).executeMediaAsInputStream();
+			return retry.call(() -> drive(access).files().export(fileId, exportMimeType).executeMediaAsInputStream());
 		} catch (GoogleJsonResponseException exception) {
 			if (isExportLimitExceeded(exception)) {
 				throw new DriveExportLimitException("Google export exceeds the supported size limit", exception);
@@ -218,14 +221,41 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		}
 	}
 
-	/** {@code headRevisionId} of the resulting StoredFile is the file's content revision marker: see {@link #contentRevisionOf}. */
+	/** A personal drive otherwise lists every file the user can open, including those others shared with them. */
+	static boolean ownedOnly(DriveScope scope, PersonalDriveContent content) {
+		return scope.type() == DriveScopeType.PERSONAL && content == PersonalDriveContent.OWNED_ONLY;
+	}
+
+	static String listQuery(DriveScope scope, PersonalDriveContent content) {
+		return ownedOnly(scope, content) ? "trashed = false and 'me' in owners" : "trashed = false";
+	}
+
+	/**
+	 * The change feed takes no query, so a personal drive backing up owned files only drops the rest here: a file
+	 * the user does not own, or one in a Shared Drive, is reported as out of scope.
+	 */
+	static DriveChange mapChange(Change change, DriveScope scope, PersonalDriveContent content) {
+		boolean removed = Boolean.TRUE.equals(change.getRemoved());
+		File file = change.getFile();
+		if (!removed && file != null && ownedOnly(scope, content)
+				&& (!Boolean.TRUE.equals(file.getOwnedByMe()) || file.getDriveId() != null)) {
+			return DriveChange.outOfScope(change.getFileId());
+		}
+		return new DriveChange(change.getFileId(), removed, mapStoredFile(file, scope.key()));
+	}
+
+	/**
+	 * {@code headRevisionId} of the resulting StoredFile is the file's content revision marker: see {@link #contentRevisionOf}.
+	 * {@code sizeBytes} is Drive's {@code size}, which only ordinary files have; it is {@code null} for Google-native files.
+	 */
 	static StoredFile mapStoredFile(File file, String ownerScope) {
 		if (file == null) {
 			return null;
 		}
 		String parents = file.getParents() == null ? "" : String.join(",", file.getParents());
 		return new StoredFile(file.getId(), ownerScope, file.getName(), parents, file.getDriveId(),
-				file.getMimeType(), Boolean.TRUE.equals(file.getTrashed()), contentRevisionOf(file), null);
+				file.getMimeType(), Boolean.TRUE.equals(file.getTrashed()), contentRevisionOf(file), null,
+				file.getSize());
 	}
 
 	/**

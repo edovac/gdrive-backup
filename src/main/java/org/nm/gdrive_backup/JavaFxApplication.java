@@ -45,6 +45,8 @@ import org.nm.gdrive_backup.adapter.in.javafx.SessionHeaderPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.SettingsPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.TechnicalInfoPanel;
 import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
+import org.nm.gdrive_backup.domain.port.in.DownloadConcurrencyUseCase;
+import org.nm.gdrive_backup.domain.port.in.PersonalDriveContentUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase;
 import org.nm.gdrive_backup.domain.port.in.BackupCancellationUseCase;
@@ -89,6 +91,8 @@ public class JavaFxApplication extends Application {
 	private static String previewUserEmail;
 	private static BackupLocationUseCase backupLocationUseCase;
 	private static CredentialConfigurationUseCase credentialConfigurationUseCase;
+	private static DownloadConcurrencyUseCase downloadConcurrencyUseCase;
+	private static PersonalDriveContentUseCase personalDriveContentUseCase;
 	private static BackupProgressPort backupProgressPort;
 	private static BackupCancellationUseCase backupCancellationUseCase;
 	private static ArchiveCatalogUseCase archiveCatalogUseCase;
@@ -138,6 +142,14 @@ public class JavaFxApplication extends Application {
 
 	static void setCredentialConfigurationUseCase(CredentialConfigurationUseCase useCase) {
 		credentialConfigurationUseCase = useCase;
+	}
+
+	static void setDownloadConcurrencyUseCase(DownloadConcurrencyUseCase useCase) {
+		downloadConcurrencyUseCase = useCase;
+	}
+
+	static void setPersonalDriveContentUseCase(PersonalDriveContentUseCase useCase) {
+		personalDriveContentUseCase = useCase;
 	}
 
 	static void setBackupProgress(BackupProgressPort progressPort) {
@@ -229,7 +241,8 @@ public class JavaFxApplication extends Application {
 			return;
 		}
 		if (settingsPanel == null) {
-			settingsPanel = new SettingsPanel(credentialConfigurationUseCase);
+			settingsPanel = new SettingsPanel(credentialConfigurationUseCase, downloadConcurrencyUseCase,
+					personalDriveContentUseCase);
 		} else {
 			settingsPanel.refresh();
 		}
@@ -237,7 +250,7 @@ public class JavaFxApplication extends Application {
 		dialog.initModality(Modality.APPLICATION_MODAL);
 		dialog.initOwner(root.getScene().getWindow());
 		dialog.setTitle("Settings");
-		Scene scene = new Scene((Parent) scrollable(settingsPanel.node()), 480, 440);
+		Scene scene = new Scene((Parent) scrollable(settingsPanel.node()), 480, 560);
 		scene.getStylesheets().add("/login.css");
 		dialog.setScene(scene);
 		dialog.showAndWait();
@@ -257,7 +270,7 @@ public class JavaFxApplication extends Application {
 			refreshArchiveCatalog();
 		});
 		progressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
-				"Starting synchronization...");
+				"Starting synchronization...", true);
 		archiveProgressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
 				"Starting archive operation...");
 		archiveManagerPanel = new ArchiveManagerPanel(archiveCatalogUseCase, archiveMergeUseCase,

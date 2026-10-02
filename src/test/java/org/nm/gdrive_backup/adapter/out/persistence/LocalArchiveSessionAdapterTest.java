@@ -1,8 +1,10 @@
 package org.nm.gdrive_backup.adapter.out.persistence;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
@@ -11,6 +13,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -21,6 +27,7 @@ import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveScope;
 import org.nm.gdrive_backup.domain.model.RevisionMode;
+import org.nm.gdrive_backup.domain.model.StagedContent;
 
 class LocalArchiveSessionAdapterTest {
 
@@ -234,6 +241,226 @@ class LocalArchiveSessionAdapterTest {
 		assertEquals(2, sources.size());
 		assertEquals(2, sources.get(1).getAsJsonObject().get("sequence_number").getAsInt());
 		assertEquals("archive-0002-incremental.zip", sources.get(1).getAsJsonObject().get("file_name").getAsString());
+	}
+
+	@Test
+	void anEntryWrittenWithoutCompressionIsStoredAsIsWithItsSizeAndCrc() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+		byte[] content = repeated('a', 10_000);
+
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			try (StagedContent staged = session.stage(new ByteArrayInputStream(content))) {
+				assertEquals(10_000, staged.size());
+				assertEquals(crc(content), staged.crc32());
+				assertEquals(10_000, session.writeEntry("Docs/Report.pdf", staged, false));
+			}
+			session.publish(emptyManifest());
+		}
+
+		try (ZipFile zip = new ZipFile(temporaryDirectory.resolve(TARGET).toFile())) {
+			ZipEntry entry = zip.getEntry("Docs/Report.pdf");
+			assertEquals(ZipEntry.STORED, entry.getMethod());
+			assertEquals(10_000, entry.getSize());
+			assertEquals(10_000, entry.getCompressedSize());
+			assertEquals(crc(content), entry.getCrc());
+			assertArrayEquals(content, zip.getInputStream(entry).readAllBytes());
+		}
+	}
+
+	@Test
+	void anEntryWrittenWithCompressionIsDeflated() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+		byte[] content = repeated('a', 10_000);
+
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			session.writeEntry("notes.txt", session.stage(new ByteArrayInputStream(content)), true);
+			session.publish(emptyManifest());
+		}
+
+		try (ZipFile zip = new ZipFile(temporaryDirectory.resolve(TARGET).toFile())) {
+			ZipEntry entry = zip.getEntry("notes.txt");
+			assertEquals(ZipEntry.DEFLATED, entry.getMethod());
+			assertEquals(10_000, entry.getSize());
+			assertTrue(entry.getCompressedSize() < 1_000, "repetitive text should shrink, was " + entry.getCompressedSize());
+			assertArrayEquals(content, zip.getInputStream(entry).readAllBytes());
+		}
+	}
+
+	@Test
+	void storedAndDeflatedEntriesShareOneArchiveWithTheManifest() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			session.writeEntry("a.docx", session.stage(new ByteArrayInputStream(new byte[] { 1, 2, 3 })), false);
+			session.writeEntry("b.txt", session.stage(new ByteArrayInputStream("text".getBytes(StandardCharsets.UTF_8))), true);
+			session.writeEntry("c.bin", new ByteArrayInputStream(new byte[] { 4 }));
+			session.publish(emptyManifest());
+		}
+
+		try (ZipFile zip = new ZipFile(temporaryDirectory.resolve(TARGET).toFile())) {
+			assertEquals(ZipEntry.STORED, zip.getEntry("a.docx").getMethod());
+			assertEquals(ZipEntry.DEFLATED, zip.getEntry("b.txt").getMethod());
+			assertEquals(ZipEntry.DEFLATED, zip.getEntry("c.bin").getMethod());
+			assertNotNull(zip.getEntry("manifest.json"));
+		}
+	}
+
+	@Test
+	void anEmptyFileCanBeStoredWithoutCompression() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			assertEquals(0, session.writeEntry("empty.pdf", session.stage(new ByteArrayInputStream(new byte[0])), false));
+			session.publish(emptyManifest());
+		}
+
+		try (ZipFile zip = new ZipFile(temporaryDirectory.resolve(TARGET).toFile())) {
+			ZipEntry entry = zip.getEntry("empty.pdf");
+			assertEquals(ZipEntry.STORED, entry.getMethod());
+			assertEquals(0, zip.getInputStream(entry).readAllBytes().length);
+		}
+	}
+
+	@Test
+	void writingStagedContentReleasesItsSpoolFile() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			StagedContent staged = session.stage(new ByteArrayInputStream(new byte[] { 1, 2, 3 }));
+			assertEquals(1, spoolFiles().size(), "staged content is spooled next to the archive");
+
+			session.writeEntry("a", staged, true);
+
+			assertEquals(0, spoolFiles().size());
+			session.publish(emptyManifest());
+		}
+
+		assertOnlyTheArchiveRemains();
+	}
+
+	@Test
+	void closingStagedContentReleasesItsSpoolFileAndCanBeRepeated() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			StagedContent staged = session.stage(new ByteArrayInputStream(new byte[] { 1 }));
+
+			staged.close();
+			staged.close();
+
+			assertEquals(0, spoolFiles().size());
+		}
+	}
+
+	@Test
+	void discardingDeletesStagedContentThatWasNeverWritten() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+		ArchiveSession session = adapter.open(TARGET);
+		session.stage(new ByteArrayInputStream(new byte[] { 1 }));
+		session.stage(new ByteArrayInputStream(new byte[] { 2 }));
+		assertEquals(2, spoolFiles().size());
+
+		session.close();
+
+		try (var files = Files.list(temporaryDirectory.resolve("archives/scope"))) {
+			assertEquals(0, files.count(), "neither the staged content nor the archive is left behind");
+		}
+	}
+
+	@Test
+	void aFailedStreamWhileStagingLeavesNoSpoolFile() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+		java.io.InputStream failing = new java.io.InputStream() {
+			@Override
+			public int read() throws java.io.IOException {
+				throw new java.io.IOException("connection reset");
+			}
+		};
+
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			assertThrows(java.io.IOException.class, () -> session.stage(failing));
+
+			assertEquals(0, spoolFiles().size());
+		}
+	}
+
+	@Test
+	void contentStagedByAnotherSessionIsRejected() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+
+		try (ArchiveSession first = adapter.open(TARGET);
+				ArchiveSession second = adapter.open("archives/scope/archive-0002-full.zip")) {
+			StagedContent staged = first.stage(new ByteArrayInputStream(new byte[] { 1 }));
+
+			assertThrows(IllegalArgumentException.class, () -> second.writeEntry("a", staged, true));
+			assertThrows(IllegalArgumentException.class, () -> second.writeEntry("a", new StagedContent() {
+				@Override
+				public long size() {
+					return 0;
+				}
+
+				@Override
+				public long crc32() {
+					return 0;
+				}
+
+				@Override
+				public void close() {
+				}
+			}, true));
+		}
+	}
+
+	@Test
+	void stagingFromSeveralThreadsAtOnceThenWritingInOrderProducesAValidArchive() throws Exception {
+		LocalArchiveSessionAdapter adapter = new LocalArchiveSessionAdapter(new LocalBackupRoot(temporaryDirectory));
+		int count = 24;
+		List<byte[]> contents = new java.util.ArrayList<>();
+		for (int i = 0; i < count; i++) {
+			contents.add(("content of file " + i + " ").repeat(50 + i).getBytes(StandardCharsets.UTF_8));
+		}
+		ExecutorService executor = Executors.newFixedThreadPool(8);
+		try (ArchiveSession session = adapter.open(TARGET)) {
+			List<Future<StagedContent>> staged = new java.util.ArrayList<>();
+			for (byte[] content : contents) {
+				staged.add(executor.submit(() -> session.stage(new ByteArrayInputStream(content))));
+			}
+			for (int i = 0; i < count; i++) {
+				// Even entries are compressed, odd ones stored, so both paths see content staged concurrently.
+				session.writeEntry("file-" + i, staged.get(i).get(), i % 2 == 0);
+			}
+			assertEquals(0, spoolFiles().size());
+			session.publish(emptyManifest());
+		} finally {
+			executor.shutdownNow();
+		}
+
+		try (ZipFile zip = new ZipFile(temporaryDirectory.resolve(TARGET).toFile())) {
+			for (int i = 0; i < count; i++) {
+				ZipEntry entry = zip.getEntry("file-" + i);
+				assertEquals(i % 2 == 0 ? ZipEntry.DEFLATED : ZipEntry.STORED, entry.getMethod());
+				assertArrayEquals(contents.get(i), zip.getInputStream(entry).readAllBytes());
+			}
+		}
+		assertOnlyTheArchiveRemains();
+	}
+
+	private List<Path> spoolFiles() throws Exception {
+		try (var files = Files.list(temporaryDirectory.resolve("archives/scope"))) {
+			return files.filter(path -> path.getFileName().toString().startsWith(".spool-")).toList();
+		}
+	}
+
+	private static byte[] repeated(char value, int length) {
+		byte[] bytes = new byte[length];
+		java.util.Arrays.fill(bytes, (byte) value);
+		return bytes;
+	}
+
+	private static long crc(byte[] content) {
+		CRC32 crc = new CRC32();
+		crc.update(content);
+		return crc.getValue();
 	}
 
 	private com.google.gson.JsonObject readManifest() throws Exception {
