@@ -26,20 +26,17 @@ In **APIs & Services > Library**, enable:
 - **Google Drive API**
 - **Admin SDK API**
 
-The Drive API is used for Drive listing and backup operations. The Admin SDK API is used later for Workspace user enumeration.
+The Drive API is used for Drive listing and backup operations. The Admin SDK API is used for Workspace user enumeration.
 
-For the optional quota and usage view planned for a later implementation, also
-enable:
+For the Technical info tab, also enable:
 
-- **Admin SDK Reports API** for Workspace-wide usage reports.
-- **Service Usage API** for project quota definitions.
-- **Cloud Monitoring API** for observed quota consumption and quota errors.
+- **Admin SDK Reports API** for the Workspace usage report card.
+- **Service Usage API** for the Cloud API quota limits card.
 
-The current application uses the Admin SDK Reports API for the Workspace usage
-panel and the Service Usage API for the Cloud API quota-limits panel. Cloud
-Monitoring is enabled for the planned current-consumption panel but is not yet
-queried by the application. The Drive storage usage view uses the existing
-Drive API and does not require these additional APIs.
+Without them those two cards show as unavailable; backups are not affected.
+The Drive storage usage card uses the Drive API and needs nothing extra. The
+**Cloud Monitoring API** (observed quota consumption) is not queried by the
+application yet, so there is no need to enable it.
 
 ## 3. Configure OAuth login
 
@@ -77,11 +74,8 @@ Google returns alongside the access token, with no extra API call.
 4. Give the client a descriptive name, for example `gdrive-backup-desktop`.
 5. Create the client and click **Download JSON**.
 
-Store the downloaded file outside the repository, for example:
-
-```text
-/home/edoardo/client_secret.json
-```
+Keep the downloaded file outside the repository (your `Downloads` folder is
+fine) until you import it in step 10; it can be deleted afterwards.
 
 The application uses an installed-app loopback redirect. Do not create a web
 application client for this flow, and do not commit the client-secrets JSON.
@@ -102,19 +96,9 @@ Do not grant broad project roles unless they are required. Drive access is grant
 2. Go to **Keys**.
 3. Click **Add key > Create new key**.
 4. Select **JSON**.
-5. Download the key and store it outside the repository.
-
-Example Linux/WSL location:
-
-```text
-/home/edoardo/gdrive-service-account.json
-```
-
-Protect the file:
-
-```bash
-chmod 600 /home/edoardo/gdrive-service-account.json
-```
+5. Download the key and keep it outside the repository, in a folder only your
+   Windows account can read, until you import it in step 10. Delete it after
+   the import: the application does not read the file again.
 
 Never commit this file, copy it into `src/`, or share it publicly. If the key is exposed, revoke it immediately in Google Cloud Console and create a replacement.
 
@@ -138,11 +122,6 @@ A Google Workspace super administrator must perform this step.
 ```text
 https://www.googleapis.com/auth/drive.readonly
 https://www.googleapis.com/auth/admin.directory.user.readonly
-```
-
-For the planned Workspace Reports integration, add this additional scope:
-
-```text
 https://www.googleapis.com/auth/admin.reports.usage.readonly
 ```
 
@@ -150,14 +129,16 @@ https://www.googleapis.com/auth/admin.reports.usage.readonly
 
 The scopes must exactly match the scopes requested by the application. The first scope allows read-only Drive access for the impersonated user. The second allows read-only Workspace user enumeration.
 
-The Reports scope is also read-only and is used for customer or user usage
-reports. It does not grant Drive file access. After changing the delegation,
-allow a few minutes for the authorization to propagate before testing.
+The third (Reports) scope is also read-only and is used only for the Workspace
+usage report card on the Technical info tab; it does not grant Drive file
+access, and without it only that card is unavailable. After changing the
+delegation, allow a few minutes for the authorization to propagate before
+testing.
 
-## 8a. Grant project-level quota monitoring access
+## 8. Grant project-level quota access
 
 Cloud API request quotas belong to the Google Cloud project, not to the
-impersonated Workspace user. The planned quota integration therefore needs
+impersonated Workspace user. The Cloud API quota limits card therefore needs
 project-level access for the service account itself, in addition to the
 Workspace domain-wide delegation above.
 
@@ -166,20 +147,21 @@ account these roles:
 
 - **Service Usage Viewer** (`roles/serviceusage.serviceUsageViewer`) to read
 	service quota definitions and limits.
-- **Monitoring Viewer** (`roles/monitoring.viewer`) to read Cloud Monitoring
-	quota metrics and observed usage.
+- **Monitoring Viewer** (`roles/monitoring.viewer`), optional: only needed
+	once the application reads Cloud Monitoring quota usage, which it does not
+	do yet.
 
 Grant these roles at the project level only. Do not grant Owner, Editor, or
 Service Usage Admin for read-only quota display. The exact permissions exposed
 by a metric can vary by Google service; if a metric remains unavailable, keep
 the quota section unavailable rather than broadening permissions blindly.
 
-The planned Cloud APIs use the `cloud-platform` OAuth scope for the service
+The quota calls use the `cloud-platform` OAuth scope with the service
 account's own project credentials. These project-level calls are separate from
-the delegated Workspace calls and should not be made by impersonating a
-Workspace user.
+the delegated Workspace calls and are not made by impersonating a Workspace
+user, so `cloud-platform` is **not** added to domain-wide delegation.
 
-## 8. Sign in as the impersonated Workspace user
+## 9. Sign in as the impersonated Workspace user
 
 The service account can impersonate only an account in the Workspace domain that authorized the delegation. There is no separate configuration step for this: whoever signs in through the OAuth login in step 3 becomes that identity, since the application reads their email address from the OAuth ID token and uses it both as the default Drive preview user and as the identity impersonated for Admin SDK calls (Workspace user listing).
 
@@ -197,7 +179,7 @@ user@gmail.com
 
 The signed-in user must have access to the Drive data that the application is expected to preview, and must be a Workspace admin for Workspace user listing to work (a non-admin sign-in still works for previewing and backing up that user's own Drive and any Shared Drives they can see). For organization-wide backup, the service account uses domain-wide delegation to impersonate each Workspace user as required by the backup workflow, independent of who is signed in.
 
-## 9. Configure the application
+## 10. Configure the application
 
 Credentials are configured inside the application, not through environment
 variables:
@@ -219,18 +201,18 @@ files: the application does not read them again. On non-Windows machines the
 values are kept in memory only and must be imported again after every restart.
 
 There is no setting for the impersonated/preview user: it is derived from
-whoever signs in through the OAuth login (step 8 above).
+whoever signs in through the OAuth login (step 9 above).
 
 The opt-in integration tests (`*IT`) are the only place that still read
 `GOOGLE_SERVICE_ACCOUNT_KEY`, `GOOGLE_IMPERSONATED_USER` and
 `GOOGLE_OAUTH_CLIENT_SECRETS` from the environment.
 
-## 10. Verify the setup
+## 11. Verify the setup
 
 After signing in through the UI:
 
 - The UI should show `Google connected` after OAuth login.
-- The Drive preview should show `Loading available drives...`.
+- The Drive preview should show `Loading available drives for <user>...`.
 - `My Drive` and accessible Shared Drives should appear when delegation is configured correctly.
 
 If the UI shows `Google connected, Drive preview unavailable`, check:
@@ -238,7 +220,7 @@ If the UI shows `Google connected, Drive preview unavailable`, check:
 1. The signed-in Google account is a Workspace account, not a personal Gmail account.
 2. The service-account key belongs to the Cloud project where delegation was configured.
 3. The Admin Console authorization uses the service account's OAuth 2 Client ID.
-4. Both scopes are authorized exactly as shown above.
+4. The delegated scopes are authorized exactly as shown in step 7.
 5. The Drive API and Admin SDK API are enabled.
 6. The Workspace user exists and has access to the expected Drive data.
 7. The Cloud project id in **Settings** is the project that owns the service account and

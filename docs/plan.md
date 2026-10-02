@@ -24,9 +24,9 @@ Last reviewed: 2026-10-02
 - [x] JavaFX user picker and Drive preview browsing, including folder navigation.
 - [x] Focused unit tests and opt-in real-account integration tests for the implemented Google adapters and services.
 - [x] Make the user-selection and impersonated Drive-preview flow discoverable and usable in the JavaFX layout.
-- [x] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync backs up changed revisions and links them to the current file version. Expired page tokens trigger a full re-inventory without duplicating unchanged versions. Both flows now report per-item progress through `BackupProgressTracker`.
+- [x] Headless initial and incremental sync using `changes.list`. Initial listing persists metadata and downloads versions for non-folder files before saving the start token; incremental sync backs up changed revisions and links them to the current file version. Expired page tokens trigger a full re-inventory without duplicating unchanged versions. Both flows now report per-item progress through `BackupProgressTracker`. Superseded in part by the stream-to-archive commit protocol: a full run now fetches its baseline token before listing, and nothing is saved until the archive is published.
 - [x] Detection and persistence of renames, moves, trashing, deletion, and content revision events.
-- [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names. Superseded twice: first by the no-revision-retention decision (the `revision` path segment went away), then by the stream-to-archive decision, which removes the capture store altogether (see **Storage layout** and the **Stream content straight into archives** item under Not started).
+- [x] Versioned local storage writer with `owner/file/revision` paths and sanitized filesystem names. Superseded twice: first by the no-revision-retention decision (the `revision` path segment went away), then by the stream-to-archive decision, which removes the capture store altogether (see **Storage layout** and the **Stream content straight into archives** item below).
 - [x] Google-native export handling and the 10MB fallback behavior. Office exports fall back to PDF when the Google export limit is reported.
 - [x] Per-drive backup scope selection: let the admin choose which drive(s) — the
   personal drive and/or one or more specific Shared Drives — to include in a
@@ -63,7 +63,10 @@ Last reviewed: 2026-10-02
   wasn't already recorded; incremental sync now checkpoints `sync_state`
   after every page of changes, not just the last one, which is also what
   fixes a latent crash-recovery bug where a mid-run crash would replay
-  already-applied pages and duplicate `file_events` on retry.
+  already-applied pages and duplicate `file_events` on retry. Superseded by
+  the stream-to-archive commit protocol: the local file store and the
+  per-page `sync_state` checkpoint are gone, and a cancelled or failed run
+  commits nothing and replays from the last committed cursor.
 - [x] Progress bar with elapsed and estimated-remaining time: shows current
   operation, elapsed time, and a guessed remaining time for the drive
   currently being synced, resetting as the job moves to the next one. For a
@@ -83,7 +86,8 @@ Last reviewed: 2026-10-02
   archive writer to populate. `FileVersion`/`FileVersionPort`/`VersionStoragePort`
   were renamed to `FileCapture`/`FileCapturePort`/`CaptureStoragePort`
   throughout. No migration tool exists, so any existing local `backup.db` has
-  to be deleted and recreated on next launch.
+  to be deleted and recreated on next launch. The local storage part was
+  later replaced by streaming content straight into archives.
 - [x] Scope type carried explicitly instead of inferred from `@`: a new
   `DriveScope` (`key` plus a `PERSONAL`/`SHARED_DRIVE` type) replaces the bare
   `scopeKey` string on every port and use case that routes on it —
@@ -292,8 +296,7 @@ of truth for expected behavior.
   the live downloaded size beside each
   name ("12.4 MB of 80.0 MB" when Drive reports a size, the running amount for
   Google-native exports).
-  See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
-  algorithm**, step 7.
+  See **Sync algorithm**, step 7.
 
 - [x] Personal drive content: a personal drive backup takes only the files the
   user owns by default, instead of everything Drive lists for them (files
@@ -320,24 +323,4 @@ Implementation sequence: runtime location selection; backup-job options and
 state; drive scope selection; progress/cancellation/recovery; per-drive archive
 packaging; partial-failure summary and history; UI redesign and
 Windows packaging; header identity polish.
-
----
-
-## Build order (original suggestion)
-
-1. Headless sync core: service-account auth, impersonation, `changes.list`
-   loop, SQLite schema, incremental diff logic (rename/move/trash/delete
-   detection). Prove this from the command line before touching UI.
-2. Google-native export handling + 10MB fallback.
-3. Versioned local storage writer.
-4. Admin SDK user enumeration.
-5. JavaFX shell: login gate, user picker, Drive/Shared-Drive browser (reusing
-   step 1's fetch code).
-6. Backup options (full/incremental), progress UI,
-   archive packaging, and history view.
-7. Low-priority JavaFX layout analysis and three-panel redesign.
-8. `jpackage` → self-contained Windows app-image; test on a clean machine without a
-   preinstalled JDK.
-
----
 

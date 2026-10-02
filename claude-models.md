@@ -1,13 +1,13 @@
 # Claude Model Selection Guide
 
-Which Claude model to use in Claude Code for each task on the
-[plan.md](docs/plan.md) roadmap, on the **Claude Pro**
-subscription.
+Which Claude model to use in Claude Code for the remaining
+[plan.md](docs/plan.md) roadmap items and for recurring work, on the
+**Claude Pro** subscription.
 
 **Constraint: use only models included in the Pro plan. Never use usage
 credits.**
 
-Last reviewed: 2026-09-13. Availability changes over time: `/model` shows what
+Last reviewed: 2026-10-02. Availability changes over time: `/model` shows what
 your account can use right now.
 
 ---
@@ -55,7 +55,7 @@ claude.ai. With credits off, none of these options can bill: `/fast` reports
 
 ---
 
-## 2. Roadmap tasks
+## 2. Remaining roadmap items
 
 Legend:
 - 🟢 Sonnet 5
@@ -63,43 +63,14 @@ Legend:
 - 🧭 `opusplan`: Opus plans, Sonnet builds
 - ⚪ Haiku 4.5
 
-### P0 — usable and safe v1
+Everything else in [plan.md](docs/plan.md) is done. For a new item, pick by
+the kind of work in §3 and §4.
 
 | Task | Model | Rationale |
 |---|---|---|
-| **Runtime backup-destination and database-location selection** | 🧭 | Needs a new inbound port, a configuration-backed outbound port, validation, and UI copy that makes "different database = different history" clear. Plan the ports across layers, then the adapter and UI code are routine. |
-| **Full vs. incremental backup selection** | 🧭 | Changes the `DriveBackupUseCase` contract and job state. Full mode must ignore the saved cursor without corrupting `sync_state`. |
-| **Interruptible backups and recovery policy** (design) | 🔵 at `xhigh` | The highest-stakes design on the roadmap. Cancellation points, SQLite transaction/checkpoint behavior, temporary archive naming and resume/cleanup must stay consistent. An interrupted run must never look complete. Follow the safeguards in §4. |
-| **Interruptible backups and recovery policy** (implementation) | 🔵 | Crosses `SqliteDatabase` (a new connection per operation), the storage adapter, both sync services and the FX thread. Too entangled to hand to Sonnet safely. |
-| **Progress bar and current-operation status** | 🧭 | The domain needs a progress port that doesn't depend on JavaFX, which `HexagonalArchitectureTest` checks. Binding it to the UI through `Platform.runLater` is routine. |
-
-### P1 — complete the backup product
-
-| Task | Model | Rationale |
-|---|---|---|
-| **Self-contained archive with manifest** | 🧭 | The format and manifest layout need a decision; ZIP is the candidate. Streaming ZIP writing in an adapter is then routine. |
-| **All-revisions vs. latest-only selection** | 🔵 | The roadmap flags this as needing Google API validation: what `revisions` retrieval supports for binary files versus Google-native exports. Write the research down before implementing. |
-| **Partial-failure handling and completion summary** | 🧭 | Plan how to classify errors from the Google adapters (suspended accounts, revoked access, quota) and keep one user's failure from stopping the run. Implementation is routine once that's set. |
-
-### P2 — operational improvements
-
-| Task | Model | Rationale |
-|---|---|---|
-| **History view (`file_events` + `file_captures`)** | 🟢 | Read-only queries against an existing schema plus a list/detail view; well specified in the requirements. |
-
-### P3 — delivery and UX refinements
-
-| Task | Model | Rationale |
-|---|---|---|
-| **Tabbed authenticated-screen redesign (header, Backup / Archives / Technical info tabs)** | 🧭 | `JavaFxApplication` is one ~680-line class, and AGENTS.md expects inbound adapters under `adapter.in`. Plan that split with Opus, then build and iterate on the panels with Sonnet. |
-| **Windows installer with `jpackage`** | 🟢 | Maven/`jpackage` configuration and packaging scripts. Verifying on a clean machine without a JDK is a manual step no model can do. |
-
-### Items still in progress
-
-| Task | Model | Rationale |
-|---|---|---|
-| **Expose remaining backend capabilities in the UI** | 🟢 | The pattern is established: async use-case call, then an FX-thread update. |
-| **Richer progress reporting in headless sync** | 🧭 | Same port design question as the P0 progress bar; do them together. |
+| **Organization-wide sweep across every Workspace user** (rest of partial-failure handling) | 🧭 | Plan how to classify per-user failures from the Google adapters (suspended accounts, revoked access, quota) and keep one user's failure from stopping the sweep, on top of the existing per-drive failure handling. Implementation is routine once that's set. |
+| **Expose remaining backend capabilities in the UI** | 🟢 | The pattern is established: a panel in `adapter.in.javafx` with a `*Text` class, an async use-case call, then an FX-thread update. |
+| **`ALL_REVISIONS` revision mode** (not scheduled) | 🔵 | Needs Google API validation first: what `revisions` retrieval supports for binary files versus Google-native exports. Write the research down before implementing. |
 
 ---
 
@@ -114,7 +85,7 @@ Legend:
 | Fixing a `HexagonalArchitectureTest` violation | 🟢 | Move to 🔵 if the fix needs a new port |
 | Localized bug fixes and compile errors | 🟢 at `medium` effort | |
 | Non-deterministic bugs (FX thread, `CompletableFuture`, SQLite locking, WSL browser interop) | 🔵 at `xhigh` | Follow the safeguards in §4 |
-| Code review before merging a P0 slice | 🔵 | |
+| Code review before merging a slice that touches sync, the commit protocol or archives | 🔵 | |
 | Updating roadmap status markers in `docs/plan.md` | ⚪ | Mechanical, but check the progress note against what was actually built |
 | Setup guides (e.g. `google-admin-console-setup.md`) | 🟢 | |
 
@@ -125,13 +96,15 @@ Legend:
 Opus 5 is the most capable model available without credits. Two tasks push
 against that ceiling:
 
-1. Designing and reviewing the interruptible-backup and recovery policy.
-2. Non-deterministic concurrency bugs.
+1. Changes to the commit protocol, cancellation or the archive chain (staged
+   ZIP, publish, single-transaction commit, merge and verified deletion).
+2. Non-deterministic concurrency bugs (parallel downloads, FX thread, SQLite).
 
 Compensate with process rather than a bigger model:
 
 - **Decide in plan mode first.** Write the cancellation points, the transaction
-  boundaries and the archive temp-file lifecycle into the plan before any code.
+  boundaries and the archive temp-file and spool lifecycle into the plan before
+  any code.
 - **Give edge cases explicitly.** For example: cancellation mid-download, disk
   full, expired page token, locked SQLite file, app closed during packaging.
   Don't rely on the model to come up with them.

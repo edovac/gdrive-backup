@@ -36,4 +36,4 @@
 
 ## Repository Notes
 
-- `README.md` and `HELP.md` are generated starter documentation and may contain stale Gradle references; use `pom.xml` and the Maven wrapper as the source of truth for builds.
+- `README.md` is the short user-facing overview; keep details in the documents under `docs/` and link to them. Use `pom.xml` and the Maven wrapper as the source of truth for builds.

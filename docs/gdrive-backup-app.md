@@ -135,8 +135,7 @@ build order live in [plan.md](plan.md).
     re-uploading them would reinstate deleted content as if it were live.
   - **Real names preserved.** Only characters genuinely illegal on Windows
     (`\ / : * ? " < > |`) are replaced, so accented and non-Latin filenames
-    survive intact (the earlier capture store's stricter `[a-zA-Z0-9._@-]`
-    sanitizer must not be reused here).
+    survive intact (no stricter `[a-zA-Z0-9._@-]`-style sanitizer).
   - **Collisions disambiguated.** Drive allows two files with the same name in
     one folder; a filesystem does not. Same-name siblings get a ` (2)`, ` (3)`
     suffix.
@@ -232,15 +231,13 @@ build order live in [plan.md](plan.md).
   drive currently being synced, and for the job as a whole (all selected
   drives combined). For a single-drive job the two coincide and only need
   showing once; for a multi-drive job both are shown together, e.g. "this
-  drive: 1m elapsed, ~2m left — whole job: 4m elapsed, ~7m left." How each
-  estimate is computed needs a design decision — the per-drive one might
-  extrapolate from files or bytes processed so far against the totals known
-  from enumeration; the job-level one additionally has to account for
-  already-completed drives and however many remain (e.g. an average
-  per-drive duration once at least one has finished). Both will necessarily
-  be rough guesses, especially early in a drive's sync, right after
-  switching from enumeration to download, or before any drive in the job
-  has completed yet.
+  drive: 1m elapsed, ~2m left — whole job: 4m elapsed, ~7m left." The
+  per-drive estimate extrapolates the average time per processed file to the
+  files still to go (none while the total is unknown, as in an incremental
+  run); the job estimate adds the average duration of the drives completed so
+  far (or the current drive's projected duration, before any has finished)
+  for each drive not yet started. Both are rough guesses, especially early in
+  a drive's sync.
 - **Interruptible backups**: the admin can cancel a running backup, visible
   and reachable from the same progress display.
   - For a single-drive job, cancelling stops that drive's sync; the
@@ -273,9 +270,14 @@ This is what actually performs the org-wide backup sweep.
 
 - Created by a Workspace admin in Google Cloud Console; authorized for
   domain-wide delegation in the Admin Console.
-- Required scopes:
+- Delegated scopes (authorized in the Admin Console):
   - `https://www.googleapis.com/auth/drive.readonly`
   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
+  - `https://www.googleapis.com/auth/admin.reports.usage.readonly` (Workspace
+    usage card on the Technical info tab only)
+- Not delegated: the service account's own `cloud-platform` scope, used with
+  project-level IAM roles to read the Cloud API quota limits (see
+  [google-admin-console-setup.md](google-admin-console-setup.md)).
 - For each org user, impersonate via
   `ServiceAccountCredentials.createDelegated(userEmail)` (from
   `google-auth-library-oauth2-http`) to act as that user and read their My
@@ -349,7 +351,7 @@ flowchart LR
 
     subgraph Google["Google"]
         Login["OAuth consent<br/>(drive.readonly, openid, email)"]
-        DWD["Domain-wide delegation<br/>(drive.readonly,<br/>admin.directory.user.readonly)"]
+        DWD["Domain-wide delegation<br/>(drive.readonly,<br/>admin.directory.user.readonly,<br/>admin.reports.usage.readonly)"]
         APIs["Drive API / Admin SDK"]
         CloudQ["Cloud quota API"]
     end
@@ -432,14 +434,15 @@ sequenceDiagram
 |---|---|
 | Drive API | `google-api-client`, `google-api-services-drive` (v3) |
 | Admin SDK (user enumeration) | `google-api-services-admin-directory` |
+| Workspace usage / Cloud quota (Technical info tab) | `google-api-services-admin-reports`, `google-api-services-serviceusage` |
 | Auth / credentials | `google-auth-library-oauth2-http` (`ServiceAccountCredentials`, `UserCredentials`) |
-| OAuth loopback flow | `google-oauth-client-jetty` or a manual local HTTP listener |
+| OAuth loopback flow | `google-oauth-client-jetty` |
 | Backoff/retry | `DriveRetry` in `GoogleDriveAdapter` (exponential backoff with jitter on the parsed Drive error, so rate-limit 403s are told apart from export-size 403s) |
-| Local DB | `org.xerial:sqlite-jdbc`, optionally Spring Data JPA on top |
-| UI | JavaFX (+ `javafx-weaver` for Spring DI into controllers) |
-| Credential storage | `com.microsoft.credentialstorage` (Windows Credential Manager) or JNA |
-| Logging | SLF4J + Logback |
-| Packaging | `jpackage` (JDK 14+), optionally `jlink` for a trimmed runtime |
+| Local DB | `org.xerial:sqlite-jdbc` over plain JDBC (no JPA) |
+| UI | JavaFX (`javafx-controls`), built in code without FXML |
+| Credential storage | `com.microsoft.credentialstorage:credential-secure-storage` (Windows Credential Manager) |
+| Logging | SLF4J + Logback (Spring Boot defaults) |
+| Packaging | `jpackage` (`jpackage-maven-plugin`, `windows-package` profile) with a trimmed bundled runtime |
 
 ---
 
@@ -524,8 +527,8 @@ root to a new folder or drive needs no database changes; keeping the root
 intact as a unit when doing so is the administrator's responsibility (see
 Known limitations).
 
-`file_captures` replaces the earlier `file_versions` table. Since the app keeps
-no loose copies of content, it is an **index into the archives**: one row per
+Since the app keeps no loose copies of content, `file_captures` is an
+**index into the archives**: one row per
 captured revision saying which archive and entry hold those bytes, with
 `files.current_version_id` pointing at the latest one. Together with
 `file_events` (the operation history: rename, move, trash, untrash, delete,
@@ -535,21 +538,23 @@ opening every archive. `archive_id` on both tables is therefore always set,
 written in the same transaction that inserts the `archives` row. The index is
 a locator and verification aid, not a substitute for reading the archives
 themselves (see **Archive operations**: merges are archive-authoritative); if
-the database is lost, the manifests embedded in the archives rebuild it.
+the database is lost, the manifests embedded in the archives hold enough to
+rebuild it (there is no rebuild tool yet).
 
 `owner_scope` and `scope_key` both hold either a user's email or a Shared
-Drive's `drive_id`. Which of the two it is must be carried explicitly alongside
-the key, not inferred from the value's shape — today the Drive adapter and the
-storage path both rely on "an email contains `@`, a Drive ID doesn't".
+Drive's `drive_id`. Which of the two it is is carried explicitly alongside the
+key (`DriveScope` in code, `archives.scope_type` in the database), never
+inferred from the value's shape.
 
 ---
 
 ## Sync algorithm (per user, per Shared Drive)
 
-1. Load `sync_state.page_token` for this scope. If absent, do an initial full
-   listing (`files.list`, `supportsAllDrives=true`,
-   `includeItemsFromAllDrives=true`) to seed the `files` table, then call
-   `changes.getStartPageToken` to establish a baseline.
+1. Load `sync_state.page_token` for this scope. If absent (or the run is a
+   full backup), call `changes.getStartPageToken` to establish a baseline
+   **before** listing, so no change made during the listing is missed, then do
+   a full listing (`files.list`, `supportsAllDrives=true`,
+   `includeItemsFromAllDrives=true`) to seed the `files` table.
 2. On subsequent runs, call `changes.list` with the stored `page_token`,
    paging until exhausted, then store the returned `newStartPageToken`.
 3. For each change entry, diff against the stored row for that `file_id`:
@@ -766,8 +771,10 @@ stateDiagram-v2
 - Docs → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
 - Sheets → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 - Slides → `application/vnd.openxmlformats-officedocument.presentationml.presentation`
-- `files.export` has a **10MB cap per file** — plan a fallback (e.g. PDF
-  export, or flag-and-skip with a logged warning) for files that exceed it.
+- `files.export` has a **10MB cap per file**. When Drive reports that an
+  Office export is too large (`DriveExportLimitException`), the file is
+  exported as PDF instead and its entry gets a `.pdf` name; the manifest's
+  `export_mime_type` records `application/pdf`.
 
 ---
 
@@ -953,10 +960,10 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
 ## UI (JavaFX)
 
 - **Login screen**: "Sign in with Google" (OAuth, admin access gate only).
-- **User picker**: list of org users (from Admin SDK enumeration, cached
-  locally, refreshed periodically).
-- **Drive browser**: `TreeView`/`TableView`, lazy-loaded on folder expand, two
-  modes:
+- **User picker**: list of org users (from Admin SDK enumeration, loaded after
+  sign-in; not cached).
+- **Drive browser**: a collapsible Drive contents preview on the Backup tab,
+  loaded on demand with folder navigation, covering:
   - My Drive for the selected user (`q="'root' in parents"`)
   - Shared Drives the selected user belongs to (`drives.list` →
     `files.list(driveId=..., corpora="drive", includeItemsFromAllDrives=true,
@@ -1034,11 +1041,12 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   includes shared files. Switching that setting mid-chain affects only files
   that change afterwards: an incremental run never revisits unchanged files, so
   run a Full backup to apply the new choice to the whole drive.
-- `files.export` 10MB cap needs a defined fallback before it's hit in
-  production.
+- A Google-native file whose Office export exceeds the 10MB cap is kept only
+  as PDF (see **Google-native file export**), so it no longer re-uploads as an
+  editable document.
 - Domain-wide delegation setup is a manual, one-time Admin Console step and
-  can't be automated from within the app — document it as a setup guide for
-  the admin.
+  can't be automated from within the app; it is documented in
+  [google-admin-console-setup.md](google-admin-console-setup.md).
 - Backup destinations are external hard drives, which can be unplugged,
   swapped, or simply absent when a run starts. The app doesn't yet detect
   whether the drive currently mounted at a saved path is the same physical
@@ -1114,6 +1122,3 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   `ALL_REVISIONS` archive — how they're organized and named so a future
   restore can tell them apart — is a placeholder until that mode and restore
   are designed.
-- The archive filename convention beyond "includes the chain's
-  `sequence_number`" is deferred and needs a human-understandable naming
-  scheme.
