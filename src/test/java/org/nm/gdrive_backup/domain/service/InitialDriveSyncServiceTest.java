@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -262,7 +265,7 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
-	void downloadsInParallelButWritesTheArchiveAndReportsProgressInListingOrder() throws Exception {
+	void downloadsInParallelButWritesTheArchiveInListingOrderAndReportsEveryFileOnce() throws Exception {
 		int count = 8;
 		List<StoredFile> files = new ArrayList<>();
 		CountDownLatch firstWindowStarted = new CountDownLatch(4);
@@ -293,13 +296,69 @@ class InitialDriveSyncServiceTest {
 				commits.commits.getFirst().captures().stream().map(capture -> capture.entryName()).toList());
 		assertEquals(files.stream().map(StoredFile::fileId).toList(),
 				sessions.publishedManifest.files().stream().map(record -> record.fileId()).toList());
-		InOrder order = inOrder(progressTracker);
+		// Progress follows download completion, which is not list order, so only the count and the end are fixed.
 		for (StoredFile file : files) {
-			order.verify(progressTracker).itemProcessed(file.name());
+			verify(progressTracker, times(1)).itemProcessed(file.name());
 		}
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker, times(count)).itemProcessed(anyString());
 		order.verify(progressTracker).packaging();
 		assertEquals(List.of("open", "publish", "commit"), log);
 		assertTrue(sessions.allStagedReleased());
+	}
+
+	@Test
+	void aSlowDownloadDoesNotHoldBackTheProgressOfTheFilesQueuedBehindIt() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		CountDownLatch othersReported = new CountDownLatch(4);
+		doAnswer(invocation -> {
+			if (!"F0.pdf".equals(invocation.getArgument(0))) {
+				othersReported.countDown();
+			}
+			return null;
+		}).when(progressTracker).itemProcessed(anyString());
+		for (int i = 0; i < 5; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 0) {
+				when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+					// The first file only finishes once the four behind it were counted. Counting at hand-over
+					// instead would leave them waiting on this file, so this would time out.
+					if (!othersReported.await(5, TimeUnit.SECONDS)) {
+						throw new IllegalStateException("progress was held back by the slow file");
+					}
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			} else {
+				stubDownload("file-" + i, "bytes");
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		assertEquals(List.of("F0.pdf", "F1.pdf", "F2.pdf", "F3.pdf", "F4.pdf"), List.copyOf(sessions.entries.keySet()));
+		verify(progressTracker, times(5)).itemProcessed(anyString());
+	}
+
+	@Test
+	void filesWithNoContentToDownloadAreReportedOnceEachAlongsideTheDownloadedOnes() throws Exception {
+		StoredFile folder = file("folder-1", "Docs", "", FOLDER, null);
+		StoredFile trashed = new StoredFile("file-1", "user@example.com", "Old.pdf", "", null, "application/pdf", true,
+				"revision-1", null);
+		StoredFile form = file("file-2", "Survey", "folder-1", "application/vnd.google-apps.form", "v1");
+		StoredFile first = file("file-3", "A.pdf", "folder-1", "application/pdf", "r1");
+		StoredFile second = file("file-4", "B.pdf", "folder-1", "application/pdf", "r1");
+		stubDrive("token", folder, trashed, form, first, second);
+		stubDownload("file-3", "a");
+		stubDownload("file-4", "b");
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		for (String name : List.of("Docs", "Old.pdf", "Survey", "A.pdf", "B.pdf")) {
+			verify(progressTracker, times(1)).itemProcessed(name);
+		}
+		verify(progressTracker, times(5)).itemProcessed(anyString());
 	}
 
 	@Test

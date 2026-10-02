@@ -2,6 +2,7 @@ package org.nm.gdrive_backup.domain.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -11,7 +12,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -141,6 +148,44 @@ class BackupProgressTrackerTest {
 		// One drive left unstarted (THIRD); its estimate falls back to the one completed
 		// drive's duration (100s): 90s + 100s * 1 = 190s.
 		assertEquals(Duration.ofSeconds(190), snapshot.jobRemaining());
+	}
+
+	@Test
+	void countsEveryItemWhenSeveralThreadsReportAtOnce() throws Exception {
+		int threads = 8;
+		int perThread = 500;
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.enumerated(threads * perThread);
+		ExecutorService executor = Executors.newFixedThreadPool(threads);
+		CountDownLatch start = new CountDownLatch(1);
+		try {
+			List<Future<?>> done = new ArrayList<>();
+			for (int thread = 0; thread < threads; thread++) {
+				done.add(executor.submit(() -> {
+					start.await();
+					for (int i = 0; i < perThread; i++) {
+						tracker.itemProcessed("file");
+					}
+					return null;
+				}));
+			}
+			start.countDown();
+			for (Future<?> future : done) {
+				future.get(10, TimeUnit.SECONDS);
+			}
+		} finally {
+			executor.shutdownNow();
+		}
+
+		ArgumentCaptor<BackupProgress> captor = ArgumentCaptor.forClass(BackupProgress.class);
+		verify(port, atLeastOnce()).report(captor.capture());
+		List<BackupProgress> snapshots = captor.getAllValues();
+		assertEquals(threads * perThread, snapshots.get(snapshots.size() - 1).processedItems());
+		// Each report happens under the tracker's lock, so the counts a port sees never go backwards.
+		for (int i = 1; i < snapshots.size(); i++) {
+			assertTrue(snapshots.get(i).processedItems() >= snapshots.get(i - 1).processedItems());
+		}
 	}
 
 	private static final class MutableClock extends Clock {

@@ -13,6 +13,7 @@ import org.nm.gdrive_backup.domain.model.ArchiveManifest.ManifestFile;
 import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.FetchedFile;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
@@ -71,17 +72,24 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		Map<String, StreamedFile> streamedByFileId = new HashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 			int[] processed = {0};
-			// Downloads overlap, but results come back here in listing order, so the archive, its entry names and
-			// the progress reporting are the same as a one-at-a-time run.
+			// Downloads overlap, but results come back here in listing order, so the archive and its entry names are
+			// the same as a one-at-a-time run. Progress is the exception: a file counts as soon as its download
+			// finishes, because counting at hand-over would hold back every file queued behind a slow one and then
+			// release them all at once.
 			boolean completed = contentFetcher.process(files, InitialDriveSyncService::isEligible,
-					file -> contentStreamingService.fetch(access, file, session),
+					file -> {
+						FetchedFile fetched = contentStreamingService.fetch(access, file, session);
+						progressTracker.itemProcessed(file.name());
+						return fetched;
+					},
 					cancellation::isImmediateStopRequested,
 					(file, fetched) -> {
 						if (fetched != null) {
 							streamedByFileId.put(file.fileId(), contentStreamingService.write(file, fetched, session,
 									resolver.resolveEntryName(file)));
+						} else {
+							progressTracker.itemProcessed(file.name());
 						}
-						progressTracker.itemProcessed(file.name());
 						processed[0]++;
 					});
 			if (!completed) {

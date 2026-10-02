@@ -573,9 +573,12 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
    download is first copied into a spool file next to the staged archive
    (`.spool-*.tmp`), and a single writer then appends the spooled files to the
    ZIP **in listing order** (full run) or change-feed order (incremental).
-   Entry order, entry names (including PDF-fallback renames, which depend on the
-   names already taken) and progress reporting are therefore identical to a
-   one-at-a-time run. At most twice the concurrency of fetched files wait to be
+   Entry order and entry names (including PDF-fallback renames, which depend on
+   the names already taken) are therefore identical to a one-at-a-time run.
+   Progress is the one exception: a file counts as processed when its download
+   finishes, not when the writer reaches it, so the counter follows download
+   completion rather than list order and does not stall behind one slow file.
+   At most twice the concurrency of fetched files wait to be
    written, which bounds spool disk use. A stop request, a failed download or a
    failed write aborts the run exactly as before: outstanding downloads are
    cancelled, spool files are deleted, the staged ZIP is discarded and nothing

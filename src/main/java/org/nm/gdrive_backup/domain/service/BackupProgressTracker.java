@@ -42,7 +42,7 @@ public class BackupProgressTracker {
 		this.clock = clock;
 	}
 
-	public void jobStarted(List<AvailableDrive> drives) {
+	public synchronized void jobStarted(List<AvailableDrive> drives) {
 		totalDrives = drives.size();
 		driveIndex = -1;
 		completedDrives = 0;
@@ -52,7 +52,7 @@ public class BackupProgressTracker {
 		report();
 	}
 
-	public void driveStarted(AvailableDrive drive) {
+	public synchronized void driveStarted(AvailableDrive drive) {
 		driveIndex++;
 		driveName = (drive.shared() ? "Shared: " : "") + drive.name();
 		sharedDrive = drive.shared();
@@ -64,41 +64,41 @@ public class BackupProgressTracker {
 		report();
 	}
 
-	public void enumerating() {
+	public synchronized void enumerating() {
 		phase = BackupPhase.ENUMERATING;
 		report();
 	}
 
-	public void enumerated(int total) {
+	public synchronized void enumerated(int total) {
 		totalItems = total;
 		phase = BackupPhase.BACKING_UP;
 		report();
 	}
 
-	public void itemProcessed(String itemName) {
+	public synchronized void itemProcessed(String itemName) {
 		processedItems++;
 		currentItem = itemName;
 		phase = BackupPhase.BACKING_UP;
 		report();
 	}
 
-	public void packaging() {
+	public synchronized void packaging() {
 		phase = BackupPhase.PACKAGING;
 		report();
 	}
 
-	public void driveCompleted() {
+	public synchronized void driveCompleted() {
 		completedDriveDurations.add(Duration.between(driveStartedAt, clock.instant()));
 		completedDrives++;
 		report();
 	}
 
 	/** A drive that threw still counts as done for the job's progress and time estimate. */
-	public void driveFailed() {
+	public synchronized void driveFailed() {
 		driveCompleted();
 	}
 
-	public void jobFinished() {
+	public synchronized void jobFinished() {
 		phase = BackupPhase.FINISHED;
 		report();
 	}
