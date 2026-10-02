@@ -11,7 +11,7 @@
 	</parent>
 	<groupId>org.nm</groupId>
 	<artifactId>gdrive-backup</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>${revision}</version>
 	<name />
 	<description />
 	<url />
@@ -36,8 +36,13 @@
 		<javafx.version>27</javafx.version>
 		<mockito.version>5.24.0</mockito.version>
 		<license-maven-plugin.version>2.7.1</license-maven-plugin.version>
-		<!-- jpackage needs a plain dotted numeric version; the release workflow overrides it from the tag. -->
-		<app.version>0.0.1</app.version>
+		<!--
+			The project version, which the release workflow sets from the tag (-Drevision=1.2.0 or
+			-Drevision=1.2.0-rc.1). It feeds the jar manifest (Spring's startup log) and build-info (the UI
+			header); the windows-package profile derives the numeric part jpackage needs from it. The jar is
+			never installed or deployed, so ${revision} needs no flattening.
+		-->
+		<revision>0.0.1-SNAPSHOT</revision>
 		<google-http-client.version>2.2.0</google-http-client.version>
 		<google-oauth-client.version>1.39.0</google-oauth-client.version>
 		<google-auth-library.version>1.54.0</google-auth-library.version>
@@ -179,18 +184,12 @@
 					<execution>
 						<!--
 							Writes META-INF/build-info.properties so Spring's ProjectInfoAutoConfiguration
-							exposes a BuildProperties bean at runtime; app.version overrides project.version
-							(which carries -SNAPSHOT) with the plain tag version the release workflow passes.
+							exposes a BuildProperties bean at runtime (the app version and build time in the UI).
 						-->
 						<id>build-info</id>
 						<goals>
 							<goal>build-info</goal>
 						</goals>
-						<configuration>
-							<additionalProperties>
-								<app.version>${app.version}</app.version>
-							</additionalProperties>
-						</configuration>
 					</execution>
 				</executions>
 			</plugin>
@@ -322,6 +321,31 @@
 						</configuration>
 					</plugin>
 					<!--
+						jpackage accepts only a plain dotted numeric version (it becomes the .exe's file
+						version), so drop any qualifier: 1.2.0-rc.1 and 0.0.1-SNAPSHOT become 1.2.0 and 0.0.1.
+					-->
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>build-helper-maven-plugin</artifactId>
+						<version>3.6.2</version>
+						<executions>
+							<execution>
+								<id>jpackage-version</id>
+								<phase>validate</phase>
+								<goals>
+									<goal>regex-property</goal>
+								</goals>
+								<configuration>
+									<name>jpackage.version</name>
+									<value>${project.version}</value>
+									<regex>-.*$</regex>
+									<replacement />
+									<failIfNoMatch>false</failIfNoMatch>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<!--
 						jpackage's input directory (the "input" option below) is copied wholesale into
 						the app image, so stage just the repackaged Spring Boot fat jar here rather than
 						pointing it at the whole (much larger, mostly irrelevant) target/ directory.
@@ -414,12 +438,8 @@
 									-->
 									<type>APP_IMAGE</type>
 									<name>Google Drive Backup</name>
-									<!--
-										jpackage requires a plain dotted numeric version, so this can't
-										be project.version (it carries -SNAPSHOT during development).
-										The release workflow sets app.version from the pushed tag.
-									-->
-									<appVersion>${app.version}</appVersion>
+									<!-- The numeric part of project.version, derived by build-helper above. -->
+									<appVersion>${jpackage.version}</appVersion>
 									<vendor>gdrive-backup</vendor>
 									<description>Personal Google Drive backup tool</description>
 									<input>${project.build.directory}/jpackage-input</input>

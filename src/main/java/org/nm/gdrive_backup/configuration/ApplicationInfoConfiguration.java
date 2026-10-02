@@ -16,10 +16,6 @@ public class ApplicationInfoConfiguration {
 			// An IDE/Maven run without a packaging step never generates build-info.properties.
 			return ApplicationInfo.unknown();
 		}
-		String version = buildProperties.get("app.version");
-		if (version == null || version.isBlank()) {
-			version = buildProperties.getVersion();
-		}
-		return new ApplicationInfo(version, buildProperties.getTime());
+		return new ApplicationInfo(buildProperties.getVersion(), buildProperties.getTime());
 	}
 }

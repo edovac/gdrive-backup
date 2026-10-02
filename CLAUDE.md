@@ -42,11 +42,11 @@ Integration tests hit real Google accounts. They are skipped unless the matching
 
 ### Releasing
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`. It runs the tests, builds the Windows app-image, which bundles the `.exe` and the JRE, and publishes it as a zip on a GitHub Release, with `LICENSE` and `THIRD-PARTY-NOTICES.md` copied next to the `.exe` (regenerate the notices' library table when dependencies change; the command is in that file). The tag must be numeric (`vMAJOR[.MINOR[.PATCH]]`) because jpackage rejects other versions.
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It runs the tests, builds the Windows app-image, which bundles the `.exe` and the JRE, and publishes it as a zip on a GitHub Release, with `LICENSE` and `THIRD-PARTY-NOTICES.md` copied next to the `.exe` (regenerate the notices' library table when dependencies change; the command is in that file). The tag is `vMAJOR[.MINOR[.PATCH]][-QUALIFIER]`; the workflow passes it without the `v` as `-Drevision`, the single project version (default `0.0.1-SNAPSHOT`) shown in the startup log and the UI header. A qualifier (`v1.2.0-rc.1`, `v1.2.0-alpha.2`) publishes a GitHub pre-release. jpackage accepts only the numeric part, so the `windows-package` profile strips the qualifier into `jpackage.version` (build-helper `regex-property`), and the `.exe`'s file version shows `1.2.0` for both `1.2.0-rc.1` and `1.2.0`.
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
-./mvnw.cmd -P windows-package -DskipTests -Dapp.version=0.1.0 clean package   # local build of the same app-image
+./mvnw.cmd -P windows-package -DskipTests -Drevision=0.1.0 clean package   # local build of the same app-image
 ```
 
 ### Runtime configuration
