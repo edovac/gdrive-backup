@@ -1011,6 +1011,9 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
     `files.list(driveId=..., corpora="drive", includeItemsFromAllDrives=true,
     supportsAllDrives=true)`)
   - Both reuse the same impersonation-backed fetch code as the backend.
+  - Every listing here follows the page tokens (the Shared Drive picker included),
+    so neither an organisation with more than 100 Shared Drives nor a folder with
+    more than one page of items is shown truncated.
 - **Backup trigger**: let the admin select which drive(s) to back up (the
   personal drive and/or specific Shared Drives) and the backup mode, then run
   full/incremental sync, show per-user progress, package the per-drive archive
@@ -1165,7 +1168,10 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   archive writer stages output in a temp file/directory and only moves it into
   the chosen backup destination — and only inserts the `archives` row — after
   the run completes without cancellation; on cancellation the temp output is
-  discarded. The `archives.cancelled` flag remains for a future case (e.g. a
+  discarded. If the process itself dies mid-run, the leftover
+  `.archive-*.zip.tmp` and `.spool-*.tmp` files under `archives/` are deleted at
+  the next launch and whenever the backup location changes (both moments when no
+  backup can be running). The `archives.cancelled` flag remains for a future case (e.g. a
   partial-full-archive option) but nothing sets it yet, since neither mode
   writes a cancelled archive today.
 - Restore for a future `ALL_REVISIONS` archive (full or incremental) is

@@ -72,6 +72,8 @@ public class LocalBackupLocationAdapter implements BackupLocationPort {
 		Path target = normalize(root);
 		storage.switchTo(target);
 		database.switchTo(target.resolve(DATABASE_FILE_NAME));
+		// A location change holds the exclusive side of BackupActivity, so nothing is writing a temp file here.
+		storage.sweepLeftovers();
 	}
 
 	private static LocationValidation describeDatabaseFile(Path databaseFile) {

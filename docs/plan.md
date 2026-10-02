@@ -236,6 +236,11 @@ Last reviewed: 2026-10-02
   (`FileContentStreamingService`, three attempts). See **Sync algorithm**,
   step 9, and **Known limitations**.
 
+- [x] Review follow-ups: temp files an interrupted run leaves under `archives/`
+  are swept at launch and on a location change (`LocalBackupRoot.sweepLeftovers`);
+  the Shared Drive picker and both browse listings follow page tokens, and ids put
+  into a `q` string are escaped (`GoogleDriveAdapter`).
+
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
