@@ -36,6 +36,8 @@ public class BackupProgressTracker {
 	private final Map<String, FileDownload> downloading = new LinkedHashMap<>();
 	private final Deque<FileDownload> finished = new ArrayDeque<>();
 	private int finishedDownloads;
+	/** Bytes of every download finished in the current drive; the running ones are added when reporting. */
+	private long finishedBytes;
 
 	private int totalDrives;
 	private int driveIndex = -1;
@@ -76,6 +78,7 @@ public class BackupProgressTracker {
 		downloading.clear();
 		finished.clear();
 		finishedDownloads = 0;
+		finishedBytes = 0;
 		report();
 	}
 
@@ -120,6 +123,7 @@ public class BackupProgressTracker {
 			return;
 		}
 		finishedDownloads++;
+		finishedBytes += started.bytesDownloaded();
 		finished.addFirst(started.withFinishedAt(clock.instant()));
 		while (finished.size() > MAX_FINISHED_DOWNLOADS) {
 			finished.removeLast();
@@ -163,10 +167,11 @@ public class BackupProgressTracker {
 		Duration driveRemaining = driveRemaining(now);
 		Duration jobRemaining = jobRemaining(now, driveRemaining);
 		List<FileDownload> downloads = new ArrayList<>(downloading.values());
+		long downloadedBytes = finishedBytes + downloads.stream().mapToLong(FileDownload::bytesDownloaded).sum();
 		downloads.addAll(finished);
 		port.report(new BackupProgress(driveName, sharedDrive, driveIndex + 1, totalDrives, completedDrives, phase,
 				currentItem, processedItems, totalItems, jobStartedAt, driveStartedAt, driveRemaining, jobRemaining,
-				downloads, finishedDownloads));
+				downloads, finishedDownloads, downloadedBytes));
 	}
 
 	private Duration driveRemaining(Instant now) {

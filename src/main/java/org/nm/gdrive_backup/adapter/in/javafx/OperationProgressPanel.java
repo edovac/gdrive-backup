@@ -171,7 +171,7 @@ public final class OperationProgressPanel {
 			progressBar.setProgress(progress.totalItems() == null
 					? ProgressBar.INDETERMINATE_PROGRESS
 					: (double) progress.processedItems() / Math.max(1, progress.totalItems()));
-			operationLabel.setText(OperationProgressText.operation(progress));
+			operationLabel.setText(OperationProgressText.operation(progress, listsDownloads));
 			driveJobLabel.setText(progress.totalDrives() > 1 ? OperationProgressText.multiDrive(progress) : "");
 			timeLabel.setText(OperationProgressText.time(progress, Instant.now()));
 			if (listsDownloads) {

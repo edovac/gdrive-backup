@@ -403,6 +403,27 @@ class BackupProgressTrackerTest {
 	}
 
 	@Test
+	void theByteTotalAddsFinishedDownloadsToWhatTheRunningOnesHaveReceived() {
+		tracker.jobStarted(List.of(PERSONAL, SHARED));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A", "My Drive/A", 1000L);
+		tracker.downloadStarted("id-2", "B", "My Drive/B", null);
+		tracker.downloadStarted("id-3", "C", "My Drive/C", null);
+		tracker.downloadProgressed("id-1", 1000);
+		tracker.downloadFinished("id-1");
+		tracker.downloadProgressed("id-2", 300);
+		tracker.downloadProgressed("id-3", 50);
+		tracker.downloadAborted("id-3");
+
+		assertEquals(1300, lastSnapshot().downloadedBytes(), "an aborted download no longer counts");
+
+		tracker.driveCompleted();
+		tracker.driveStarted(SHARED);
+
+		assertEquals(0, lastSnapshot().downloadedBytes());
+	}
+
+	@Test
 	void aSnapshotBuiltWithoutAnExplicitCountDerivesItFromTheFinishedDownloads() {
 		Instant now = Instant.parse("2026-01-01T00:00:00Z");
 		List<FileDownload> downloads = List.of(

@@ -20,17 +20,25 @@ class OperationProgressTextTest {
 	@Test
 	void describesEachPhase() {
 		assertEquals("Enumerating My Drive...", OperationProgressText.operation(
-				progress(BackupPhase.ENUMERATING, null, 0, null, 1)));
+				progress(BackupPhase.ENUMERATING, null, 0, null, 1), true));
 		assertEquals("Finishing...", OperationProgressText.operation(
-				progress(BackupPhase.FINISHED, null, 0, null, 1)));
+				progress(BackupPhase.FINISHED, null, 0, null, 1), true));
 	}
 
 	@Test
-	void countsKnownAndUnknownTotals() {
+	void withoutDownloadListsTheLineNamesTheCurrentItem() {
 		assertEquals("Backing up 3 of 10 — a.txt", OperationProgressText.operation(
-				progress(BackupPhase.BACKING_UP, "a.txt", 3, 10, 1)));
+				progress(BackupPhase.BACKING_UP, "a.txt", 3, 10, 1), false));
 		assertEquals("4 changes processed", OperationProgressText.operation(
-				progress(BackupPhase.BACKING_UP, null, 4, null, 1)));
+				progress(BackupPhase.BACKING_UP, null, 4, null, 1), false));
+	}
+
+	@Test
+	void withDownloadListsTheLineGivesTheBytesDownloadedInsteadOfTheItem() {
+		assertEquals("Backing up 3 of 10 — 12.4 MB downloaded", OperationProgressText.operation(
+				withBytes(progress(BackupPhase.BACKING_UP, "a.txt", 3, 10, 1), 13_002_342), true));
+		assertEquals("4 changes processed — 0 B downloaded", OperationProgressText.operation(
+				progress(BackupPhase.BACKING_UP, "a.txt", 4, null, 1), true));
 	}
 
 	@Test
@@ -210,6 +218,12 @@ class OperationProgressTextTest {
 	private static BackupProgress withDownloads(FileDownload... downloads) {
 		return new BackupProgress("My Drive", false, 1, 1, 0, BackupPhase.BACKING_UP, null, 0, null, START, START, null,
 				null, List.of(downloads));
+	}
+
+	private static BackupProgress withBytes(BackupProgress p, long downloadedBytes) {
+		return new BackupProgress(p.driveName(), p.sharedDrive(), p.driveNumber(), p.totalDrives(), p.completedDrives(),
+				p.phase(), p.currentItem(), p.processedItems(), p.totalItems(), p.jobStartedAt(), p.driveStartedAt(),
+				p.driveRemaining(), p.jobRemaining(), p.downloads(), p.finishedDownloads(), downloadedBytes);
 	}
 
 	private static BackupProgress progress(BackupPhase phase, String item, int processed, Integer total,

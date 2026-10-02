@@ -16,8 +16,14 @@ final class OperationProgressText {
 	private OperationProgressText() {
 	}
 
-	static String operation(BackupProgress progress) {
-		String item = progress.currentItem() == null ? "" : " — " + progress.currentItem();
+	/**
+	 * The step under way. With download lists on screen the files are already named there, so the line gives the bytes
+	 * downloaded so far instead of the current item; without them (a merge) it names the item.
+	 */
+	static String operation(BackupProgress progress, boolean listsDownloads) {
+		String item = listsDownloads
+				? " — " + bytes(progress.downloadedBytes()) + " downloaded"
+				: progress.currentItem() == null ? "" : " — " + progress.currentItem();
 		if (progress.phase() == BackupPhase.ENUMERATING) {
 			return "Enumerating " + progress.driveName() + "...";
 		}
