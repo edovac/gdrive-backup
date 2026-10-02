@@ -68,7 +68,6 @@ the kind of work in §3 and §4.
 
 | Task | Model | Rationale |
 |---|---|---|
-| **Expose remaining backend capabilities in the UI** | 🟢 | The pattern is established: a panel in `adapter.in.javafx` with a `*Text` class, an async use-case call, then an FX-thread update. |
 | **`ALL_REVISIONS` revision mode** (not scheduled) | 🔵 | Needs Google API validation first: what `revisions` retrieval supports for binary files versus Google-native exports. Write the research down before implementing. |
 
 ---

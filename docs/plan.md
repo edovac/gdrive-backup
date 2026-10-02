@@ -241,10 +241,11 @@ Last reviewed: 2026-10-02
   the Shared Drive picker and both browse listings follow page tokens, and ids put
   into a `q` string are escaped (`GoogleDriveAdapter`).
 
+- [x] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If one selected drive fails, the run records the failure and continues with the remaining drives, and the completion summary names each failed drive with its reason and any drive never started after a cancel (each drive commits independently, so a failed one replays from its last cursor).
+
 ### In progress
 
-- [-] Continue exposing the remaining backend capabilities through the UI.
-- [x] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If one selected drive fails, the run records the failure and continues with the remaining drives, and the completion summary names each failed drive with its reason and any drive never started after a cancel (each drive commits independently, so a failed one replays from its last cursor).
+None currently.
 
 ### Not started
 
