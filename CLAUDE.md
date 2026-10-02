@@ -42,7 +42,7 @@ Integration tests hit real Google accounts. They are skipped unless the matching
 
 ### Releasing
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`. It runs the tests, builds the Windows app-image, which bundles the `.exe` and the JRE, and publishes it as a zip on a GitHub Release. The tag must be numeric (`vMAJOR[.MINOR[.PATCH]]`) because jpackage rejects other versions.
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It runs the tests, builds the Windows app-image, which bundles the `.exe` and the JRE, and publishes it as a zip on a GitHub Release, with `LICENSE` and `THIRD-PARTY-NOTICES.md` copied next to the `.exe` (regenerate the notices' library table when dependencies change; the command is in that file). The tag must be numeric (`vMAJOR[.MINOR[.PATCH]]`) because jpackage rejects other versions.
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0

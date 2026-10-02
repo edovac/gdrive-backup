@@ -15,7 +15,9 @@ an extracted full archive); scheduled backups are out of scope.
 
 Licensed under the [Apache License, Version 2.0](LICENSE). Unless required by
 applicable law or agreed to in writing, the software is distributed on an
-"AS IS" basis, without warranties or conditions of any kind.
+"AS IS" basis, without warranties or conditions of any kind. The Windows build
+bundles third-party software under its own licenses; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which ships in the release zip.
 
 ## Documentation
 

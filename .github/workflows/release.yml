@@ -60,6 +60,10 @@ jobs:
       - name: Build self-contained app-image
         run: ./mvnw.cmd -B -P windows-package -DskipTests "-Dapp.version=$env:VERSION" package
 
+      # The app-image bundles third-party software whose licenses require their notices to travel with it.
+      - name: Add license and notices to the app-image
+        run: Copy-Item LICENSE, THIRD-PARTY-NOTICES.md -Destination "target/app-image/Google Drive Backup"
+
       - name: Zip app-image
         run: Compress-Archive -Path "target/app-image/Google Drive Backup" -DestinationPath "gdrive-backup-$env:VERSION-windows-x64.zip"
 
