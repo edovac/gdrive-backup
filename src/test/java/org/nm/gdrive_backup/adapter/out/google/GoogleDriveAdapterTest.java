@@ -6,9 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
+import com.google.api.services.drive.model.Change;
 import com.google.api.services.drive.model.File;
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveItem;
+import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 
 class GoogleDriveAdapterTest {
@@ -84,6 +88,97 @@ class GoogleDriveAdapterTest {
 				"user@example.com");
 
 		org.junit.jupiter.api.Assertions.assertNull(stored.headRevisionId());
+	}
+
+	@Test
+	void aPersonalDriveListsOnlyOwnedFilesUnlessSharedOnesAreIncluded() {
+		DriveScope personal = DriveScope.personal("user@example.com");
+
+		assertEquals("trashed = false and 'me' in owners",
+				GoogleDriveAdapter.listQuery(personal, PersonalDriveContent.OWNED_ONLY));
+		assertEquals("trashed = false", GoogleDriveAdapter.listQuery(personal, PersonalDriveContent.ALL_ACCESSIBLE));
+	}
+
+	@Test
+	void aSharedDriveIsListedWholeWhateverThePersonalDriveContent() {
+		DriveScope shared = DriveScope.sharedDrive("drive-1");
+
+		assertEquals("trashed = false", GoogleDriveAdapter.listQuery(shared, PersonalDriveContent.OWNED_ONLY));
+		assertFalse(GoogleDriveAdapter.ownedOnly(shared, PersonalDriveContent.OWNED_ONLY));
+	}
+
+	@Test
+	void aChangeToAFileTheUserDoesNotOwnIsOutOfScopeForOwnedOnly() {
+		DriveScope personal = DriveScope.personal("user@example.com");
+		File shared = file("file-1", "application/pdf");
+		shared.setOwnedByMe(false);
+
+		DriveChange change = GoogleDriveAdapter.mapChange(change("file-1", shared), personal,
+				PersonalDriveContent.OWNED_ONLY);
+
+		assertEquals(DriveChange.outOfScope("file-1"), change);
+	}
+
+	@Test
+	void aChangeToASharedDriveItemIsOutOfScopeForOwnedOnly() {
+		File inSharedDrive = file("file-1", "application/pdf");
+		inSharedDrive.setDriveId("drive-1");
+
+		DriveChange change = GoogleDriveAdapter.mapChange(change("file-1", inSharedDrive),
+				DriveScope.personal("user@example.com"), PersonalDriveContent.OWNED_ONLY);
+
+		assertTrue(change.outOfScope());
+	}
+
+	@Test
+	void aChangeToAnOwnedFileIsKept() {
+		File owned = file("file-1", "application/pdf");
+		owned.setOwnedByMe(true);
+
+		DriveChange change = GoogleDriveAdapter.mapChange(change("file-1", owned),
+				DriveScope.personal("user@example.com"), PersonalDriveContent.OWNED_ONLY);
+
+		assertFalse(change.outOfScope());
+		assertEquals("file-1", change.file().fileId());
+	}
+
+	@Test
+	void aChangeToASharedFileIsKeptWhenSharedFilesAreIncluded() {
+		File shared = file("file-1", "application/pdf");
+		shared.setOwnedByMe(false);
+
+		DriveChange change = GoogleDriveAdapter.mapChange(change("file-1", shared),
+				DriveScope.personal("user@example.com"), PersonalDriveContent.ALL_ACCESSIBLE);
+
+		assertFalse(change.outOfScope());
+		assertEquals("file-1", change.file().fileId());
+	}
+
+	@Test
+	void aRemovalStaysARemovalEvenForOwnedOnly() {
+		Change removal = new Change().setFileId("file-1").setRemoved(true);
+
+		DriveChange change = GoogleDriveAdapter.mapChange(removal, DriveScope.personal("user@example.com"),
+				PersonalDriveContent.OWNED_ONLY);
+
+		assertEquals(new DriveChange("file-1", true, null), change);
+	}
+
+	@Test
+	void aSharedDrivesChangesAreNeverOutOfScope() {
+		File item = file("file-1", "application/pdf");
+		item.setDriveId("drive-1");
+		item.setOwnedByMe(false);
+
+		DriveChange change = GoogleDriveAdapter.mapChange(change("file-1", item), DriveScope.sharedDrive("drive-1"),
+				PersonalDriveContent.OWNED_ONLY);
+
+		assertFalse(change.outOfScope());
+		assertEquals("drive-1", change.file().ownerScope());
+	}
+
+	private static Change change(String fileId, File file) {
+		return new Change().setFileId(fileId).setRemoved(false).setFile(file);
 	}
 
 	private static File file(String id, String mimeType) {

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 
 class SettingsTextTest {
 
@@ -27,6 +28,23 @@ class SettingsTextTest {
 		assertEquals("Unable to change the number of parallel downloads: Backup locations can't change while a backup "
 				+ "is running", SettingsText.downloadConcurrencySaveFailed(
 						"Backup locations can't change while a backup is running"));
+	}
+
+	@Test
+	void thePersonalDriveHintSaysAFullBackupAppliesItToTheWholeDrive() {
+		String hint = SettingsText.includeSharedFilesHint();
+
+		assertTrue(hint.contains("only the files the user owns"));
+		assertTrue(hint.contains("Full backup"));
+		assertTrue(hint.contains("restarts"));
+	}
+
+	@Test
+	void thePersonalDriveSavedMessageNamesTheChoice() {
+		assertEquals("Personal drive backups include files shared with the user from the next backup.",
+				SettingsText.personalDriveContentSaved(PersonalDriveContent.ALL_ACCESSIBLE));
+		assertEquals("Personal drive backups take only the user's own files from the next backup.",
+				SettingsText.personalDriveContentSaved(PersonalDriveContent.OWNED_ONLY));
 	}
 
 	@Test

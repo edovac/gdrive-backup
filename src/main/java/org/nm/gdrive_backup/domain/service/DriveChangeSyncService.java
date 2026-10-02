@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
@@ -26,6 +27,7 @@ import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.RevisionMode;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -55,11 +57,13 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
 	private final IntSupplier downloadConcurrency;
+	private final Supplier<PersonalDriveContent> personalDriveContent;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation, IntSupplier downloadConcurrency) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation, IntSupplier downloadConcurrency,
+			Supplier<PersonalDriveContent> personalDriveContent) {
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
@@ -70,6 +74,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
 		this.downloadConcurrency = downloadConcurrency;
+		this.personalDriveContent = personalDriveContent;
 	}
 
 	@Override
@@ -77,6 +82,8 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		String fromPageToken = syncStatePort.findByScopeKey(scope.key())
 				.map(SyncState::pageToken)
 				.orElseGet(() -> changePort.getStartPageToken(access, scope));
+		// Read per run, like the download concurrency, so a change in Settings never applies mid-run.
+		PersonalDriveContent content = personalDriveContent.get();
 		PendingChanges pending = new PendingChanges();
 		String pageToken = fromPageToken;
 		int changeCount = 0;
@@ -85,7 +92,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			if (cancellation.isImmediateStopRequested()) {
 				return new SyncResult(scope, changeCount, null, null, true);
 			}
-			DriveChangePage page = changePort.listChanges(access, scope, pageToken);
+			DriveChangePage page = changePort.listChanges(access, scope, pageToken, content);
 			changeCount += page.changes().size();
 			page.changes().forEach(change -> {
 				pending.apply(change);
@@ -197,10 +204,16 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		}
 
 		void apply(DriveChange change) {
+			if (change.outOfScope()) {
+				// A file this scope already holds has left it (its ownership moved away, say), so for this backup it
+				// is gone; one it never held is not its business.
+				if (files.containsKey(change.fileId()) || fileMetadataPort.findByFileId(change.fileId()).isPresent()) {
+					remove(change.fileId());
+				}
+				return;
+			}
 			if (change.removed()) {
-				events.add(event(change.fileId(), "delete", null, null));
-				contentFileIds.remove(change.fileId());
-				removedFileIds.add(change.fileId());
+				remove(change.fileId());
 				return;
 			}
 			StoredFile current = change.file();
@@ -218,6 +231,12 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			if (shouldBackUpContent(previous, current)) {
 				contentFileIds.add(current.fileId());
 			}
+		}
+
+		private void remove(String fileId) {
+			events.add(event(fileId, "delete", null, null));
+			contentFileIds.remove(fileId);
+			removedFileIds.add(fileId);
 		}
 
 		private boolean shouldBackUpContent(Optional<StoredFile> previous, StoredFile current) {

@@ -25,13 +25,16 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
+import org.nm.gdrive_backup.domain.model.ArchiveManifest.ManifestFile;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveChange;
@@ -69,11 +72,13 @@ class DriveChangeSyncServiceTest {
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
 	private final DriveChangeSyncService service = new DriveChangeSyncService(changePort, statePort, metadataPort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation, () -> 1);
+			progressTracker, cancellation, () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY);
 
 	private final DriveChangeSyncService parallelService = new DriveChangeSyncService(changePort, statePort,
 			metadataPort, new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort),
-			commits, progressTracker, cancellation, () -> 4);
+			commits, progressTracker, cancellation, () -> 4,
+				() -> PersonalDriveContent.OWNED_ONLY);
 
 	/** Stubs a feed that adds {@code count} new PDFs (file-0 ...) in one page. */
 	private void stubNewFiles(int count) {
@@ -83,7 +88,7 @@ class DriveChangeSyncServiceTest {
 			changes.add(new DriveChange("file-" + i, false, new StoredFile("file-" + i, "user@example.com",
 					"F" + i + ".pdf", "", null, "application/pdf", false, "revision-" + i, null)));
 		}
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(changes, null, "new-token"));
 	}
 
@@ -97,9 +102,9 @@ class DriveChangeSyncServiceTest {
 	@Test
 	void drainsPagesAndCommitsOnceWithTheNewTokenAndNoPerPageCheckpoint() {
 		baseline("old-token");
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null)), "next-token", null));
-		when(changePort.listChanges(ACCESS, SCOPE, "next-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "next-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-2", true, null)), null, "new-token"));
 
 		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
@@ -118,7 +123,7 @@ class DriveChangeSyncServiceTest {
 	@Test
 	void chainsTheDeltaOntoTheLatestArchiveAndRecordsTheTokenRange() {
 		baseline("old-token");
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null)), null, "new-token"));
 
 		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
@@ -139,7 +144,7 @@ class DriveChangeSyncServiceTest {
 	void establishesAStartTokenForAnUninitializedScope() {
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.empty());
 		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn("start-token");
-		when(changePort.listChanges(ACCESS, SCOPE, "start-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "start-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(), null, "new-token"));
 
 		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
@@ -150,7 +155,7 @@ class DriveChangeSyncServiceTest {
 	@Test
 	void anEmptyRunAdvancesOnlyTheCursorAndOpensNoArchive() {
 		baseline("old-token");
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(), null, "new-token"));
 
 		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
@@ -171,7 +176,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile current = new StoredFile("file-1", "user@example.com", "New", "parent-b", null, "application/pdf",
 				true, "revision-1", null);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 
 		service.synchronize(ACCESS, SCOPE, null);
@@ -195,7 +200,7 @@ class DriveChangeSyncServiceTest {
 				false, "revision-2", null);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream("new-bytes".getBytes()));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 
 		service.synchronize(ACCESS, SCOPE, null);
@@ -215,10 +220,10 @@ class DriveChangeSyncServiceTest {
 				"revision-1", 5L);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(List.of(new DriveChange(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(List.of(new DriveChange(
 				"file-1", false, new StoredFile("file-1", "user@example.com", "B", "", null, "application/pdf", false,
 						"revision-2", null))), "next-token", null));
-		when(changePort.listChanges(ACCESS, SCOPE, "next-token")).thenReturn(new DriveChangePage(List.of(new DriveChange(
+		when(changePort.listChanges(ACCESS, SCOPE, "next-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(List.of(new DriveChange(
 				"file-1", false, new StoredFile("file-1", "user@example.com", "C", "", null, "application/pdf", false,
 						"revision-2", null))), null, "new-token"));
 
@@ -240,7 +245,7 @@ class DriveChangeSyncServiceTest {
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.empty());
 		StoredFile added = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
 				"revision-1", null);
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("file-1", false, added), new DriveChange("file-1", true, null)), null,
 				"new-token"));
 
@@ -255,7 +260,7 @@ class DriveChangeSyncServiceTest {
 		baseline("old-token");
 		StoredFile current = new StoredFile("file-1", "user@example.com", "Report", "", null, "application/pdf", false,
 				null, null);
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("file-1", false, current), new DriveChange("file-2", true, null)), null,
 				"new-token"));
 
@@ -269,7 +274,7 @@ class DriveChangeSyncServiceTest {
 	@Test
 	void anImmediateStopBetweenPagesCommitsNothing() {
 		baseline("old-token");
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenAnswer(invocation -> {
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenAnswer(invocation -> {
 			cancellation.requestStop(BackupStopMode.IMMEDIATE);
 			return new DriveChangePage(List.of(new DriveChange("file-1", true, null)), "next-token", null);
 		});
@@ -279,7 +284,7 @@ class DriveChangeSyncServiceTest {
 		assertTrue(result.cancelled());
 		assertTrue(commits.commits.isEmpty());
 		assertTrue(sessions.openedPaths.isEmpty());
-		verify(changePort, times(1)).listChanges(any(), any(), any());
+		verify(changePort, times(1)).listChanges(any(), any(), any(), any());
 	}
 
 	@Test
@@ -294,7 +299,7 @@ class DriveChangeSyncServiceTest {
 		});
 		StoredFile second = new StoredFile("file-2", "user@example.com", "Other.pdf", "", null, "application/pdf",
 				false, "revision-1", null);
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("file-1", false, current), new DriveChange("file-2", false, second)), null,
 				"new-token"));
 
@@ -309,7 +314,7 @@ class DriveChangeSyncServiceTest {
 	@Test
 	void aStaleTokenFailsBeforeAnythingIsStagedOrCommitted() {
 		baseline("expired-token");
-		when(changePort.listChanges(ACCESS, SCOPE, "expired-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "expired-token", PersonalDriveContent.OWNED_ONLY))
 				.thenThrow(new StaleDrivePageTokenException("expired", null));
 
 		assertThrows(StaleDrivePageTokenException.class, () -> service.synchronize(ACCESS, SCOPE, null));
@@ -324,7 +329,7 @@ class DriveChangeSyncServiceTest {
 				false, "revision-2", null);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.empty());
 		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("connection reset"));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 
 		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
@@ -347,7 +352,7 @@ class DriveChangeSyncServiceTest {
 		when(contentPort.export(ACCESS, "doc-1",
 				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
 				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("doc-1", false, currentDoc), new DriveChange("form-1", false, form)), null,
 				"new-token"));
 
@@ -366,7 +371,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile current = new StoredFile("file-1", "user@example.com", "New.pdf", "folder-1", null, "application/pdf",
 				false, "revision-1", null);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 
 		service.synchronize(ACCESS, SCOPE, null);
@@ -392,7 +397,7 @@ class DriveChangeSyncServiceTest {
 		when(contentPort.export(ACCESS, "doc-1",
 				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
 				.thenReturn(new ByteArrayInputStream(new byte[] { 1, 2, 3 }));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("doc-1", false, current)), null, "new-token"));
 
 		service.synchronize(ACCESS, SCOPE, null);
@@ -411,7 +416,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile touched = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
 				null, null);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.empty());
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("file-1", false, touched), new DriveChange("file-1", true, null),
 						new DriveChange("file-2", true, null)), null, "new-token"));
 
@@ -429,7 +434,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile folder = new StoredFile("folder-9", "user@example.com", "Projects", "", null,
 				"application/vnd.google-apps.folder", false, null, null);
 		when(metadataPort.findByFileId("folder-9")).thenReturn(Optional.empty());
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("folder-9", false, folder)), null, "new-token"));
 
 		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
@@ -441,12 +446,66 @@ class DriveChangeSyncServiceTest {
 	}
 
 	@Test
+	void aKnownFileThatLeavesTheScopeIsRecordedAsRemoved() throws Exception {
+		baseline("old-token");
+		StoredFile known = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
+				"revision-1", 5L);
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(known));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
+				.thenReturn(new DriveChangePage(List.of(DriveChange.outOfScope("file-1")), null, "new-token"));
+
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(100L, result.archive().id());
+		assertEquals(List.of(ManifestFile.removed("file-1")), sessions.publishedManifest.files());
+		assertEquals("delete", sessions.publishedManifest.events().getFirst().eventType());
+		verify(contentPort, never()).download(any(), any());
+	}
+
+	@Test
+	void anUnknownFileOutsideTheScopeIsIgnored() {
+		baseline("old-token");
+		when(metadataPort.findByFileId("shared-1")).thenReturn(Optional.empty());
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
+				.thenReturn(new DriveChangePage(List.of(DriveChange.outOfScope("shared-1")), null, "new-token"));
+
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		assertNull(result.archive());
+		assertTrue(sessions.openedPaths.isEmpty());
+		PendingCommit commit = commits.commits.getFirst();
+		assertTrue(commit.files().isEmpty());
+		assertTrue(commit.events().isEmpty());
+		assertEquals(new SyncState("user@example.com", "new-token"), commit.newSyncState());
+	}
+
+	@Test
+	void readsThePersonalDriveContentWhenTheRunStartsAndPassesItToTheFeed() {
+		baseline("old-token");
+		AtomicReference<PersonalDriveContent> content = new AtomicReference<>(PersonalDriveContent.ALL_ACCESSIBLE);
+		DriveChangeSyncService adjustable = new DriveChangeSyncService(changePort, statePort, metadataPort,
+				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+				progressTracker, cancellation, () -> 1, content::get);
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.ALL_ACCESSIBLE))
+				.thenAnswer(invocation -> {
+					content.set(PersonalDriveContent.OWNED_ONLY);
+					return new DriveChangePage(List.of(), "next-token", null);
+				});
+		when(changePort.listChanges(ACCESS, SCOPE, "next-token", PersonalDriveContent.ALL_ACCESSIBLE))
+				.thenReturn(new DriveChangePage(List.of(), null, "new-token"));
+
+		SyncResult result = adjustable.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals("new-token", result.pageToken());
+	}
+
+	@Test
 	void anUnchangedKnownFileTouchedByTheFeedDoesNotProduceAnArchive() {
 		baseline("old-token");
 		StoredFile same = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
 				"revision-1", 5L);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(same));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, same)), null, "new-token"));
 
 		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
@@ -522,7 +581,8 @@ class DriveChangeSyncServiceTest {
 		AtomicInteger concurrency = new AtomicInteger(1);
 		DriveChangeSyncService adjustable = new DriveChangeSyncService(changePort, statePort, metadataPort,
 				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-				progressTracker, cancellation, concurrency::get);
+				progressTracker, cancellation, concurrency::get,
+				() -> PersonalDriveContent.OWNED_ONLY);
 		AtomicInteger inFlight = new AtomicInteger();
 		AtomicInteger mostInFlight = new AtomicInteger();
 		stubNewFiles(6);
@@ -557,7 +617,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile report = new StoredFile("file-1", "user@example.com", "Q3.pdf", "folder-2", null, "application/pdf",
 				false, "revision-1", null);
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, report)), null, "new-token"));
 
 		parallelService.synchronize(ACCESS, SCOPE, null);
@@ -575,7 +635,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile report = new StoredFile("file-1", "user@example.com", "A.pdf", "folder-9", null, "application/pdf",
 				false, "revision-1", null);
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("file-1", false, report), new DriveChange("folder-9", false, newFolder)), null,
 				"new-token"));
 
@@ -594,7 +654,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile report = new StoredFile("file-1", "drive-1", "A.pdf", "", "drive-1", "application/pdf", false,
 				"revision-1", null);
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
-		when(changePort.listChanges(ACCESS, shared, "old-token"))
+		when(changePort.listChanges(ACCESS, shared, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, report)), null, "new-token"));
 
 		parallelService.synchronize(ACCESS, shared, "Finance");
@@ -611,7 +671,7 @@ class DriveChangeSyncServiceTest {
 				false, "revision-2", null, 9L);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[9]));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
 
 		parallelService.synchronize(ACCESS, SCOPE, null);
@@ -641,7 +701,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile text = new StoredFile("txt-1", "user@example.com", "B.txt", "", null, "text/plain", false, "r1", null);
 		when(contentPort.download(ACCESS, "pdf-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
 		when(contentPort.download(ACCESS, "txt-1")).thenReturn(new ByteArrayInputStream(new byte[] { 2 }));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("pdf-1", false, pdf), new DriveChange("txt-1", false, text)), null, "new-token"));
 
 		parallelService.synchronize(ACCESS, SCOPE, null);
@@ -699,7 +759,7 @@ class DriveChangeSyncServiceTest {
 				"revision-1", null);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(trashed));
 		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream("bytes".getBytes()));
-		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, untrashed)), null, "new-token"));
 
 		service.synchronize(ACCESS, SCOPE, null);

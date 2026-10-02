@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
@@ -19,6 +20,7 @@ import org.nm.gdrive_backup.domain.model.FetchedFile;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.RevisionMode;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
@@ -44,11 +46,13 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
 	private final IntSupplier downloadConcurrency;
+	private final Supplier<PersonalDriveContent> personalDriveContent;
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileContentStreamingService contentStreamingService, ArchiveSessionPort archiveSessionPort,
 			ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort, BackupProgressTracker progressTracker,
-			BackupCancellation cancellation, IntSupplier downloadConcurrency) {
+			BackupCancellation cancellation, IntSupplier downloadConcurrency,
+			Supplier<PersonalDriveContent> personalDriveContent) {
 		this.fileListingPort = fileListingPort;
 		this.changePort = changePort;
 		this.contentStreamingService = contentStreamingService;
@@ -58,6 +62,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
 		this.downloadConcurrency = downloadConcurrency;
+		this.personalDriveContent = personalDriveContent;
 	}
 
 	@Override
@@ -66,7 +71,8 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		// Fetched before listing: a full run can take hours, and changes made meanwhile must be replayed
 		// by the next incremental run rather than lost between the listing and the baseline.
 		String pageToken = changePort.getStartPageToken(access, scope);
-		List<StoredFile> files = fileListingPort.listAllFiles(access, scope);
+		// Read per run, like the download concurrency, so a change in Settings never applies mid-run.
+		List<StoredFile> files = fileListingPort.listAllFiles(access, scope, personalDriveContent.get());
 		progressTracker.enumerated(files.size());
 
 		FlatTreePathResolver resolver = new FlatTreePathResolver(namesWithExportExtensions(files));

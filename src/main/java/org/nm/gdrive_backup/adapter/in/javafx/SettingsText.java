@@ -1,5 +1,7 @@
 package org.nm.gdrive_backup.adapter.in.javafx;
 
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
+
 /** Wording for the Settings view, kept free of JavaFX so it can be unit tested. */
 final class SettingsText {
 
@@ -49,6 +51,26 @@ final class SettingsText {
 
 	static String downloadConcurrencySaveFailed(String reason) {
 		return "Unable to change the number of parallel downloads: " + reason;
+	}
+
+	static String includeSharedFilesLabel() {
+		return "Include files shared with the user";
+	}
+
+	static String includeSharedFilesHint() {
+		return "By default a personal drive backup takes only the files the user owns; files others shared with them "
+				+ "are backed up with their owner. Applies to files that change from the next backup and resets when "
+				+ "the app restarts; run a Full backup to apply it to the whole drive.";
+	}
+
+	static String personalDriveContentSaved(PersonalDriveContent value) {
+		return value == PersonalDriveContent.ALL_ACCESSIBLE
+				? "Personal drive backups include files shared with the user from the next backup."
+				: "Personal drive backups take only the user's own files from the next backup.";
+	}
+
+	static String personalDriveContentSaveFailed(String reason) {
+		return "Unable to change which files personal drive backups include: " + reason;
 	}
 
 	/** The root cause's message, which is what the admin can act on. */

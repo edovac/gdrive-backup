@@ -11,7 +11,7 @@ document.
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-10-01
+Last reviewed: 2026-10-02
 
 ### Completed
 
@@ -294,6 +294,13 @@ of truth for expected behavior.
   Google-native exports).
   See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
   algorithm**, step 7.
+
+- [x] Personal drive content: a personal drive backup takes only the files the
+  user owns by default, instead of everything Drive lists for them (files
+  shared with them and Shared Drive items too). The admin can include shared
+  files for the session in the Settings dialog (`PersonalDriveContentUseCase`,
+  starting value `gdrive-backup.backup.personal-drive-content`). See **Sync
+  algorithm**, step 8.
 
 **P3 — delivery and UX refinements**
 

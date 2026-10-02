@@ -21,6 +21,7 @@ import java.util.zip.ZipFile;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.ArchiveState;
@@ -78,10 +79,12 @@ class ArchiveDeletionEndToEndTest {
 		LocalArchiveStorageAdapter storage = new LocalArchiveStorageAdapter(root);
 		BackupActivity activity = new BackupActivity();
 		full = new InitialDriveSyncService(drive, drive, streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1);
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY);
 		incremental = new DriveChangeSyncService(drive, new SqliteSyncStateAdapter(database),
 				new SqliteFileMetadataAdapter(database), streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1);
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY);
 		merge = new ArchiveMergeService(archives, reader, sessions, planner, commit, activity,
 				BackupProgressTracker.NO_OP, new BackupCancellation());
 		deletion = new ArchiveDeletionService(archives, reader, storage, new SqliteFileCaptureAdapter(database),

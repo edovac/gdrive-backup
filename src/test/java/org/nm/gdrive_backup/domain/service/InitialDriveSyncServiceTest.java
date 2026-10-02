@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
@@ -64,10 +65,12 @@ class InitialDriveSyncServiceTest {
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
 	private final InitialDriveSyncService service = new InitialDriveSyncService(listingPort, changePort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation, () -> 1);
+			progressTracker, cancellation, () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY);
 	private final InitialDriveSyncService parallelService = new InitialDriveSyncService(listingPort, changePort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation, () -> 4);
+			progressTracker, cancellation, () -> 4,
+				() -> PersonalDriveContent.OWNED_ONLY);
 
 	@Test
 	void streamsEveryFileIntoADriveShapedArchiveAndCommitsAfterPublishing() throws Exception {
@@ -111,7 +114,7 @@ class InitialDriveSyncServiceTest {
 
 		InOrder order = inOrder(changePort, listingPort);
 		order.verify(changePort).getStartPageToken(ACCESS, SCOPE);
-		order.verify(listingPort).listAllFiles(ACCESS, SCOPE);
+		order.verify(listingPort).listAllFiles(ACCESS, SCOPE, PersonalDriveContent.OWNED_ONLY);
 	}
 
 	@Test
@@ -379,7 +382,7 @@ class InitialDriveSyncServiceTest {
 		StoredFile folder = file("folder-1", "Budgets", "drive-1", FOLDER, null);
 		StoredFile sheet = file("file-1", "2026.pdf", "folder-1", "application/pdf", "r1");
 		when(changePort.getStartPageToken(ACCESS, shared)).thenReturn("token");
-		when(listingPort.listAllFiles(ACCESS, shared)).thenReturn(List.of(folder, sheet));
+		when(listingPort.listAllFiles(ACCESS, shared, PersonalDriveContent.OWNED_ONLY)).thenReturn(List.of(folder, sheet));
 		stubDownload("file-1", "a");
 
 		service.synchronize(ACCESS, shared, "Finance");
@@ -432,7 +435,8 @@ class InitialDriveSyncServiceTest {
 		AtomicInteger concurrency = new AtomicInteger(1);
 		InitialDriveSyncService adjustable = new InitialDriveSyncService(listingPort, changePort,
 				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-				progressTracker, cancellation, concurrency::get);
+				progressTracker, cancellation, concurrency::get,
+				() -> PersonalDriveContent.OWNED_ONLY);
 		AtomicInteger inFlight = new AtomicInteger();
 		AtomicInteger mostInFlight = new AtomicInteger();
 		List<StoredFile> files = new ArrayList<>();
@@ -674,16 +678,29 @@ class InitialDriveSyncServiceTest {
 	void carriesTheDisplayNameIntoTheSharedDriveArchiveFolder() {
 		DriveScope shared = DriveScope.sharedDrive("drive-1");
 		when(changePort.getStartPageToken(ACCESS, shared)).thenReturn("token");
-		when(listingPort.listAllFiles(ACCESS, shared)).thenReturn(List.of());
+		when(listingPort.listAllFiles(ACCESS, shared, PersonalDriveContent.OWNED_ONLY)).thenReturn(List.of());
 
 		service.synchronize(ACCESS, shared, "Finance");
 
 		assertEquals("archives/Finance (drive-1)/archive-0001-full.zip", sessions.openedPaths.getFirst());
 	}
 
+	@Test
+	void listsThePersonalDriveContentChosenInSettings() {
+		InitialDriveSyncService allAccessible = new InitialDriveSyncService(listingPort, changePort,
+				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+				progressTracker, cancellation, () -> 1, () -> PersonalDriveContent.ALL_ACCESSIBLE);
+		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn("token");
+		when(listingPort.listAllFiles(ACCESS, SCOPE, PersonalDriveContent.ALL_ACCESSIBLE)).thenReturn(List.of());
+
+		allAccessible.synchronize(ACCESS, SCOPE, null);
+
+		verify(listingPort).listAllFiles(ACCESS, SCOPE, PersonalDriveContent.ALL_ACCESSIBLE);
+	}
+
 	private void stubDrive(String token, StoredFile... files) {
 		when(changePort.getStartPageToken(ACCESS, SCOPE)).thenReturn(token);
-		when(listingPort.listAllFiles(ACCESS, SCOPE)).thenReturn(List.of(files));
+		when(listingPort.listAllFiles(ACCESS, SCOPE, PersonalDriveContent.OWNED_ONLY)).thenReturn(List.of(files));
 	}
 
 	private void stubDownload(String fileId, String content) throws IOException {

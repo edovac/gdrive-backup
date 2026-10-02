@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.nm.gdrive_backup.domain.model.PersonalDriveContent;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveScope;
@@ -71,7 +72,7 @@ class FakeDrive implements DriveFileListingPort, DriveChangePort, DriveContentPo
 	}
 
 	@Override
-	public List<StoredFile> listAllFiles(ServiceAccountAccess access, DriveScope scope) {
+	public List<StoredFile> listAllFiles(ServiceAccountAccess access, DriveScope scope, PersonalDriveContent content) {
 		return nodes.values().stream().filter(node -> !node.trashed).map(Node::toStoredFile).toList();
 	}
 
@@ -81,7 +82,8 @@ class FakeDrive implements DriveFileListingPort, DriveChangePort, DriveContentPo
 	}
 
 	@Override
-	public DriveChangePage listChanges(ServiceAccountAccess access, DriveScope scope, String pageToken) {
+	public DriveChangePage listChanges(ServiceAccountAccess access, DriveScope scope, String pageToken,
+			PersonalDriveContent content) {
 		int from = Integer.parseInt(pageToken);
 		return new DriveChangePage(new ArrayList<>(log.subList(from, log.size())), null,
 				Integer.toString(log.size()));

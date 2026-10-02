@@ -629,6 +629,26 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
    backoff on HTTP 429, 5xx, a 403 whose reason is a rate limit, and connection
    resets or timeouts; any other 403 (for example an export that is too large)
    is never retried.
+8. **What a personal drive includes.** Drive's default `user` corpus lists every
+   file the impersonated user can open: their own files, files other people
+   shared with them, and (with `includeItemsFromAllDrives`) items in Shared
+   Drives. By default a personal drive backup takes **only the files the user
+   owns**, so each file is backed up once, under its owner, and Shared Drive
+   items only in their own Shared Drive backup. The full listing adds
+   `'me' in owners` to its query and leaves Shared Drive items out. The change
+   feed cannot be queried, so each change's `ownedByMe` and `driveId` are
+   checked: a change to a file the user does not own, or one in a Shared Drive,
+   is out of scope. An out-of-scope change to a file the backup already holds
+   (its ownership moved to someone else, say) is recorded as a removal
+   (`delete` event, removed manifest record); one it never held is ignored. The
+   admin can choose to include files shared with the user under **Personal
+   drives** in the **Settings** dialog (`PersonalDriveContentUseCase`; starting
+   value `gdrive-backup.backup.personal-drive-content`, `OWNED_ONLY` or
+   `ALL_ACCESSIBLE`, default `OWNED_ONLY`). Like the download concurrency, it is
+   not saved, applies from the next run and is refused while a backup is
+   running. Shared Drive backups are unaffected. A file the user owns inside a
+   folder someone else owns has no listed parent and lands at the root of the
+   archive.
 
 ---
 
@@ -1008,6 +1028,12 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   impersonated user losing access — can't fully distinguish without extra
   Admin SDK checks.
 - Stale `page_token` after long downtime forces a full resync for that scope.
+- **Personal drives back up owned files only by default.** A file is backed up
+  with its owner, so a file owned by an account outside the Workspace domain
+  (or by a user who is never backed up) is in nobody's backup unless the admin
+  includes shared files. Switching that setting mid-chain affects only files
+  that change afterwards: an incremental run never revisits unchanged files, so
+  run a Full backup to apply the new choice to the whole drive.
 - `files.export` 10MB cap needs a defined fallback before it's hit in
   production.
 - Domain-wide delegation setup is a manual, one-time Admin Console step and
