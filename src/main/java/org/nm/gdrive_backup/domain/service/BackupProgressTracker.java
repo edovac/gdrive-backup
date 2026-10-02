@@ -3,12 +3,17 @@ package org.nm.gdrive_backup.domain.service;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.BackupPhase;
 import org.nm.gdrive_backup.domain.model.BackupProgress;
+import org.nm.gdrive_backup.domain.model.FileDownload;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 
 /**
@@ -21,9 +26,15 @@ public class BackupProgressTracker {
 	/** A tracker with no port to report to; used where no progress observer is wired. */
 	public static final BackupProgressTracker NO_OP = new BackupProgressTracker(null, Clock.systemUTC());
 
+	/** How many finished downloads a snapshot carries; the UI shows the ones finished only moments ago. */
+	static final int MAX_FINISHED_DOWNLOADS = 8;
+
 	private final BackupProgressPort port;
 	private final Clock clock;
 	private final List<Duration> completedDriveDurations = new ArrayList<>();
+	/** Downloads in flight, in start order, and the last few that finished, newest first. */
+	private final Map<String, FileDownload> downloading = new LinkedHashMap<>();
+	private final Deque<FileDownload> finished = new ArrayDeque<>();
 
 	private int totalDrives;
 	private int driveIndex = -1;
@@ -61,6 +72,8 @@ public class BackupProgressTracker {
 		processedItems = 0;
 		totalItems = null;
 		currentItem = null;
+		downloading.clear();
+		finished.clear();
 		report();
 	}
 
@@ -80,6 +93,32 @@ public class BackupProgressTracker {
 		currentItem = itemName;
 		phase = BackupPhase.BACKING_UP;
 		report();
+	}
+
+	/** A file's download began; it stays in the snapshot's download list until it finishes or is aborted. */
+	public synchronized void downloadStarted(String fileId, String name, String path) {
+		downloading.put(fileId, new FileDownload(fileId, name, path, clock.instant(), null));
+		report();
+	}
+
+	/** The download completed; it moves to the short list of recently finished files. */
+	public synchronized void downloadFinished(String fileId) {
+		FileDownload started = downloading.remove(fileId);
+		if (started == null) {
+			return;
+		}
+		finished.addFirst(new FileDownload(fileId, started.name(), started.path(), started.startedAt(), clock.instant()));
+		while (finished.size() > MAX_FINISHED_DOWNLOADS) {
+			finished.removeLast();
+		}
+		report();
+	}
+
+	/** The download failed or was cancelled, so it leaves the list without being shown as done. */
+	public synchronized void downloadAborted(String fileId) {
+		if (downloading.remove(fileId) != null) {
+			report();
+		}
 	}
 
 	public synchronized void packaging() {
@@ -110,8 +149,11 @@ public class BackupProgressTracker {
 		Instant now = clock.instant();
 		Duration driveRemaining = driveRemaining(now);
 		Duration jobRemaining = jobRemaining(now, driveRemaining);
+		List<FileDownload> downloads = new ArrayList<>(downloading.values());
+		downloads.addAll(finished);
 		port.report(new BackupProgress(driveName, sharedDrive, driveIndex + 1, totalDrives, completedDrives, phase,
-				currentItem, processedItems, totalItems, jobStartedAt, driveStartedAt, driveRemaining, jobRemaining));
+				currentItem, processedItems, totalItems, jobStartedAt, driveStartedAt, driveRemaining, jobRemaining,
+				downloads));
 	}
 
 	private Duration driveRemaining(Instant now) {

@@ -3,6 +3,7 @@ package org.nm.gdrive_backup.domain.service;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -20,6 +21,7 @@ import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.FetchedFile;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.StreamedFile;
@@ -111,8 +113,26 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 			// Read per run, so a change in Settings applies to the next run and never mid-run.
 			ParallelContentFetcher contentFetcher = new ParallelContentFetcher(downloadConcurrency.getAsInt());
+			// Ancestors come from this run's changes first, then from the metadata of earlier runs.
+			Map<String, Optional<StoredFile>> earlierRuns = new HashMap<>();
+			DrivePathResolver drivePaths = new DrivePathResolver(
+					DrivePathResolver.rootLabel(scope, scopeDisplayNameOrNull),
+					id -> pending.files.containsKey(id) ? pending.files.get(id)
+							: earlierRuns.computeIfAbsent(id, fileMetadataPort::findByFileId).orElse(null));
 			boolean completed = contentFetcher.process(List.copyOf(pending.contentFileIds), fileId -> true,
-					fileId -> contentStreamingService.fetch(access, pending.files.get(fileId), session),
+					fileId -> {
+						StoredFile file = pending.files.get(fileId);
+						progressTracker.downloadStarted(fileId, file.name(), drivePaths.pathOf(file));
+						FetchedFile fetched;
+						try {
+							fetched = contentStreamingService.fetch(access, file, session);
+						} catch (RuntimeException | Error exception) {
+							progressTracker.downloadAborted(fileId);
+							throw exception;
+						}
+						progressTracker.downloadFinished(fileId);
+						return fetched;
+					},
 					cancellation::isImmediateStopRequested,
 					(fileId, fetched) -> streamedByFileId.put(fileId, contentStreamingService.write(
 							pending.files.get(fileId), fetched, session, "content/" + fileId)));

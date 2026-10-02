@@ -194,6 +194,21 @@ build order live in [plan.md](plan.md).
   a scope), scoped to the **drive currently being synced** — the fraction shown
   reflects that drive's own progress, not a blended figure across every
   selected drive. Progress resets as the job moves to the next drive.
+- **Files being downloaded**: under the progress bar, a list shows each file the
+  run is downloading right now (up to the parallel-download setting) plus the
+  ones that finished in the last few seconds, which are dimmed so a quick
+  download is still seen. Each row is **only the file's name**, cut in the
+  middle with an ellipsis when it is too long; hovering shows its **full Drive
+  path** as a tooltip, such as `My Drive/Reports/2026/Q3.pdf` or
+  `Finance/Budgets/2026.pdf` for a Shared Drive. Paths use the real Drive
+  names (no sanitizing), the first parent for a file with several, and the
+  drive's name as the root; a chain too deep or cyclic to follow is cut with a
+  leading `…`. A full run knows every folder from its listing; an incremental
+  run resolves ancestors from the run's own changes, then from the metadata of
+  earlier runs. Files with no content to download (folders, Forms) are not
+  listed, and a download that fails drops out of the list instead of showing as
+  done. The list is empty outside the download phase and for archive
+  operations.
 - **Multi-drive job status**: when a job covers more than one selected drive,
   the UI shows, distinct from the per-drive progress bar above:
   - **which drive is current**, identified by name (e.g. "Shared: Finance" or

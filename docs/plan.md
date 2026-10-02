@@ -283,7 +283,10 @@ of truth for expected behavior.
   and the commit protocol are unchanged. Already-compressed content is stored
   rather than deflated, and Drive content calls retry with backoff (`DriveRetry`).
   The admin can change the concurrency for the session in the Settings dialog
-  (`DownloadConcurrencyUseCase`); it is not persisted across launches.
+  (`DownloadConcurrencyUseCase`); it is not persisted across launches. The
+  progress panel lists the files being downloaded under the bar (file name,
+  full Drive path as a tooltip, finished ones dimmed for a few seconds) for
+  both full and incremental runs.
   See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
   algorithm**, step 7.
 

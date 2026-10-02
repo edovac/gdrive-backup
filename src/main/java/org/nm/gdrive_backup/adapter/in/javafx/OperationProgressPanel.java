@@ -1,6 +1,7 @@
 package org.nm.gdrive_backup.adapter.in.javafx;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.function.Consumer;
 
 import org.nm.gdrive_backup.domain.model.BackupProgress;
@@ -18,7 +19,9 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.VBox;
 
 /**
@@ -37,6 +40,8 @@ public final class OperationProgressPanel {
 	private final Label driveJobLabel = new Label();
 	private final Label timeLabel = new Label();
 	private final Button cancelButton = new Button("Cancel");
+	private final VBox downloadList = new VBox(2);
+	private List<OperationProgressText.DownloadRow> shownDownloads = List.of();
 	private final VBox root;
 	private Timeline timeline;
 	private Consumer<BackupProgress> progressListener = progress -> {
@@ -55,7 +60,11 @@ public final class OperationProgressPanel {
 		timeLabel.getStyleClass().add("scope");
 		cancelButton.getStyleClass().add("secondary-button");
 		cancelButton.setOnAction(event -> handleCancelClick());
-		root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel, cancelButton);
+		downloadList.setFillWidth(true);
+		downloadList.setVisible(false);
+		downloadList.setManaged(false);
+		// Below the Cancel button, so the rows appearing and disappearing never move the controls above them.
+		root = new VBox(6, progressBar, operationLabel, driveJobLabel, timeLabel, cancelButton, downloadList);
 		root.setAlignment(Pos.CENTER);
 		hide();
 	}
@@ -77,6 +86,7 @@ public final class OperationProgressPanel {
 		operationLabel.setText(startingText);
 		driveJobLabel.setText("");
 		timeLabel.setText("");
+		showDownloads(List.of());
 		cancelButton.setDisable(cancellationUseCase == null);
 		timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(250), event -> refresh()));
 		timeline.setCycleCount(Animation.INDEFINITE);
@@ -141,7 +151,38 @@ public final class OperationProgressPanel {
 			operationLabel.setText(OperationProgressText.operation(progress));
 			driveJobLabel.setText(progress.totalDrives() > 1 ? OperationProgressText.multiDrive(progress) : "");
 			timeLabel.setText(OperationProgressText.time(progress, Instant.now()));
+			showDownloads(OperationProgressText.downloadRows(progress, Instant.now()));
 			progressListener.accept(progress);
 		});
+	}
+
+	/** Rebuilds the rows only when they changed, since this runs several times a second. */
+	private void showDownloads(List<OperationProgressText.DownloadRow> rows) {
+		if (rows.equals(shownDownloads)) {
+			return;
+		}
+		shownDownloads = rows;
+		downloadList.getChildren().setAll(rows.stream().map(OperationProgressPanel::downloadLabel).toList());
+		downloadList.setVisible(!rows.isEmpty());
+		downloadList.setManaged(!rows.isEmpty());
+	}
+
+	private static Label downloadLabel(OperationProgressText.DownloadRow row) {
+		Label label = new Label(row.text());
+		label.getStyleClass().add("download-row");
+		if (row.finished()) {
+			label.getStyleClass().add("download-done");
+		}
+		// One line per file; a long name is cut in the middle so the extension stays visible.
+		label.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
+		label.setMinWidth(0);
+		label.setMaxWidth(Double.MAX_VALUE);
+		label.setAlignment(Pos.CENTER_LEFT);
+		Tooltip tooltip = new Tooltip(row.tooltip());
+		tooltip.setShowDelay(javafx.util.Duration.millis(300));
+		tooltip.setWrapText(true);
+		tooltip.setMaxWidth(560);
+		label.setTooltip(tooltip);
+		return label;
 	}
 }

@@ -25,6 +25,7 @@ import org.mockito.ArgumentCaptor;
 import org.nm.gdrive_backup.domain.model.AvailableDrive;
 import org.nm.gdrive_backup.domain.model.BackupPhase;
 import org.nm.gdrive_backup.domain.model.BackupProgress;
+import org.nm.gdrive_backup.domain.model.FileDownload;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 
 class BackupProgressTrackerTest {
@@ -186,6 +187,153 @@ class BackupProgressTrackerTest {
 		for (int i = 1; i < snapshots.size(); i++) {
 			assertTrue(snapshots.get(i).processedItems() >= snapshots.get(i - 1).processedItems());
 		}
+	}
+
+	@Test
+	void listsFilesInFlightInStartOrderWithTheirNameAndPath() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/Docs/A.pdf");
+		clock.advance(Duration.ofSeconds(1));
+		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf");
+
+		List<FileDownload> downloads = lastSnapshot().downloads();
+
+		assertEquals(List.of("id-1", "id-2"), downloads.stream().map(FileDownload::fileId).toList());
+		assertEquals("A.pdf", downloads.get(0).name());
+		assertEquals("My Drive/Docs/A.pdf", downloads.get(0).path());
+		assertTrue(downloads.stream().noneMatch(FileDownload::finished));
+	}
+
+	@Test
+	void aFinishedDownloadMovesAfterTheOnesStillRunningAndKeepsItsFinishTime() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
+		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf");
+		clock.advance(Duration.ofSeconds(5));
+
+		tracker.downloadFinished("id-1");
+
+		List<FileDownload> downloads = lastSnapshot().downloads();
+		assertEquals(List.of("id-2", "id-1"), downloads.stream().map(FileDownload::fileId).toList());
+		assertEquals(false, downloads.get(0).finished());
+		assertEquals(true, downloads.get(1).finished());
+		assertEquals(Instant.parse("2026-01-01T00:00:05Z"), downloads.get(1).finishedAt());
+	}
+
+	@Test
+	void recentlyFinishedDownloadsAreListedNewestFirstAndBounded() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		int count = BackupProgressTracker.MAX_FINISHED_DOWNLOADS + 4;
+		for (int i = 0; i < count; i++) {
+			tracker.downloadStarted("id-" + i, "F" + i, "My Drive/F" + i);
+			tracker.downloadFinished("id-" + i);
+		}
+
+		List<FileDownload> downloads = lastSnapshot().downloads();
+
+		assertEquals(BackupProgressTracker.MAX_FINISHED_DOWNLOADS, downloads.size());
+		assertEquals("id-" + (count - 1), downloads.get(0).fileId());
+		assertEquals("id-" + (count - BackupProgressTracker.MAX_FINISHED_DOWNLOADS),
+				downloads.get(downloads.size() - 1).fileId());
+	}
+
+	@Test
+	void anAbortedDownloadLeavesTheListWithoutBeingShownAsDone() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
+
+		tracker.downloadAborted("id-1");
+
+		assertTrue(lastSnapshot().downloads().isEmpty());
+	}
+
+	@Test
+	void finishingOrAbortingADownloadThatWasNeverStartedChangesNothing() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadFinished("unknown");
+		tracker.downloadAborted("unknown");
+
+		assertTrue(lastSnapshot().downloads().isEmpty());
+	}
+
+	@Test
+	void startingTheNextDriveClearsTheDownloadList() {
+		tracker.jobStarted(List.of(PERSONAL, SHARED));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
+		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf");
+		tracker.downloadFinished("id-2");
+		tracker.driveCompleted();
+
+		tracker.driveStarted(SHARED);
+
+		assertTrue(lastSnapshot().downloads().isEmpty());
+	}
+
+	@Test
+	void aSnapshotsDownloadListIsNotAffectedByLaterEvents() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
+		List<FileDownload> before = lastSnapshot().downloads();
+
+		tracker.downloadFinished("id-1");
+
+		assertEquals(1, before.size());
+		assertEquals(false, before.get(0).finished());
+	}
+
+	@Test
+	void trackersWithNoDownloadsReportAnEmptyList() {
+		tracker.jobStarted(List.of(PERSONAL));
+
+		assertTrue(lastSnapshot().downloads().isEmpty());
+	}
+
+	@Test
+	void keepsTheDownloadListConsistentWhenSeveralThreadsStartAndFinishAtOnce() throws Exception {
+		int threads = 8;
+		int perThread = 200;
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		ExecutorService executor = Executors.newFixedThreadPool(threads);
+		CountDownLatch start = new CountDownLatch(1);
+		try {
+			List<Future<?>> done = new ArrayList<>();
+			for (int thread = 0; thread < threads; thread++) {
+				int offset = thread * perThread;
+				done.add(executor.submit(() -> {
+					start.await();
+					for (int i = 0; i < perThread; i++) {
+						String id = "id-" + (offset + i);
+						tracker.downloadStarted(id, id, "My Drive/" + id);
+						tracker.downloadFinished(id);
+					}
+					return null;
+				}));
+			}
+			start.countDown();
+			for (Future<?> future : done) {
+				future.get(10, TimeUnit.SECONDS);
+			}
+		} finally {
+			executor.shutdownNow();
+		}
+
+		List<FileDownload> downloads = lastSnapshot().downloads();
+		assertEquals(BackupProgressTracker.MAX_FINISHED_DOWNLOADS, downloads.size());
+		assertTrue(downloads.stream().allMatch(FileDownload::finished), "nothing is left in flight");
+	}
+
+	private BackupProgress lastSnapshot() {
+		ArgumentCaptor<BackupProgress> captor = ArgumentCaptor.forClass(BackupProgress.class);
+		verify(port, atLeastOnce()).report(captor.capture());
+		return captor.getValue();
 	}
 
 	private static final class MutableClock extends Clock {

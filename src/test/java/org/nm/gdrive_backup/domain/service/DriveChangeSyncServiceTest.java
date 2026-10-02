@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -26,6 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
@@ -509,6 +511,75 @@ class DriveChangeSyncServiceTest {
 		adjustable.synchronize(ACCESS, SCOPE, null);
 		assertTrue(mostInFlight.get() > 1, "the new value applies to the next run");
 		assertTrue(mostInFlight.get() <= 4, "but never exceeds it, saw " + mostInFlight.get());
+	}
+
+	@Test
+	void listsEachDownloadWithItsPathBuiltFromFoldersKnownFromEarlierRuns() throws Exception {
+		baseline("old-token");
+		StoredFile docs = new StoredFile("folder-1", "user@example.com", "Docs", "root-id", null,
+				"application/vnd.google-apps.folder", false, null, 3L);
+		StoredFile reports = new StoredFile("folder-2", "user@example.com", "Reports", "folder-1", null,
+				"application/vnd.google-apps.folder", false, null, 4L);
+		when(metadataPort.findByFileId("folder-2")).thenReturn(Optional.of(reports));
+		when(metadataPort.findByFileId("folder-1")).thenReturn(Optional.of(docs));
+		StoredFile report = new StoredFile("file-1", "user@example.com", "Q3.pdf", "folder-2", null, "application/pdf",
+				false, "revision-1", null);
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, report)), null, "new-token"));
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).downloadStarted("file-1", "Q3.pdf", "My Drive/Docs/Reports/Q3.pdf");
+		order.verify(progressTracker).downloadFinished("file-1");
+	}
+
+	@Test
+	void foldersChangedInTheSameRunAreUsedForThePathEvenIfTheFeedListsThemAfterTheFile() throws Exception {
+		baseline("old-token");
+		StoredFile newFolder = new StoredFile("folder-9", "user@example.com", "New folder", "", null,
+				"application/vnd.google-apps.folder", false, null, null);
+		StoredFile report = new StoredFile("file-1", "user@example.com", "A.pdf", "folder-9", null, "application/pdf",
+				false, "revision-1", null);
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+				List.of(new DriveChange("file-1", false, report), new DriveChange("folder-9", false, newFolder)), null,
+				"new-token"));
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/New folder/A.pdf");
+	}
+
+	@Test
+	void aSharedDriveChangePathStartsWithTheDriveName() throws Exception {
+		DriveScope shared = DriveScope.sharedDrive("drive-1");
+		when(statePort.findByScopeKey("drive-1")).thenReturn(Optional.of(new SyncState("drive-1", "old-token")));
+		when(archivePort.findByScopeKey("drive-1")).thenReturn(List.of(
+				new Archive(7L, "drive-1", DriveScopeType.SHARED_DRIVE, 1, null, ArchiveMode.FULL,
+						RevisionMode.LATEST_ONLY, Instant.now(), "archives/x.zip", null, null, false)));
+		StoredFile report = new StoredFile("file-1", "drive-1", "A.pdf", "", "drive-1", "application/pdf", false,
+				"revision-1", null);
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		when(changePort.listChanges(ACCESS, shared, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, report)), null, "new-token"));
+
+		parallelService.synchronize(ACCESS, shared, "Finance");
+
+		verify(progressTracker).downloadStarted("file-1", "A.pdf", "Finance/A.pdf");
+	}
+
+	@Test
+	void anAbortedChangeDownloadLeavesTheListInsteadOfBeingShownAsDone() throws Exception {
+		stubNewFiles(1);
+		when(contentPort.download(ACCESS, "file-0")).thenThrow(new IOException("connection reset"));
+
+		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
+
+		verify(progressTracker).downloadStarted("file-0", "F0.pdf", "My Drive/F0.pdf");
+		verify(progressTracker).downloadAborted("file-0");
+		verify(progressTracker, never()).downloadFinished(any());
 	}
 
 	@Test

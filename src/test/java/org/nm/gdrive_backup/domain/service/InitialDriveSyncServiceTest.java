@@ -309,6 +309,94 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
+	void reportsEachDownloadWithItsNameAndItsFullDrivePath() throws Exception {
+		StoredFile docs = file("folder-1", "Docs", "root-id", FOLDER, null);
+		StoredFile reports = file("folder-2", "Reports", "folder-1", FOLDER, null);
+		StoredFile report = file("file-1", "Q3.pdf", "folder-2", "application/pdf", "r1");
+		StoredFile top = file("file-2", "Top.pdf", "", "application/pdf", "r1");
+		stubDrive("token", docs, reports, report, top);
+		stubDownload("file-1", "a");
+		stubDownload("file-2", "b");
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).downloadStarted("file-1", "Q3.pdf", "My Drive/Docs/Reports/Q3.pdf");
+		order.verify(progressTracker).downloadFinished("file-1");
+		order.verify(progressTracker).itemProcessed("Q3.pdf");
+		order.verify(progressTracker).downloadStarted("file-2", "Top.pdf", "My Drive/Top.pdf");
+		order.verify(progressTracker).downloadFinished("file-2");
+		verify(progressTracker, never()).downloadAborted(anyString());
+	}
+
+	@Test
+	void theDrivePathKeepsTheRealNameOfANativeFileWithoutTheExportExtension() throws Exception {
+		stubDrive("token", file("file-1", "Budget", "", "application/vnd.google-apps.spreadsheet", "v3"));
+		when(contentPort.export(ACCESS, "file-1",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		verify(progressTracker).downloadStarted("file-1", "Budget", "My Drive/Budget");
+		assertEquals(Set.of("Budget.xlsx"), sessions.entries.keySet());
+	}
+
+	@Test
+	void aSharedDrivesPathsStartWithItsName() throws Exception {
+		DriveScope shared = DriveScope.sharedDrive("drive-1");
+		StoredFile folder = file("folder-1", "Budgets", "drive-1", FOLDER, null);
+		StoredFile sheet = file("file-1", "2026.pdf", "folder-1", "application/pdf", "r1");
+		when(changePort.getStartPageToken(ACCESS, shared)).thenReturn("token");
+		when(listingPort.listAllFiles(ACCESS, shared)).thenReturn(List.of(folder, sheet));
+		stubDownload("file-1", "a");
+
+		service.synchronize(ACCESS, shared, "Finance");
+
+		verify(progressTracker).downloadStarted("file-1", "2026.pdf", "Finance/Budgets/2026.pdf");
+	}
+
+	@Test
+	void filesWithNoContentToDownloadAreNeverListedAsDownloads() throws Exception {
+		stubDrive("token", file("folder-1", "Docs", "", FOLDER, null),
+				file("file-2", "Survey", "", "application/vnd.google-apps.form", "v1"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		verify(progressTracker, never()).downloadStarted(anyString(), anyString(), anyString());
+	}
+
+	@Test
+	void aFailedDownloadLeavesTheListInsteadOfBeingShownAsDone() throws Exception {
+		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"));
+		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("connection reset"));
+
+		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
+
+		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/A.pdf");
+		verify(progressTracker).downloadAborted("file-1");
+		verify(progressTracker, never()).downloadFinished(anyString());
+	}
+
+	@Test
+	void parallelDownloadsAreEachListedOnceFromStartToFinish() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			stubDownload("file-" + i, "bytes");
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		for (StoredFile file : files) {
+			verify(progressTracker, times(1)).downloadStarted(file.fileId(), file.name(), "My Drive/" + file.name());
+			verify(progressTracker, times(1)).downloadFinished(file.fileId());
+		}
+		verify(progressTracker, never()).downloadAborted(anyString());
+	}
+
+	@Test
 	void readsTheDownloadConcurrencyAtTheStartOfEachRun() throws Exception {
 		AtomicInteger concurrency = new AtomicInteger(1);
 		InitialDriveSyncService adjustable = new InitialDriveSyncService(listingPort, changePort,

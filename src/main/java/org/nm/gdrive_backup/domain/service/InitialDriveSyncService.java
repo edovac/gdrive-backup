@@ -72,6 +72,8 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planFull(scope, scopeDisplayNameOrNull);
 		Map<String, StreamedFile> streamedByFileId = new HashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
+			DrivePathResolver drivePaths = new DrivePathResolver(
+					DrivePathResolver.rootLabel(scope, scopeDisplayNameOrNull), driveFilesById(files)::get);
 			int[] processed = {0};
 			// Read per run, so a change in Settings applies to the next run and never mid-run.
 			ParallelContentFetcher contentFetcher = new ParallelContentFetcher(downloadConcurrency.getAsInt());
@@ -81,7 +83,15 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 			// release them all at once.
 			boolean completed = contentFetcher.process(files, InitialDriveSyncService::isEligible,
 					file -> {
-						FetchedFile fetched = contentStreamingService.fetch(access, file, session);
+						progressTracker.downloadStarted(file.fileId(), file.name(), drivePaths.pathOf(file));
+						FetchedFile fetched;
+						try {
+							fetched = contentStreamingService.fetch(access, file, session);
+						} catch (RuntimeException | Error exception) {
+							progressTracker.downloadAborted(file.fileId());
+							throw exception;
+						}
+						progressTracker.downloadFinished(file.fileId());
 						progressTracker.itemProcessed(file.name());
 						return fetched;
 					},
@@ -114,6 +124,15 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 
 	private static boolean isEligible(StoredFile file) {
 		return !file.trashed() && FileContentStreamingService.hasBackableContent(file);
+	}
+
+	/** The listing by id with the names exactly as Drive has them, for the paths shown while downloading. */
+	private static Map<String, StoredFile> driveFilesById(List<StoredFile> files) {
+		Map<String, StoredFile> byId = new HashMap<>();
+		for (StoredFile file : files) {
+			byId.put(file.fileId(), file);
+		}
+		return byId;
 	}
 
 	/** Native files are exported with an extension, so that is the name their siblings must not collide with. */

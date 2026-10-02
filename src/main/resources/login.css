@@ -55,6 +55,16 @@
 	-fx-padding: 0 12px;
 }
 
+.download-row {
+	-fx-text-fill: #344054;
+	-fx-font-size: 12px;
+	-fx-padding: 0 12px;
+}
+
+.download-done {
+	-fx-opacity: 0.5;
+}
+
 .primary-button {
 	-fx-background-color: #1a73e8;
 	-fx-text-fill: white;
