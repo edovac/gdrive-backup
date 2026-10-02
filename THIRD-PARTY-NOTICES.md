@@ -98,5 +98,8 @@ The table comes from the dependency metadata of a build:
   -Dlicense.includedScopes=compile,runtime -Dlicense.outputDirectory=target/licenses
 ```
 
-Review it whenever a dependency is added or upgraded, and check that no new
-license is GPL without the Classpath Exception, or AGPL.
+Review it whenever a dependency is added or upgraded. `./mvnw verify` (and so
+CI) fails when a runtime dependency declares a license outside the allow-list in
+`pom.xml` (the `license-maven-plugin` execution `check-third-party-licenses`),
+or none at all. Add a license to that list only after checking it is compatible
+with Apache-2.0 for how the library is used.

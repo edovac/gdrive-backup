@@ -29,7 +29,7 @@ Requirements and the implementation plan are kept in separate documents:
 ./mvnw -Dtest=DriveBackupServiceTest test          # single test class
 ./mvnw -Dtest=DriveBackupServiceTest#methodName test
 ./mvnw -Dtest=HexagonalArchitectureTest test       # ArchUnit boundary rules
-./mvnw verify                                      # also runs *IT (Failsafe)
+./mvnw verify                                      # also runs *IT (Failsafe) and the dependency license gate
 ./mvnw spring-boot:run                             # launch the JavaFX app
 ```
 

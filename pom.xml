@@ -35,6 +35,7 @@
 		<java.version>25</java.version>
 		<javafx.version>27</javafx.version>
 		<mockito.version>5.24.0</mockito.version>
+		<license-maven-plugin.version>2.7.1</license-maven-plugin.version>
 		<!-- jpackage needs a plain dotted numeric version; the release workflow overrides it from the tag. -->
 		<app.version>0.0.1</app.version>
 		<google-http-client.version>2.2.0</google-http-client.version>
@@ -189,6 +190,55 @@
 							<additionalProperties>
 								<app.version>${app.version}</app.version>
 							</additionalProperties>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<!--
+				License gate, run by `verify` (and so by CI): every runtime dependency must declare a license
+				from the list below. A new dependency under any other license, or under none, fails the build
+				until someone reviews it and either adds the license here or drops the dependency. The list is
+				also what THIRD-PARTY-NOTICES.md documents; keep the two in step.
+			-->
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>license-maven-plugin</artifactId>
+				<version>${license-maven-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>check-third-party-licenses</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>add-third-party</goal>
+						</goals>
+						<configuration>
+							<includedScopes>compile,runtime</includedScopes>
+							<outputDirectory>${project.build.directory}/licenses</outputDirectory>
+							<failOnMissing>true</failOnMissing>
+							<failOnBlacklist>true</failOnBlacklist>
+							<!-- The same license is spelled differently from one POM to the next. -->
+							<licenseMerges>
+								<licenseMerge>Apache-2.0|The Apache Software License, Version 2.0|Apache License, Version 2.0|The Apache License, Version 2.0|Apache 2.0</licenseMerge>
+								<licenseMerge>MIT|MIT License</licenseMerge>
+								<licenseMerge>BSD-3-Clause|BSD New license</licenseMerge>
+								<licenseMerge>EPL-2.0|EPL 2.0</licenseMerge>
+								<licenseMerge>GPL-2.0 with Classpath Exception|GPL2 w/ CPE|GPLv2+CE</licenseMerge>
+							</licenseMerges>
+							<!--
+								Dual-licensed libraries list every option, so each option has to be here:
+								JNA (Apache-2.0 or LGPL-2.1+), Logback (EPL-2.0 or LGPL-2.1), Jakarta
+								Annotations (EPL-2.0 or GPL-2.0 with the Classpath Exception), plus JavaFX
+								(GPL-2.0 with the Classpath Exception). Plain GPL, AGPL and unlisted licenses are not.
+							-->
+							<includedLicenses>
+								<includedLicense>Apache-2.0</includedLicense>
+								<includedLicense>MIT</includedLicense>
+								<includedLicense>BSD-3-Clause</includedLicense>
+								<includedLicense>EPL-2.0</includedLicense>
+								<includedLicense>LGPL-2.1-or-later</includedLicense>
+								<includedLicense>LGPL-2.1-only</includedLicense>
+								<includedLicense>GPL-2.0 with Classpath Exception</includedLicense>
+							</includedLicenses>
 						</configuration>
 					</execution>
 				</executions>
