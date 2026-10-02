@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.service.DownloadConcurrencyService;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
@@ -15,8 +16,8 @@ class BackupPropertiesTest {
 	@Test
 	void acceptsConcurrenciesFromOneToTheMaximum() {
 		assertEquals(1, new BackupProperties(1).downloadConcurrency());
-		assertEquals(BackupProperties.MAX_DOWNLOAD_CONCURRENCY,
-				new BackupProperties(BackupProperties.MAX_DOWNLOAD_CONCURRENCY).downloadConcurrency());
+		assertEquals(DownloadConcurrencyService.MAXIMUM,
+				new BackupProperties(DownloadConcurrencyService.MAXIMUM).downloadConcurrency());
 	}
 
 	@Test
@@ -24,7 +25,7 @@ class BackupPropertiesTest {
 		assertThrows(IllegalArgumentException.class, () -> new BackupProperties(0));
 		assertThrows(IllegalArgumentException.class, () -> new BackupProperties(-3));
 		assertThrows(IllegalArgumentException.class,
-				() -> new BackupProperties(BackupProperties.MAX_DOWNLOAD_CONCURRENCY + 1));
+				() -> new BackupProperties(DownloadConcurrencyService.MAXIMUM + 1));
 	}
 
 	@Test

@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
@@ -65,11 +66,11 @@ class DriveChangeSyncServiceTest {
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
 	private final DriveChangeSyncService service = new DriveChangeSyncService(changePort, statePort, metadataPort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation, 1);
+			progressTracker, cancellation, () -> 1);
 
 	private final DriveChangeSyncService parallelService = new DriveChangeSyncService(changePort, statePort,
 			metadataPort, new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort),
-			commits, progressTracker, cancellation, 4);
+			commits, progressTracker, cancellation, () -> 4);
 
 	/** Stubs a feed that adds {@code count} new PDFs (file-0 ...) in one page. */
 	private void stubNewFiles(int count) {
@@ -480,6 +481,34 @@ class DriveChangeSyncServiceTest {
 		}
 		assertEquals(List.of("open", "publish", "commit"), log);
 		assertTrue(sessions.allStagedReleased());
+	}
+
+	@Test
+	void readsTheDownloadConcurrencyAtTheStartOfEachRun() throws Exception {
+		AtomicInteger concurrency = new AtomicInteger(1);
+		DriveChangeSyncService adjustable = new DriveChangeSyncService(changePort, statePort, metadataPort,
+				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+				progressTracker, cancellation, concurrency::get);
+		AtomicInteger inFlight = new AtomicInteger();
+		AtomicInteger mostInFlight = new AtomicInteger();
+		stubNewFiles(6);
+		for (int i = 0; i < 6; i++) {
+			when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+				mostInFlight.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+				Thread.sleep(40);
+				inFlight.decrementAndGet();
+				return new ByteArrayInputStream(new byte[] { 1 });
+			});
+		}
+
+		adjustable.synchronize(ACCESS, SCOPE, null);
+		assertEquals(1, mostInFlight.get(), "a concurrency of 1 downloads one file at a time");
+
+		concurrency.set(4);
+		mostInFlight.set(0);
+		adjustable.synchronize(ACCESS, SCOPE, null);
+		assertTrue(mostInFlight.get() > 1, "the new value applies to the next run");
+		assertTrue(mostInFlight.get() <= 4, "but never exceeds it, saw " + mostInFlight.get());
 	}
 
 	@Test

@@ -282,6 +282,8 @@ of truth for expected behavior.
   written by a single thread in list order, so archives, entry names, progress
   and the commit protocol are unchanged. Already-compressed content is stored
   rather than deflated, and Drive content calls retry with backoff (`DriveRetry`).
+  The admin can change the concurrency for the session in the Settings dialog
+  (`DownloadConcurrencyUseCase`); it is not persisted across launches.
   See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
   algorithm**, step 7.
 

@@ -32,6 +32,8 @@ import org.nm.gdrive_backup.domain.service.WorkspaceUsageReportService;
 import org.nm.gdrive_backup.domain.service.CloudQuotaLimitService;
 import org.nm.gdrive_backup.domain.service.WorkspaceUserListingService;
 import org.nm.gdrive_backup.domain.service.DriveChangeSyncService;
+import org.nm.gdrive_backup.domain.service.DownloadConcurrencyService;
+import org.nm.gdrive_backup.domain.port.in.DownloadConcurrencyUseCase;
 import org.nm.gdrive_backup.domain.service.FileContentStreamingService;
 import org.nm.gdrive_backup.domain.service.ArchiveRunPlanner;
 import org.nm.gdrive_backup.domain.service.ArchiveMergeService;
@@ -153,15 +155,23 @@ public class ServiceAccountConfiguration {
 		return new FileContentStreamingService(contentPort);
 	}
 
+	/** Starts at the configured value; the admin changes it for the session in Settings. */
+	@Bean
+	DownloadConcurrencyUseCase downloadConcurrencyUseCase(BackupProperties backupProperties,
+			BackupActivity backupActivity) {
+		return new DownloadConcurrencyService(backupProperties.downloadConcurrency(), backupActivity);
+	}
+
 	@Bean
 	DriveChangeSyncUseCase driveChangeSyncUseCase(
 			@Qualifier("driveChangePort") DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation, BackupProperties backupProperties) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation,
+			DownloadConcurrencyUseCase downloadConcurrency) {
 		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, contentStreamingService,
 				archiveSessionPort, archiveRunPlanner, syncCommitPort, progressTracker, cancellation,
-				backupProperties.downloadConcurrency());
+				downloadConcurrency::current);
 	}
 
 	@Bean
@@ -170,10 +180,10 @@ public class ServiceAccountConfiguration {
 			@Qualifier("driveChangePort") DriveChangePort changePort,
 			FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation, BackupProperties backupProperties) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation,
+			DownloadConcurrencyUseCase downloadConcurrency) {
 		return new InitialDriveSyncService(fileListingPort, changePort, contentStreamingService, archiveSessionPort,
-				archiveRunPlanner, syncCommitPort, progressTracker, cancellation,
-				backupProperties.downloadConcurrency());
+				archiveRunPlanner, syncCommitPort, progressTracker, cancellation, downloadConcurrency::current);
 	}
 
 	@Bean

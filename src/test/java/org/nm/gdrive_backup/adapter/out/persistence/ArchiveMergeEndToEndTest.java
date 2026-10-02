@@ -67,10 +67,10 @@ class ArchiveMergeEndToEndTest {
 		ArchiveRunPlanner planner = new ArchiveRunPlanner(archives);
 		FileContentStreamingService streaming = new FileContentStreamingService(drive);
 		full = new InitialDriveSyncService(drive, drive, streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation(), 1);
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1);
 		incremental = new DriveChangeSyncService(drive, new SqliteSyncStateAdapter(database),
 				new SqliteFileMetadataAdapter(database), streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation(), 1);
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1);
 		merge = new ArchiveMergeService(archives, new LocalArchiveReaderAdapter(root), sessions, planner, commit,
 				new BackupActivity(), BackupProgressTracker.NO_OP, new BackupCancellation());
 	}

@@ -38,6 +38,19 @@ final class SettingsText {
 		return "Unable to save project id: " + reason;
 	}
 
+	static String downloadConcurrencyHint(int minimum, int maximum) {
+		return "Files downloaded from Drive at once (" + minimum + " to " + maximum + "). Higher is faster until "
+				+ "Drive starts rate-limiting. Applies to the next backup and resets when the app restarts.";
+	}
+
+	static String downloadConcurrencySaved(int value) {
+		return "Downloading " + value + (value == 1 ? " file" : " files") + " at once from the next backup.";
+	}
+
+	static String downloadConcurrencySaveFailed(String reason) {
+		return "Unable to change the number of parallel downloads: " + reason;
+	}
+
 	/** The root cause's message, which is what the admin can act on. */
 	static String reason(Throwable error) {
 		Throwable current = error;

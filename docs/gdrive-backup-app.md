@@ -569,7 +569,12 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
 7. **Parallel downloads.** Downloads are latency-bound (connection setup and,
    for Google-native files, Drive's server-side export), so both sync services
    fetch several files at once — `gdrive-backup.backup.download-concurrency`,
-   default 4, range 1–16. A ZIP can only be written by one thread, so each
+   default 4, range 1–16. The property is only the starting value: the admin
+   can change it for the session under **Parallel downloads** in the
+   **Settings** dialog (`DownloadConcurrencyUseCase`). Like the backup
+   location it is not saved, so each launch starts from the property again;
+   a change applies to the next backup run (each run reads the value when it
+   starts), and is refused while a backup is running. A ZIP can only be written by one thread, so each
    download is first copied into a spool file next to the staged archive
    (`.spool-*.tmp`), and a single writer then appends the spooled files to the
    ZIP **in listing order** (full run) or change-feed order (incremental).

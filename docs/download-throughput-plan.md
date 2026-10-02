@@ -19,6 +19,11 @@ Implemented 2026-10-01. Differences from the plan below:
 - The `ArchiveSession` spool is `StagedContent` with size and CRC-32; `FetchedFile` carries
   the staged content, the export mime type and, after a PDF fallback, the extension the
   preferred export would have had.
+- **Configurable from the UI (follow-up):** the concurrency is a session-only setting in the
+  Settings dialog (`DownloadConcurrencyUseCase`, `DownloadConcurrencyService`), initialised from the
+  property. The sync services take an `IntSupplier` and build their fetcher per run, so a change
+  applies from the next run; changing it is refused while a backup is running. It is not saved
+  across launches, matching the backup location.
 - Tests: `ParallelContentFetcherTest`, `DriveRetryTest`, `BackupPropertiesTest`, plus new
   cases in `LocalArchiveSessionAdapterTest`, `FileContentStreamingServiceTest`,
   `InitialDriveSyncServiceTest` and `DriveChangeSyncServiceTest`. Not verified against a real

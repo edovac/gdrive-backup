@@ -12,6 +12,7 @@ import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.domain.port.in.BackupCancellationUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveUserProfileUseCase;
+import org.nm.gdrive_backup.domain.port.in.DownloadConcurrencyUseCase;
 import org.nm.gdrive_backup.domain.model.ApplicationInfo;
 import org.nm.gdrive_backup.domain.port.out.BackupProgressPort;
 import org.nm.gdrive_backup.domain.port.out.DriveReadPort;
@@ -31,6 +32,8 @@ public class GdriveBackupApplication {
 				.getBeanProvider(org.nm.gdrive_backup.domain.port.in.BackupLocationUseCase.class).getIfAvailable());
 		JavaFxApplication.setCredentialConfigurationUseCase(springContext
 				.getBeanProvider(org.nm.gdrive_backup.domain.port.in.CredentialConfigurationUseCase.class).getIfAvailable());
+		JavaFxApplication.setDownloadConcurrencyUseCase(
+				springContext.getBeanProvider(DownloadConcurrencyUseCase.class).getIfAvailable());
 		JavaFxApplication.setBackupProgress(springContext.getBeanProvider(BackupProgressPort.class).getIfAvailable());
 		JavaFxApplication.setBackupCancellation(
 				springContext.getBeanProvider(BackupCancellationUseCase.class).getIfAvailable());

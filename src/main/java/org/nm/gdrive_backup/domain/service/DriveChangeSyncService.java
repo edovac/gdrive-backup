@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.IntSupplier;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
@@ -51,12 +52,12 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final SyncCommitPort syncCommitPort;
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
-	private final ParallelContentFetcher contentFetcher;
+	private final IntSupplier downloadConcurrency;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation, int downloadConcurrency) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation, IntSupplier downloadConcurrency) {
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
@@ -66,7 +67,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		this.syncCommitPort = syncCommitPort;
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
-		this.contentFetcher = new ParallelContentFetcher(downloadConcurrency);
+		this.downloadConcurrency = downloadConcurrency;
 	}
 
 	@Override
@@ -108,6 +109,8 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planIncremental(scope, scopeDisplayNameOrNull);
 		Map<String, StreamedFile> streamedByFileId = new LinkedHashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
+			// Read per run, so a change in Settings applies to the next run and never mid-run.
+			ParallelContentFetcher contentFetcher = new ParallelContentFetcher(downloadConcurrency.getAsInt());
 			boolean completed = contentFetcher.process(List.copyOf(pending.contentFileIds), fileId -> true,
 					fileId -> contentStreamingService.fetch(access, pending.files.get(fileId), session),
 					cancellation::isImmediateStopRequested,

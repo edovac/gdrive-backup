@@ -78,10 +78,10 @@ class ArchiveDeletionEndToEndTest {
 		LocalArchiveStorageAdapter storage = new LocalArchiveStorageAdapter(root);
 		BackupActivity activity = new BackupActivity();
 		full = new InitialDriveSyncService(drive, drive, streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation(), 1);
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1);
 		incremental = new DriveChangeSyncService(drive, new SqliteSyncStateAdapter(database),
 				new SqliteFileMetadataAdapter(database), streaming, sessions, planner, commit,
-				BackupProgressTracker.NO_OP, new BackupCancellation(), 1);
+				BackupProgressTracker.NO_OP, new BackupCancellation(), () -> 1);
 		merge = new ArchiveMergeService(archives, reader, sessions, planner, commit, activity,
 				BackupProgressTracker.NO_OP, new BackupCancellation());
 		deletion = new ArchiveDeletionService(archives, reader, storage, new SqliteFileCaptureAdapter(database),

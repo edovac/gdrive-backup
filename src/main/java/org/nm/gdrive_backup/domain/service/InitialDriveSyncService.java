@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntSupplier;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
@@ -41,12 +42,12 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	private final SyncCommitPort syncCommitPort;
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
-	private final ParallelContentFetcher contentFetcher;
+	private final IntSupplier downloadConcurrency;
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileContentStreamingService contentStreamingService, ArchiveSessionPort archiveSessionPort,
 			ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort, BackupProgressTracker progressTracker,
-			BackupCancellation cancellation, int downloadConcurrency) {
+			BackupCancellation cancellation, IntSupplier downloadConcurrency) {
 		this.fileListingPort = fileListingPort;
 		this.changePort = changePort;
 		this.contentStreamingService = contentStreamingService;
@@ -55,7 +56,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		this.syncCommitPort = syncCommitPort;
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
-		this.contentFetcher = new ParallelContentFetcher(downloadConcurrency);
+		this.downloadConcurrency = downloadConcurrency;
 	}
 
 	@Override
@@ -72,6 +73,8 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		Map<String, StreamedFile> streamedByFileId = new HashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 			int[] processed = {0};
+			// Read per run, so a change in Settings applies to the next run and never mid-run.
+			ParallelContentFetcher contentFetcher = new ParallelContentFetcher(downloadConcurrency.getAsInt());
 			// Downloads overlap, but results come back here in listing order, so the archive and its entry names are
 			// the same as a one-at-a-time run. Progress is the exception: a file counts as soon as its download
 			// finishes, because counting at hand-over would hold back every file queued behind a slow one and then
