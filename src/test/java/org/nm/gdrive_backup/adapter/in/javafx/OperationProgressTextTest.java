@@ -61,8 +61,8 @@ class OperationProgressTextTest {
 
 		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
 
-		assertEquals(List.of(new OperationProgressText.DownloadRow("id-1", "Q3.pdf", "My Drive/Reports/2026/Q3.pdf", false)),
-				rows);
+		assertEquals(List.of(new OperationProgressText.DownloadRow("id-1", "Q3.pdf", "My Drive/Reports/2026/Q3.pdf",
+				"0 B", false)), rows);
 	}
 
 	@Test
@@ -100,6 +100,79 @@ class OperationProgressTextTest {
 		assertEquals("id-1", rows.get(0).text());
 		assertEquals("B.pdf", rows.get(1).text());
 		assertEquals("B.pdf", rows.get(1).tooltip());
+	}
+
+	@Test
+	void sizesAreShownInBytesThenKilobytesMegabytesGigabytesAndTerabytes() {
+		assertEquals("0 B", OperationProgressText.bytes(0));
+		assertEquals("1023 B", OperationProgressText.bytes(1023));
+		assertEquals("1.0 KB", OperationProgressText.bytes(1024));
+		assertEquals("1.5 KB", OperationProgressText.bytes(1536));
+		assertEquals("12.4 MB", OperationProgressText.bytes(13_002_342));
+		assertEquals("1.0 MB", OperationProgressText.bytes(1024L * 1024));
+		assertEquals("2.5 GB", OperationProgressText.bytes(2_684_354_560L));
+		assertEquals("1.0 TB", OperationProgressText.bytes(1L << 40));
+		assertEquals("5120.0 TB", OperationProgressText.bytes(5L << 50));
+	}
+
+	@Test
+	void aRunningDownloadWithAKnownTotalShowsHowMuchOfItHasArrived() {
+		assertEquals("12.4 MB of 80.0 MB",
+				OperationProgressText.sizeText(13_002_342, 83_886_080L, false));
+		assertEquals("0 B of 1.0 KB", OperationProgressText.sizeText(0, 1024L, false));
+	}
+
+	@Test
+	void aDownloadWithoutAKnownTotalShowsOnlyTheAmountSoFar() {
+		assertEquals("12.4 MB", OperationProgressText.sizeText(13_002_342, null, false));
+	}
+
+	@Test
+	void aTotalThatCannotBeRightIsLeftOut() {
+		assertEquals("2.0 KB", OperationProgressText.sizeText(2048, 1024L, false), "more arrived than Drive said");
+		assertEquals("5 B", OperationProgressText.sizeText(5, 0L, false), "a zero total tells nothing");
+	}
+
+	@Test
+	void aFinishedDownloadShowsWhatItCameTo() {
+		assertEquals("80.0 MB", OperationProgressText.sizeText(83_886_080L, 83_886_080L, true));
+		assertEquals("3.0 KB", OperationProgressText.sizeText(3072, null, true));
+	}
+
+	@Test
+	void downloadRowsCarryTheSizeText() {
+		BackupProgress progress = withDownloads(
+				new FileDownload("id-1", "Big.pdf", "My Drive/Big.pdf", START, null, 13_002_342, 83_886_080L),
+				new FileDownload("id-2", "Doc", "My Drive/Doc", START, null, 2048, null),
+				new FileDownload("id-3", "Done.pdf", "My Drive/Done.pdf", START, NOW.minusSeconds(1), 1024, 1024L));
+
+		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
+
+		assertEquals(List.of("12.4 MB of 80.0 MB", "2.0 KB", "1.0 KB"),
+				rows.stream().map(OperationProgressText.DownloadRow::sizeText).toList());
+	}
+
+	@Test
+	void downloadRowsStayInStartOrderWhenOneFinishes() {
+		BackupProgress progress = withDownloads(
+				new FileDownload("id-3", "Third", "My Drive/Third", START.plusSeconds(3), null),
+				new FileDownload("id-1", "First", "My Drive/First", START.plusSeconds(1), NOW.minusSeconds(1)),
+				new FileDownload("id-2", "Second", "My Drive/Second", START.plusSeconds(2), null));
+
+		List<OperationProgressText.DownloadRow> rows = OperationProgressText.downloadRows(progress, NOW);
+
+		assertEquals(List.of("First", "Second", "Third"),
+				rows.stream().map(OperationProgressText.DownloadRow::text).toList());
+	}
+
+	@Test
+	void downloadsStartedAtTheSameInstantAreOrderedByFileId() {
+		BackupProgress progress = withDownloads(
+				new FileDownload("b", "B", "My Drive/B", START, null),
+				new FileDownload("a", "A", "My Drive/A", START, null));
+
+		assertEquals(List.of("a", "b"), OperationProgressText.downloadRows(progress, NOW).stream()
+				.map(OperationProgressText.DownloadRow::fileId).toList());
 	}
 
 	@Test

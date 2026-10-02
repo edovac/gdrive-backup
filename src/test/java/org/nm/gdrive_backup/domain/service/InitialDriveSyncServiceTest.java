@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -321,12 +323,40 @@ class InitialDriveSyncServiceTest {
 		service.synchronize(ACCESS, SCOPE, null);
 
 		InOrder order = inOrder(progressTracker);
-		order.verify(progressTracker).downloadStarted("file-1", "Q3.pdf", "My Drive/Docs/Reports/Q3.pdf");
+		order.verify(progressTracker).downloadStarted("file-1", "Q3.pdf", "My Drive/Docs/Reports/Q3.pdf", null);
 		order.verify(progressTracker).downloadFinished("file-1");
 		order.verify(progressTracker).itemProcessed("Q3.pdf");
-		order.verify(progressTracker).downloadStarted("file-2", "Top.pdf", "My Drive/Top.pdf");
+		order.verify(progressTracker).downloadStarted("file-2", "Top.pdf", "My Drive/Top.pdf", null);
 		order.verify(progressTracker).downloadFinished("file-2");
 		verify(progressTracker, never()).downloadAborted(anyString());
+	}
+
+	@Test
+	void passesDrivesReportedSizeAndTheFinalDownloadedSizeToTheProgress() throws Exception {
+		StoredFile big = new StoredFile("file-1", "user@example.com", "Big.pdf", "", null, "application/pdf", false,
+				"r1", null, 12L);
+		stubDrive("token", big);
+		stubDownload("file-1", "report-bytes");
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).downloadStarted("file-1", "Big.pdf", "My Drive/Big.pdf", 12L);
+		order.verify(progressTracker, atLeastOnce()).downloadProgressed("file-1", 12L);
+		order.verify(progressTracker).downloadFinished("file-1");
+	}
+
+	@Test
+	void aNativeFileHasNoTotalButItsFinalDownloadedSizeIsStillReported() throws Exception {
+		stubDrive("token", file("file-1", "Budget", "", "application/vnd.google-apps.spreadsheet", "v3"));
+		when(contentPort.export(ACCESS, "file-1",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+				.thenReturn(new ByteArrayInputStream(new byte[7]));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		verify(progressTracker).downloadStarted("file-1", "Budget", "My Drive/Budget", null);
+		verify(progressTracker, atLeastOnce()).downloadProgressed("file-1", 7L);
 	}
 
 	@Test
@@ -338,7 +368,7 @@ class InitialDriveSyncServiceTest {
 
 		service.synchronize(ACCESS, SCOPE, null);
 
-		verify(progressTracker).downloadStarted("file-1", "Budget", "My Drive/Budget");
+		verify(progressTracker).downloadStarted("file-1", "Budget", "My Drive/Budget", null);
 		assertEquals(Set.of("Budget.xlsx"), sessions.entries.keySet());
 	}
 
@@ -353,7 +383,7 @@ class InitialDriveSyncServiceTest {
 
 		service.synchronize(ACCESS, shared, "Finance");
 
-		verify(progressTracker).downloadStarted("file-1", "2026.pdf", "Finance/Budgets/2026.pdf");
+		verify(progressTracker).downloadStarted("file-1", "2026.pdf", "Finance/Budgets/2026.pdf", null);
 	}
 
 	@Test
@@ -363,7 +393,7 @@ class InitialDriveSyncServiceTest {
 
 		service.synchronize(ACCESS, SCOPE, null);
 
-		verify(progressTracker, never()).downloadStarted(anyString(), anyString(), anyString());
+		verify(progressTracker, never()).downloadStarted(anyString(), anyString(), anyString(), any());
 	}
 
 	@Test
@@ -373,7 +403,7 @@ class InitialDriveSyncServiceTest {
 
 		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
 
-		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/A.pdf");
+		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/A.pdf", null);
 		verify(progressTracker).downloadAborted("file-1");
 		verify(progressTracker, never()).downloadFinished(anyString());
 	}
@@ -390,7 +420,7 @@ class InitialDriveSyncServiceTest {
 		parallelService.synchronize(ACCESS, SCOPE, null);
 
 		for (StoredFile file : files) {
-			verify(progressTracker, times(1)).downloadStarted(file.fileId(), file.name(), "My Drive/" + file.name());
+			verify(progressTracker, times(1)).downloadStarted(file.fileId(), file.name(), "My Drive/" + file.name(), null);
 			verify(progressTracker, times(1)).downloadFinished(file.fileId());
 		}
 		verify(progressTracker, never()).downloadAborted(anyString());

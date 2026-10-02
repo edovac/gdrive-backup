@@ -1,8 +1,12 @@
 package org.nm.gdrive_backup.adapter.in.javafx;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import org.nm.gdrive_backup.domain.model.BackupProgress;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
@@ -22,6 +26,8 @@ import javafx.scene.control.Label;
 import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
 /**
@@ -42,6 +48,7 @@ public final class OperationProgressPanel {
 	private final Button cancelButton = new Button("Cancel");
 	private final VBox downloadList = new VBox(2);
 	private List<OperationProgressText.DownloadRow> shownDownloads = List.of();
+	private final Map<String, DownloadRowNodes> downloadRows = new HashMap<>();
 	private final VBox root;
 	private Timeline timeline;
 	private Consumer<BackupProgress> progressListener = progress -> {
@@ -156,33 +163,75 @@ public final class OperationProgressPanel {
 		});
 	}
 
-	/** Rebuilds the rows only when they changed, since this runs several times a second. */
+	/**
+	 * Updates the rows in place, by file id. The size changes on almost every refresh, so rebuilding the rows would
+	 * remove the name label under the mouse and close its tooltip each time; reused rows keep theirs.
+	 */
 	private void showDownloads(List<OperationProgressText.DownloadRow> rows) {
 		if (rows.equals(shownDownloads)) {
 			return;
 		}
 		shownDownloads = rows;
-		downloadList.getChildren().setAll(rows.stream().map(OperationProgressPanel::downloadLabel).toList());
+		Set<String> current = rows.stream().map(OperationProgressText.DownloadRow::fileId)
+				.collect(Collectors.toSet());
+		downloadRows.entrySet().removeIf(entry -> {
+			if (current.contains(entry.getKey())) {
+				return false;
+			}
+			downloadList.getChildren().remove(entry.getValue().box);
+			return true;
+		});
+		for (int index = 0; index < rows.size(); index++) {
+			OperationProgressText.DownloadRow row = rows.get(index);
+			DownloadRowNodes nodes = downloadRows.get(row.fileId());
+			if (nodes == null) {
+				nodes = new DownloadRowNodes();
+				downloadRows.put(row.fileId(), nodes);
+				downloadList.getChildren().add(Math.min(index, downloadList.getChildren().size()), nodes.box);
+			}
+			nodes.update(row);
+		}
 		downloadList.setVisible(!rows.isEmpty());
 		downloadList.setManaged(!rows.isEmpty());
 	}
 
-	private static Label downloadLabel(OperationProgressText.DownloadRow row) {
-		Label label = new Label(row.text());
-		label.getStyleClass().add("download-row");
-		if (row.finished()) {
-			label.getStyleClass().add("download-done");
+	/** One line: the file name on the left, how much of it has arrived on the right. */
+	private static final class DownloadRowNodes {
+
+		private final Label name = new Label();
+		private final Label size = new Label();
+		private final Tooltip tooltip = new Tooltip();
+		private final HBox box = new HBox(8, name, size);
+
+		DownloadRowNodes() {
+			name.getStyleClass().add("download-row");
+			// One line per file; a long name is cut in the middle so the extension stays visible.
+			name.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
+			name.setMinWidth(0);
+			name.setMaxWidth(Double.MAX_VALUE);
+			name.setAlignment(Pos.CENTER_LEFT);
+			HBox.setHgrow(name, Priority.ALWAYS);
+			tooltip.setShowDelay(javafx.util.Duration.millis(300));
+			tooltip.setWrapText(true);
+			tooltip.setMaxWidth(560);
+			name.setTooltip(tooltip);
+			size.getStyleClass().add("download-size");
+			// A fixed column so the figures line up from one row to the next.
+			size.setMinWidth(150);
+			size.setAlignment(Pos.CENTER_RIGHT);
 		}
-		// One line per file; a long name is cut in the middle so the extension stays visible.
-		label.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
-		label.setMinWidth(0);
-		label.setMaxWidth(Double.MAX_VALUE);
-		label.setAlignment(Pos.CENTER_LEFT);
-		Tooltip tooltip = new Tooltip(row.tooltip());
-		tooltip.setShowDelay(javafx.util.Duration.millis(300));
-		tooltip.setWrapText(true);
-		tooltip.setMaxWidth(560);
-		label.setTooltip(tooltip);
-		return label;
+
+		void update(OperationProgressText.DownloadRow row) {
+			name.setText(row.text());
+			tooltip.setText(row.tooltip());
+			size.setText(row.sizeText());
+			if (row.finished()) {
+				if (!box.getStyleClass().contains("download-done")) {
+					box.getStyleClass().add("download-done");
+				}
+			} else {
+				box.getStyleClass().remove("download-done");
+			}
+		}
 	}
 }

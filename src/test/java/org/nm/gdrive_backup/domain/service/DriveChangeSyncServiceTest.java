@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -531,7 +532,7 @@ class DriveChangeSyncServiceTest {
 		parallelService.synchronize(ACCESS, SCOPE, null);
 
 		InOrder order = inOrder(progressTracker);
-		order.verify(progressTracker).downloadStarted("file-1", "Q3.pdf", "My Drive/Docs/Reports/Q3.pdf");
+		order.verify(progressTracker).downloadStarted("file-1", "Q3.pdf", "My Drive/Docs/Reports/Q3.pdf", null);
 		order.verify(progressTracker).downloadFinished("file-1");
 	}
 
@@ -549,7 +550,7 @@ class DriveChangeSyncServiceTest {
 
 		parallelService.synchronize(ACCESS, SCOPE, null);
 
-		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/New folder/A.pdf");
+		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/New folder/A.pdf", null);
 	}
 
 	@Test
@@ -567,7 +568,27 @@ class DriveChangeSyncServiceTest {
 
 		parallelService.synchronize(ACCESS, shared, "Finance");
 
-		verify(progressTracker).downloadStarted("file-1", "A.pdf", "Finance/A.pdf");
+		verify(progressTracker).downloadStarted("file-1", "A.pdf", "Finance/A.pdf", null);
+	}
+
+	@Test
+	void aChangedFilesSizeFromDriveSurvivesUntilItsDownloadStarts() throws Exception {
+		baseline("old-token");
+		StoredFile previous = new StoredFile("file-1", "user@example.com", "Big.pdf", "", null, "application/pdf",
+				false, "revision-1", 5L);
+		StoredFile current = new StoredFile("file-1", "user@example.com", "Big.pdf", "", null, "application/pdf",
+				false, "revision-2", null, 9L);
+		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.of(previous));
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[9]));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", false, current)), null, "new-token"));
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		InOrder order = inOrder(progressTracker);
+		order.verify(progressTracker).downloadStarted("file-1", "Big.pdf", "My Drive/Big.pdf", 9L);
+		order.verify(progressTracker, atLeastOnce()).downloadProgressed("file-1", 9L);
+		order.verify(progressTracker).downloadFinished("file-1");
 	}
 
 	@Test
@@ -577,7 +598,7 @@ class DriveChangeSyncServiceTest {
 
 		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
 
-		verify(progressTracker).downloadStarted("file-0", "F0.pdf", "My Drive/F0.pdf");
+		verify(progressTracker).downloadStarted("file-0", "F0.pdf", "My Drive/F0.pdf", null);
 		verify(progressTracker).downloadAborted("file-0");
 		verify(progressTracker, never()).downloadFinished(any());
 	}

@@ -96,8 +96,18 @@ public class BackupProgressTracker {
 	}
 
 	/** A file's download began; it stays in the snapshot's download list until it finishes or is aborted. */
-	public synchronized void downloadStarted(String fileId, String name, String path) {
-		downloading.put(fileId, new FileDownload(fileId, name, path, clock.instant(), null));
+	public synchronized void downloadStarted(String fileId, String name, String path, Long totalBytesOrNull) {
+		downloading.put(fileId, new FileDownload(fileId, name, path, clock.instant(), null, 0, totalBytesOrNull));
+		report();
+	}
+
+	/** How many bytes of the file have arrived so far; the entry keeps its place in the start order. */
+	public synchronized void downloadProgressed(String fileId, long bytesDownloaded) {
+		FileDownload download = downloading.get(fileId);
+		if (download == null || download.bytesDownloaded() == bytesDownloaded) {
+			return;
+		}
+		downloading.put(fileId, download.withBytesDownloaded(bytesDownloaded));
 		report();
 	}
 
@@ -107,7 +117,7 @@ public class BackupProgressTracker {
 		if (started == null) {
 			return;
 		}
-		finished.addFirst(new FileDownload(fileId, started.name(), started.path(), started.startedAt(), clock.instant()));
+		finished.addFirst(started.finishedAt(clock.instant()));
 		while (finished.size() > MAX_FINISHED_DOWNLOADS) {
 			finished.removeLast();
 		}

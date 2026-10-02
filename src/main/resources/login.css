@@ -61,6 +61,12 @@
 	-fx-padding: 0 12px;
 }
 
+.download-size {
+	-fx-text-fill: #748096;
+	-fx-font-size: 12px;
+	-fx-padding: 0 12px 0 0;
+}
+
 .download-done {
 	-fx-opacity: 0.5;
 }

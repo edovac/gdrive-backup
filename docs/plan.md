@@ -286,7 +286,9 @@ of truth for expected behavior.
   (`DownloadConcurrencyUseCase`); it is not persisted across launches. The
   progress panel lists the files being downloaded under the bar (file name,
   full Drive path as a tooltip, finished ones dimmed for a few seconds) for
-  both full and incremental runs.
+  both full and incremental runs, with the live downloaded size beside each
+  name ("12.4 MB of 80.0 MB" when Drive reports a size, the running amount for
+  Google-native exports).
   See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
   algorithm**, step 7.
 

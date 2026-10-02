@@ -193,9 +193,9 @@ class BackupProgressTrackerTest {
 	void listsFilesInFlightInStartOrderWithTheirNameAndPath() {
 		tracker.jobStarted(List.of(PERSONAL));
 		tracker.driveStarted(PERSONAL);
-		tracker.downloadStarted("id-1", "A.pdf", "My Drive/Docs/A.pdf");
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/Docs/A.pdf", null);
 		clock.advance(Duration.ofSeconds(1));
-		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf");
+		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf", null);
 
 		List<FileDownload> downloads = lastSnapshot().downloads();
 
@@ -206,11 +206,127 @@ class BackupProgressTrackerTest {
 	}
 
 	@Test
+	void carriesTheBytesDownloadedSoFarAndTheTotalWhenDriveReportedOne() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "Big.pdf", "My Drive/Big.pdf", 1_000L);
+		tracker.downloadStarted("id-2", "Doc", "My Drive/Doc", null);
+
+		assertEquals(0, lastSnapshot().downloads().get(0).bytesDownloaded());
+		assertEquals(1_000L, lastSnapshot().downloads().get(0).totalBytes());
+		assertNull(lastSnapshot().downloads().get(1).totalBytes());
+
+		tracker.downloadProgressed("id-1", 250);
+		tracker.downloadProgressed("id-2", 40);
+
+		List<FileDownload> downloads = lastSnapshot().downloads();
+		assertEquals(250, downloads.get(0).bytesDownloaded());
+		assertEquals(40, downloads.get(1).bytesDownloaded());
+		assertEquals(1_000L, downloads.get(0).totalBytes());
+	}
+
+	@Test
+	void progressKeepsTheStartOrderOfTheDownloads() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A", "My Drive/A", null);
+		tracker.downloadStarted("id-2", "B", "My Drive/B", null);
+		tracker.downloadStarted("id-3", "C", "My Drive/C", null);
+
+		tracker.downloadProgressed("id-2", 10);
+		tracker.downloadProgressed("id-1", 20);
+
+		assertEquals(List.of("id-1", "id-2", "id-3"),
+				lastSnapshot().downloads().stream().map(FileDownload::fileId).toList());
+	}
+
+	@Test
+	void progressForAnUnknownOrAlreadyFinishedDownloadIsIgnored() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A", "My Drive/A", null);
+		tracker.downloadProgressed("id-1", 100);
+		tracker.downloadFinished("id-1");
+
+		tracker.downloadProgressed("id-1", 999);
+		tracker.downloadProgressed("unknown", 5);
+
+		List<FileDownload> downloads = lastSnapshot().downloads();
+		assertEquals(1, downloads.size());
+		assertEquals(100, downloads.get(0).bytesDownloaded());
+	}
+
+	@Test
+	void repeatingTheSameByteCountDoesNotReportAgain() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A", "My Drive/A", null);
+		tracker.downloadProgressed("id-1", 100);
+		ArgumentCaptor<BackupProgress> captor = ArgumentCaptor.forClass(BackupProgress.class);
+		verify(port, atLeastOnce()).report(captor.capture());
+		int reports = captor.getAllValues().size();
+
+		tracker.downloadProgressed("id-1", 100);
+
+		ArgumentCaptor<BackupProgress> after = ArgumentCaptor.forClass(BackupProgress.class);
+		verify(port, atLeastOnce()).report(after.capture());
+		assertEquals(reports, after.getAllValues().size());
+	}
+
+	@Test
+	void aFinishedDownloadKeepsItsFinalSizeAndTotal() {
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		tracker.downloadStarted("id-1", "A", "My Drive/A", 500L);
+		tracker.downloadProgressed("id-1", 500);
+
+		tracker.downloadFinished("id-1");
+
+		FileDownload finished = lastSnapshot().downloads().get(0);
+		assertTrue(finished.finished());
+		assertEquals(500, finished.bytesDownloaded());
+		assertEquals(500L, finished.totalBytes());
+	}
+
+	@Test
+	void countsBytesCorrectlyWhenSeveralThreadsReportProgressAtOnce() throws Exception {
+		int threads = 8;
+		tracker.jobStarted(List.of(PERSONAL));
+		tracker.driveStarted(PERSONAL);
+		ExecutorService executor = Executors.newFixedThreadPool(threads);
+		CountDownLatch start = new CountDownLatch(1);
+		try {
+			List<Future<?>> done = new ArrayList<>();
+			for (int thread = 0; thread < threads; thread++) {
+				String id = "id-" + thread;
+				tracker.downloadStarted(id, id, "My Drive/" + id, null);
+				done.add(executor.submit(() -> {
+					start.await();
+					for (long bytes = 1; bytes <= 500; bytes++) {
+						tracker.downloadProgressed(id, bytes);
+					}
+					return null;
+				}));
+			}
+			start.countDown();
+			for (Future<?> future : done) {
+				future.get(10, TimeUnit.SECONDS);
+			}
+		} finally {
+			executor.shutdownNow();
+		}
+
+		List<FileDownload> downloads = lastSnapshot().downloads();
+		assertEquals(threads, downloads.size());
+		assertTrue(downloads.stream().allMatch(download -> download.bytesDownloaded() == 500));
+	}
+
+	@Test
 	void aFinishedDownloadMovesAfterTheOnesStillRunningAndKeepsItsFinishTime() {
 		tracker.jobStarted(List.of(PERSONAL));
 		tracker.driveStarted(PERSONAL);
-		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
-		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf");
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf", null);
+		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf", null);
 		clock.advance(Duration.ofSeconds(5));
 
 		tracker.downloadFinished("id-1");
@@ -228,7 +344,7 @@ class BackupProgressTrackerTest {
 		tracker.driveStarted(PERSONAL);
 		int count = BackupProgressTracker.MAX_FINISHED_DOWNLOADS + 4;
 		for (int i = 0; i < count; i++) {
-			tracker.downloadStarted("id-" + i, "F" + i, "My Drive/F" + i);
+			tracker.downloadStarted("id-" + i, "F" + i, "My Drive/F" + i, null);
 			tracker.downloadFinished("id-" + i);
 		}
 
@@ -244,7 +360,7 @@ class BackupProgressTrackerTest {
 	void anAbortedDownloadLeavesTheListWithoutBeingShownAsDone() {
 		tracker.jobStarted(List.of(PERSONAL));
 		tracker.driveStarted(PERSONAL);
-		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf", null);
 
 		tracker.downloadAborted("id-1");
 
@@ -265,8 +381,8 @@ class BackupProgressTrackerTest {
 	void startingTheNextDriveClearsTheDownloadList() {
 		tracker.jobStarted(List.of(PERSONAL, SHARED));
 		tracker.driveStarted(PERSONAL);
-		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
-		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf");
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf", null);
+		tracker.downloadStarted("id-2", "B.pdf", "My Drive/B.pdf", null);
 		tracker.downloadFinished("id-2");
 		tracker.driveCompleted();
 
@@ -279,7 +395,7 @@ class BackupProgressTrackerTest {
 	void aSnapshotsDownloadListIsNotAffectedByLaterEvents() {
 		tracker.jobStarted(List.of(PERSONAL));
 		tracker.driveStarted(PERSONAL);
-		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf");
+		tracker.downloadStarted("id-1", "A.pdf", "My Drive/A.pdf", null);
 		List<FileDownload> before = lastSnapshot().downloads();
 
 		tracker.downloadFinished("id-1");
@@ -311,7 +427,7 @@ class BackupProgressTrackerTest {
 					start.await();
 					for (int i = 0; i < perThread; i++) {
 						String id = "id-" + (offset + i);
-						tracker.downloadStarted(id, id, "My Drive/" + id);
+						tracker.downloadStarted(id, id, "My Drive/" + id, null);
 						tracker.downloadFinished(id);
 					}
 					return null;

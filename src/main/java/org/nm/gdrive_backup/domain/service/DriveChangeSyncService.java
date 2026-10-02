@@ -122,14 +122,17 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			boolean completed = contentFetcher.process(List.copyOf(pending.contentFileIds), fileId -> true,
 					fileId -> {
 						StoredFile file = pending.files.get(fileId);
-						progressTracker.downloadStarted(fileId, file.name(), drivePaths.pathOf(file));
+						progressTracker.downloadStarted(fileId, file.name(), drivePaths.pathOf(file), file.sizeBytes());
 						FetchedFile fetched;
 						try {
-							fetched = contentStreamingService.fetch(access, file, session);
+							fetched = contentStreamingService.fetch(access, file, session,
+									bytes -> progressTracker.downloadProgressed(fileId, bytes));
 						} catch (RuntimeException | Error exception) {
 							progressTracker.downloadAborted(fileId);
 							throw exception;
 						}
+						// The exact size, even for a file too quick to report while it streamed.
+						progressTracker.downloadProgressed(fileId, fetched.content().size());
 						progressTracker.downloadFinished(fileId);
 						return fetched;
 					},
@@ -249,7 +252,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 
 		private StoredFile withCurrentVersion(StoredFile file, Long versionId) {
 			return new StoredFile(file.fileId(), file.ownerScope(), file.name(), file.parents(), file.driveId(),
-					file.mimeType(), file.trashed(), file.headRevisionId(), versionId);
+					file.mimeType(), file.trashed(), file.headRevisionId(), versionId, file.sizeBytes());
 		}
 	}
 }

@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.LongConsumer;
 
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
@@ -52,6 +53,17 @@ public class FileContentStreamingService {
 	 * touching the archive. Safe to run on several threads at once; {@link #write} then appends the result.
 	 */
 	public FetchedFile fetch(ServiceAccountAccess access, StoredFile file, ArchiveSession session) {
+		return fetch(access, file, session, bytes -> {
+		});
+	}
+
+	/**
+	 * As {@link #fetch(ServiceAccountAccess, StoredFile, ArchiveSession)}, also telling {@code onBytesDownloaded} how
+	 * many bytes have arrived so far while the content streams in (a few times a second, and once at the end). The
+	 * listener runs on the downloading thread. A PDF fallback starts counting again from zero.
+	 */
+	public FetchedFile fetch(ServiceAccountAccess access, StoredFile file, ArchiveSession session,
+			LongConsumer onBytesDownloaded) {
 		if (file == null || file.fileId() == null || file.fileId().isBlank()) {
 			throw new IllegalArgumentException("file with an id is required");
 		}
@@ -60,13 +72,13 @@ public class FileContentStreamingService {
 		}
 		ExportFormat exportFormat = EXPORT_FORMATS.get(file.mimeType());
 		try {
-			return fetchContent(access, file, exportFormat, session, null);
+			return fetchContent(access, file, exportFormat, session, null, onBytesDownloaded);
 		} catch (DriveExportLimitException exception) {
 			if (exportFormat == null) {
 				throw new IllegalStateException("Unexpected export limit for a non-native Drive file", exception);
 			}
 			try {
-				return fetchContent(access, file, PDF_FALLBACK, session, exportFormat.extension());
+				return fetchContent(access, file, PDF_FALLBACK, session, exportFormat.extension(), onBytesDownloaded);
 			} catch (DriveExportLimitException fallbackException) {
 				throw new IllegalStateException("Google PDF fallback also exceeded the export limit", fallbackException);
 			} catch (IOException fallbackException) {
@@ -99,13 +111,13 @@ public class FileContentStreamingService {
 	}
 
 	private FetchedFile fetchContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
-			ArchiveSession session, String fallbackFromExtension) throws IOException {
+			ArchiveSession session, String fallbackFromExtension, LongConsumer onBytesDownloaded) throws IOException {
 		// The stream is opened before anything is staged so an export-limit failure leaves nothing behind.
 		try (InputStream content = exportFormat == null
 				? contentPort.download(access, file.fileId())
 				: contentPort.export(access, file.fileId(), exportFormat.mimeType())) {
-			return new FetchedFile(session.stage(content), exportFormat == null ? null : exportFormat.mimeType(),
-					fallbackFromExtension);
+			return new FetchedFile(session.stage(new ReportingInputStream(content, onBytesDownloaded)),
+					exportFormat == null ? null : exportFormat.mimeType(), fallbackFromExtension);
 		}
 	}
 

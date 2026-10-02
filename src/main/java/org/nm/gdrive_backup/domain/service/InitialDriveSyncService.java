@@ -83,14 +83,18 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 			// release them all at once.
 			boolean completed = contentFetcher.process(files, InitialDriveSyncService::isEligible,
 					file -> {
-						progressTracker.downloadStarted(file.fileId(), file.name(), drivePaths.pathOf(file));
+						progressTracker.downloadStarted(file.fileId(), file.name(), drivePaths.pathOf(file),
+								file.sizeBytes());
 						FetchedFile fetched;
 						try {
-							fetched = contentStreamingService.fetch(access, file, session);
+							fetched = contentStreamingService.fetch(access, file, session,
+									bytes -> progressTracker.downloadProgressed(file.fileId(), bytes));
 						} catch (RuntimeException | Error exception) {
 							progressTracker.downloadAborted(file.fileId());
 							throw exception;
 						}
+						// The exact size, even for a file too quick to report while it streamed.
+						progressTracker.downloadProgressed(file.fileId(), fetched.content().size());
 						progressTracker.downloadFinished(file.fileId());
 						progressTracker.itemProcessed(file.name());
 						return fetched;
@@ -149,7 +153,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 
 	private static StoredFile withName(StoredFile file, String name) {
 		return new StoredFile(file.fileId(), file.ownerScope(), name, file.parents(), file.driveId(), file.mimeType(),
-				file.trashed(), file.headRevisionId(), file.currentVersionId());
+				file.trashed(), file.headRevisionId(), file.currentVersionId(), file.sizeBytes());
 	}
 
 	/** Every listed file, in listing order; only those streamed this run carry an entry. */

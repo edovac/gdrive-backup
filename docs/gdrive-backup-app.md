@@ -200,7 +200,13 @@ build order live in [plan.md](plan.md).
   download is still seen. Each row is **only the file's name**, cut in the
   middle with an ellipsis when it is too long; hovering shows its **full Drive
   path** as a tooltip, such as `My Drive/Reports/2026/Q3.pdf` or
-  `Finance/Budgets/2026.pdf` for a Shared Drive. Paths use the real Drive
+  `Finance/Budgets/2026.pdf` for a Shared Drive. A right-aligned column beside
+  each name shows **how much of the file has been downloaded so far**, live
+  (for example `12.4 MB`), and `12.4 MB of 80.0 MB` when Drive reported the
+  file's size. Drive reports a size only for ordinary files, so a Docs, Sheets or
+  Slides export shows just the running amount, since its size is not known
+  until it ends; a finished row keeps the final size. The count is of the bytes
+  received, updated a few times a second. Paths use the real Drive
   names (no sanitizing), the first parent for a file with several, and the
   drive's name as the root; a chain too deep or cyclic to follow is cut with a
   leading `…`. A full run knows every folder from its listing; an incremental

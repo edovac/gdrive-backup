@@ -219,6 +219,49 @@ class FileContentStreamingServiceTest {
 	}
 
 	@Test
+	void fetchTellsTheListenerHowManyBytesHaveArrivedEndingWithTheFullSize() throws Exception {
+		StoredFile file = file("file-1", "Big.pdf", "application/pdf");
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[300_000]));
+		List<Long> reported = new ArrayList<>();
+
+		try (var session = sessions.open("archives/x.zip")) {
+			FetchedFile fetched = service.fetch(ACCESS, file, session, reported::add);
+
+			assertEquals(300_000, fetched.content().size());
+			assertFalse(reported.isEmpty());
+			assertEquals(300_000L, reported.getLast());
+			for (int i = 1; i < reported.size(); i++) {
+				assertTrue(reported.get(i) >= reported.get(i - 1), "totals never go down: " + reported);
+			}
+		}
+	}
+
+	@Test
+	void aPdfFallbackStartsCountingAgainFromTheNewDownload() throws Exception {
+		StoredFile file = file("file-1", "Report", "application/vnd.google-apps.document");
+		when(contentPort.export(ACCESS, "file-1", DOCX)).thenThrow(new DriveExportLimitException("too large", null));
+		when(contentPort.export(ACCESS, "file-1", "application/pdf"))
+				.thenReturn(new ByteArrayInputStream(new byte[5]));
+		List<Long> reported = new ArrayList<>();
+
+		try (var session = sessions.open("archives/x.zip")) {
+			service.fetch(ACCESS, file, session, reported::add);
+		}
+
+		assertEquals(List.of(5L), reported, "the failed export streamed nothing, so only the PDF is counted");
+	}
+
+	@Test
+	void theThreeArgumentFetchStillWorksWithoutAListener() throws Exception {
+		StoredFile file = file("file-1", "Report.pdf", "application/pdf");
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1, 2 }));
+
+		try (var session = sessions.open("archives/x.zip")) {
+			assertEquals(2, service.fetch(ACCESS, file, session).content().size());
+		}
+	}
+
+	@Test
 	void fetchValidatesTheFileJustLikeStream() throws Exception {
 		try (var session = sessions.open("archives/x.zip")) {
 			assertThrows(IllegalArgumentException.class, () -> service.fetch(ACCESS,

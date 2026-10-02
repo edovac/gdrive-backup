@@ -117,7 +117,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setSpaces("drive")
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true)
-					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId,version)),"
+					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size)),"
 							+ "nextPageToken,newStartPageToken");
 			configureDriveScope(request, scope);
 			var response = request.execute();
@@ -151,7 +151,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 						.setSpaces("drive")
 						.setSupportsAllDrives(true)
 						.setIncludeItemsFromAllDrives(true)
-						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId,version),nextPageToken");
+						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size),nextPageToken");
 				configureFileScope(request, scope);
 				var response = request.execute();
 				if (response.getFiles() != null) {
@@ -219,14 +219,18 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		}
 	}
 
-	/** {@code headRevisionId} of the resulting StoredFile is the file's content revision marker: see {@link #contentRevisionOf}. */
+	/**
+	 * {@code headRevisionId} of the resulting StoredFile is the file's content revision marker: see {@link #contentRevisionOf}.
+	 * {@code sizeBytes} is Drive's {@code size}, which only ordinary files have; it is {@code null} for Google-native files.
+	 */
 	static StoredFile mapStoredFile(File file, String ownerScope) {
 		if (file == null) {
 			return null;
 		}
 		String parents = file.getParents() == null ? "" : String.join(",", file.getParents());
 		return new StoredFile(file.getId(), ownerScope, file.getName(), parents, file.getDriveId(),
-				file.getMimeType(), Boolean.TRUE.equals(file.getTrashed()), contentRevisionOf(file), null);
+				file.getMimeType(), Boolean.TRUE.equals(file.getTrashed()), contentRevisionOf(file), null,
+				file.getSize());
 	}
 
 	/**

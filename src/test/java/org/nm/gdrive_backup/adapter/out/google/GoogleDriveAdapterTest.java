@@ -50,6 +50,25 @@ class GoogleDriveAdapterTest {
 	}
 
 	@Test
+	void anOrdinaryFilesSizeIsCarriedOverFromDrive() {
+		File pdf = file("file-1", "application/pdf");
+		pdf.setHeadRevisionId("head-7");
+		pdf.setSize(83_886_080L);
+
+		StoredFile stored = GoogleDriveAdapter.mapStoredFile(pdf, "user@example.com");
+
+		assertEquals(83_886_080L, stored.sizeBytes());
+	}
+
+	@Test
+	void aGoogleNativeFileHasNoSize() {
+		File doc = file("file-2", "application/vnd.google-apps.document");
+		doc.setVersion(42L);
+
+		org.junit.jupiter.api.Assertions.assertNull(GoogleDriveAdapter.mapStoredFile(doc, "user@example.com").sizeBytes());
+	}
+
+	@Test
 	void aGoogleNativeFileWithoutAHeadRevisionUsesItsVersionInstead() {
 		File doc = file("file-2", "application/vnd.google-apps.document");
 		doc.setVersion(42L);
