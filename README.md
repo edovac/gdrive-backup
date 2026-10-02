@@ -51,7 +51,7 @@ Use the Maven wrapper from the repository root:
 ./mvnw test                 # unit tests
 ./mvnw verify               # also the opt-in integration tests (*IT)
 ./mvnw spring-boot:run      # launch the app
-./mvnw.cmd -P windows-package -DskipTests -Dapp.version=0.1.0 package   # Windows app-image
+./mvnw.cmd -P windows-package -DskipTests -Drevision=0.1.0 package   # Windows app-image
 ```
 
 Integration tests run against real Google accounts and are skipped unless

@@ -11,7 +11,7 @@ document.
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-10-02
+Last reviewed: 2026-10-03
 
 ### Completed
 
@@ -199,16 +199,17 @@ Last reviewed: 2026-10-02
   zipped folder instead. A `windows-package` Maven profile (Windows-only activation)
   builds it, and a non-blocking `windows-latest` CI job builds and uploads it as an
   artifact on every push. Pushing a `v*` tag runs `.github/workflows/release.yml`,
-  which gates on `./mvnw verify`, builds the app-image with `-Dapp.version` taken
+  which gates on `./mvnw verify`, builds the app-image with `-Drevision` taken
   from the tag, and publishes it as `gdrive-backup-<version>-windows-x64.zip` on a
-  GitHub Release with generated notes. Verified end to end on a second, clean Windows machine with
+  GitHub Release with generated notes; a tag with a qualifier (`v1.2.0-rc.1`)
+  publishes a pre-release, and jpackage gets only the numeric part. Verified end to end on a second, clean Windows machine with
   no JDK installed: Settings → import credentials → sign in → run a backup all worked
   from the app-image build.
 
 - [x] Header identity polish: the header shows the app version (from Spring
   Boot's `BuildProperties`, via a new `ApplicationInfo` domain model and
-  `ApplicationInfoConfiguration`, with `app.version` preferred over the
-  Maven `project.version`/`-SNAPSHOT`), the admin's email-domain favicon
+  `ApplicationInfoConfiguration`, showing the Maven project version, which
+  the release sets from the tag through `-Drevision`), the admin's email-domain favicon
   (Google's public favicon service — there is no API for a Workspace org's
   own custom logo), and the signed-in admin's avatar. The avatar comes from
   Drive `about.get` `user(displayName,photoLink)` via the service account

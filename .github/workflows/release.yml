@@ -19,9 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '25'
@@ -41,24 +41,28 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '25'
           cache: maven
 
-      # jpackage only accepts a plain dotted numeric version, so drop the tag's "v".
+      # Drop the tag's "v". A qualifier after "-" (v1.2.0-rc.1) makes a pre-release; the pom strips it from
+      # the version it hands jpackage, which accepts only the numeric part.
       - name: Resolve version
         run: |
           if ($env:GITHUB_REF_TYPE -ne 'tag') { throw "Run this workflow from a v* tag, not '$env:GITHUB_REF_NAME'." }
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          if ($version -notmatch '^\d+(\.\d+){0,2}$') { throw "Tag '$env:GITHUB_REF_NAME' is not vMAJOR[.MINOR[.PATCH]]." }
+          if ($version -notmatch '^\d+(\.\d+){0,2}(-[0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+            throw "Tag '$env:GITHUB_REF_NAME' is not vMAJOR[.MINOR[.PATCH]][-QUALIFIER]."
+          }
           "VERSION=$version" >> $env:GITHUB_ENV
+          "PRERELEASE=$($version.Contains('-'))" >> $env:GITHUB_ENV
 
       - name: Build self-contained app-image
-        run: ./mvnw.cmd -B -P windows-package -DskipTests "-Dapp.version=$env:VERSION" package
+        run: ./mvnw.cmd -B -P windows-package -DskipTests "-Drevision=$env:VERSION" package
 
       # The app-image bundles third-party software whose licenses require their notices to travel with it.
       - name: Add license and notices to the app-image
@@ -70,4 +74,6 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME "gdrive-backup-$env:VERSION-windows-x64.zip" --title "v$env:VERSION" --generate-notes
+        run: |
+          $prerelease = if ($env:PRERELEASE -eq 'True') { @('--prerelease') } else { @() }
+          gh release create $env:GITHUB_REF_NAME "gdrive-backup-$env:VERSION-windows-x64.zip" --title "v$env:VERSION" --generate-notes @prerelease
