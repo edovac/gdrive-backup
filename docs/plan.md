@@ -244,7 +244,7 @@ Last reviewed: 2026-10-02
 ### In progress
 
 - [-] Continue exposing the remaining backend capabilities through the UI.
-- [-] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If one selected drive fails, the run records the failure and continues with the remaining drives, and the completion summary names each failed drive with its reason and any drive never started after a cancel (each drive commits independently, so a failed one replays from its last cursor). An org-wide sweep across every Workspace user remains.
+- [x] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If one selected drive fails, the run records the failure and continues with the remaining drives, and the completion summary names each failed drive with its reason and any drive never started after a cancel (each drive commits independently, so a failed one replays from its last cursor).
 
 ### Not started
 
@@ -291,9 +291,9 @@ of truth for expected behavior.
 - [x] Chain-gap detection and warnings, since deleting an archive now permanently
   destroys the history it held. `ArchiveCatalogService` reports gap warnings,
   shown in the Archive manager.
-- [-] Partial-failure handling and a completion summary: done for the drives
-  selected for one user (a failing drive no longer stops the others); the
-  organization-wide sweep across every Workspace user is still to do.
+- [x] Partial-failure handling and a completion summary for the drives selected
+  for one user: a failing drive no longer stops the others, and a file that
+  cannot be downloaded is skipped and reported instead of failing its drive.
 
 **P2 — operational improvements**
 

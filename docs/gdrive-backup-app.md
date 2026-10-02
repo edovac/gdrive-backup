@@ -3,9 +3,10 @@
 ## Project overview
 
 A Windows desktop application that backs up **Google Drive data (My Drive + Shared
-Drives) for every user in a non-profit Google Workspace organization**, with a
+Drives) of a non-profit Google Workspace organization**, with a
 full-plus-incremental archive history and an admin-facing UI to preview and
-trigger backups.
+trigger backups. A backup job covers the drives the admin selects for one user
+at a time.
 
 The organization runs this periodically against **external hard drives**, not a
 paid cloud-backup service — a non-profit budget constraint, not an arbitrary
@@ -31,8 +32,10 @@ build order live in [plan.md](plan.md).
 
 ## Core requirements (confirmed)
 
-- **Scope**: back up Drive data for *every user in the organization*, not just one
-  account — requires admin-level access.
+- **Scope**: back up Drive data for any user in the organization, one user at a
+  time — requires admin-level access. There is no automatic run across every
+  user: sweeping the whole organization in one job is out of scope, and the
+  admin backs up each user's drives by choosing that user and the drives.
 - **Drive selection**: the admin chooses which drive(s) a backup job covers —
   the user's personal drive, one or more specific Shared Drives, or a
   combination — rather than a job always covering every drive automatically.
@@ -266,7 +269,7 @@ build order live in [plan.md](plan.md).
 
 ### 1. Service account with domain-wide delegation (backend engine)
 
-This is what actually performs the org-wide backup sweep.
+This is what actually performs the backup of the drives the admin selects.
 
 - Created by a Workspace admin in Google Cloud Console; authorized for
   domain-wide delegation in the Admin Console.
@@ -304,7 +307,7 @@ This is what actually performs the org-wide backup sweep.
   identity — whoever signs in is who gets impersonated for those calls.
 - The actual "preview a user's Drive" feature reuses the **service account +
   impersonation** path (pick an org user → impersonate → browse) so there's
-  only one Drive-fetching code path shared between backend sweep and UI
+  only one Drive-fetching code path shared between the backend and the UI
   preview.
 - The OAuth client secrets JSON is imported through **Settings** into
   Windows Credential Manager, like the service-account key.
@@ -868,8 +871,8 @@ backupRoot/archives/<scopeFolder>/archive-<sequenceNumber>-<mode>.zip
   (only characters illegal on Windows — `\ / : * ? " < > |` — are replaced),
   so folder names stay human-readable:
   - Personal drive: `My Drive (<email>)`, e.g. `My Drive (edoardo@example.com)`
-    — the email is required, not optional, since an org-wide admin backs up
-    more than one user's personal drive over time.
+    — the email is required, not optional, since the admin backs up more than
+    one user's personal drive over time.
   - Shared Drive: `<drive name> (<drive_id>)`, e.g. `Finance (0AIJ4kZ...)` —
     the `drive_id` suffix keeps the folder unique and stable even if the
     Shared Drive is later renamed, or another Shared Drive shares its name.
@@ -1016,9 +1019,9 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
     more than one page of items is shown truncated.
 - **Backup trigger**: let the admin select which drive(s) to back up (the
   personal drive and/or specific Shared Drives) and the backup mode, then run
-  full/incremental sync, show per-user progress, package the per-drive archive
-  output for the chosen mode, and surface partial failures (suspended
-  accounts, revoked access, etc. are expected at org scale).
+  full/incremental sync, show per-drive progress, package the per-drive archive
+  output for the chosen mode, and surface partial failures (a drive that fails
+  does not stop the others).
 - **Failed files**: a tab listing the open `download_failures` of every drive
   (path, reason, when last tried), reloaded when the tab is shown after sign-in
   and after each backup. The completion summary on the Backup tab names the

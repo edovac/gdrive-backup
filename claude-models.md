@@ -68,7 +68,6 @@ the kind of work in §3 and §4.
 
 | Task | Model | Rationale |
 |---|---|---|
-| **Organization-wide sweep across every Workspace user** (rest of partial-failure handling) | 🧭 | Plan how to classify per-user failures from the Google adapters (suspended accounts, revoked access, quota) and keep one user's failure from stopping the sweep, on top of the existing per-drive failure handling. Implementation is routine once that's set. |
 | **Expose remaining backend capabilities in the UI** | 🟢 | The pattern is established: a panel in `adapter.in.javafx` with a `*Text` class, an async use-case call, then an FX-thread update. |
 | **`ALL_REVISIONS` revision mode** (not scheduled) | 🔵 | Needs Google API validation first: what `revisions` retrieval supports for binary files versus Google-native exports. Write the research down before implementing. |
 
