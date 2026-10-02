@@ -204,16 +204,12 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		}
 
 		void apply(DriveChange change) {
-			if (change.outOfScope()) {
-				// A file this scope already holds has left it (its ownership moved away, say), so for this backup it
-				// is gone; one it never held is not its business.
-				if (files.containsKey(change.fileId()) || fileMetadataPort.findByFileId(change.fileId()).isPresent()) {
+			if (change.outOfScope() || change.removed()) {
+				// A file this scope already holds has left it (removed, or its ownership moved away, say), so for this
+				// backup it is gone; one it never held is not its business, and gets no event and no archive.
+				if (isKnown(change.fileId())) {
 					remove(change.fileId());
 				}
-				return;
-			}
-			if (change.removed()) {
-				remove(change.fileId());
 				return;
 			}
 			StoredFile current = change.file();
@@ -231,6 +227,10 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			if (shouldBackUpContent(previous, current)) {
 				contentFileIds.add(current.fileId());
 			}
+		}
+
+		private boolean isKnown(String fileId) {
+			return files.containsKey(fileId) || fileMetadataPort.findByFileId(fileId).isPresent();
 		}
 
 		private void remove(String fileId) {

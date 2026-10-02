@@ -94,8 +94,9 @@ class SqliteArchiveDeletionCommitAdapterTest {
 		FileCapture bR1 = captures.findByFileId("b").getFirst();
 		assertEquals(bR1.id(), new SqliteFileMetadataAdapter(database).findByFileId("b").orElseThrow().currentVersionId());
 
+		// Every capture in the obsolete archives is either re-pointed or removed, as the service guarantees.
 		deletion.apply(new DeletionCommit(merged.id(), List.of(incremental.id(), full.id()), Map.of(),
-				List.of(bR1.id())));
+				List.of(bR1.id(), captures.findByFileId("a").get(0).id(), captures.findByFileId("a").get(1).id())));
 
 		assertNull(new SqliteFileMetadataAdapter(database).findByFileId("b").orElseThrow().currentVersionId());
 		assertTrue(captures.findByFileId("b").isEmpty());

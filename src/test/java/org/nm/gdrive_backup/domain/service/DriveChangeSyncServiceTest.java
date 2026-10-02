@@ -99,9 +99,28 @@ class DriveChangeSyncServiceTest {
 						Instant.now(), "archives/x.zip", null, null, false)));
 	}
 
+	private void knownFile(String fileId) {
+		when(metadataPort.findByFileId(fileId)).thenReturn(Optional.of(new StoredFile(fileId, "user@example.com",
+				fileId + ".pdf", "", null, "application/pdf", false, "revision-0", 1L)));
+	}
+
+	@Test
+	void aRemovalOfAFileTheScopeNeverHeldIsIgnored() {
+		baseline("old-token");
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
+				.thenReturn(new DriveChangePage(List.of(new DriveChange("stranger", true, null)), null, "new-token"));
+
+		SyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		assertNull(result.archive());
+		assertTrue(commits.commits.getFirst().events().isEmpty());
+	}
+
 	@Test
 	void drainsPagesAndCommitsOnceWithTheNewTokenAndNoPerPageCheckpoint() {
 		baseline("old-token");
+		knownFile("file-1");
+		knownFile("file-2");
 		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null)), "next-token", null));
 		when(changePort.listChanges(ACCESS, SCOPE, "next-token", PersonalDriveContent.OWNED_ONLY))
@@ -123,6 +142,7 @@ class DriveChangeSyncServiceTest {
 	@Test
 	void chainsTheDeltaOntoTheLatestArchiveAndRecordsTheTokenRange() {
 		baseline("old-token");
+		knownFile("file-1");
 		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY))
 				.thenReturn(new DriveChangePage(List.of(new DriveChange("file-1", true, null)), null, "new-token"));
 
@@ -416,6 +436,7 @@ class DriveChangeSyncServiceTest {
 		StoredFile touched = new StoredFile("file-1", "user@example.com", "A.pdf", "", null, "application/pdf", false,
 				null, null);
 		when(metadataPort.findByFileId("file-1")).thenReturn(Optional.empty());
+		knownFile("file-2");
 		when(changePort.listChanges(ACCESS, SCOPE, "old-token", PersonalDriveContent.OWNED_ONLY)).thenReturn(new DriveChangePage(
 				List.of(new DriveChange("file-1", false, touched), new DriveChange("file-1", true, null),
 						new DriveChange("file-2", true, null)), null, "new-token"));
