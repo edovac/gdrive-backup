@@ -36,6 +36,8 @@ import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.BackupStopMode;
 import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.DownloadFailure;
+import org.nm.gdrive_backup.domain.model.FailureChanges;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
 import org.nm.gdrive_backup.domain.model.RevisionMode;
@@ -43,6 +45,7 @@ import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.model.SyncState;
 import org.nm.gdrive_backup.domain.port.out.ArchivePort;
+import org.nm.gdrive_backup.domain.port.out.DownloadFailurePort;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
 import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
@@ -63,14 +66,24 @@ class InitialDriveSyncServiceTest {
 	private final RecordingSyncCommitPort commits = new RecordingSyncCommitPort(log);
 	private final BackupCancellation cancellation = new BackupCancellation();
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
-	private final InitialDriveSyncService service = new InitialDriveSyncService(listingPort, changePort,
-			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation, () -> 1,
-				() -> PersonalDriveContent.OWNED_ONLY);
+	private final DownloadFailurePort failurePort = mock(DownloadFailurePort.class);
+	private final InitialDriveSyncService service = limitedService(50);
 	private final InitialDriveSyncService parallelService = new InitialDriveSyncService(listingPort, changePort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
 			progressTracker, cancellation, () -> 4,
-				() -> PersonalDriveContent.OWNED_ONLY);
+				() -> PersonalDriveContent.OWNED_ONLY, failurePort, () -> 50);
+
+	private InitialDriveSyncService limitedService(int maxDownloadFailures) {
+		return new InitialDriveSyncService(listingPort, changePort,
+				new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+				progressTracker, cancellation, () -> 1,
+				() -> PersonalDriveContent.OWNED_ONLY, failurePort, () -> maxDownloadFailures);
+	}
+
+	private static DownloadFailure openFailure(String fileId) {
+		return new DownloadFailure(1L, "user@example.com", fileId, fileId, "My Drive/" + fileId, "forbidden",
+				Instant.now(), 1L, true, null);
+	}
 
 	@Test
 	void streamsEveryFileIntoADriveShapedArchiveAndCommitsAfterPublishing() throws Exception {
@@ -260,13 +273,97 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
-	void aDownloadFailureDiscardsTheStagedArchiveAndCommitsNothing() throws Exception {
-		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"));
+	void aFileThatCannotBeDownloadedIsSkippedAndReportedWhileTheRestIsCommitted() throws Exception {
+		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"),
+				file("file-2", "B.pdf", "", "application/pdf", "r1"));
 		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("connection reset"));
+		stubDownload("file-2", "bytes");
+
+		InitialSyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(List.of("open", "publish", "commit"), log);
+		assertEquals(Set.of("B.pdf"), sessions.entries.keySet());
+		PendingCommit commit = commits.commits.getFirst();
+		assertEquals(1, commit.captures().size());
+		assertEquals("token", commit.newSyncState().pageToken());
+		assertEquals("user@example.com", commit.failureChanges().scopeKey());
+		DownloadFailure failure = commit.failureChanges().failed().getFirst();
+		assertEquals(1, commit.failureChanges().failed().size());
+		assertEquals("file-1", failure.fileId());
+		assertEquals("My Drive/A.pdf", failure.drivePath());
+		assertTrue(failure.reason().contains("connection reset"), failure.reason());
+		assertEquals(List.of(failure), result.failures());
+		assertNull(sessions.publishedManifest.files().getFirst().entry());
+	}
+
+	@Test
+	void aFileThatFailedBeforeAndDownloadsNowIsResolvedAndOneNoLongerListedToo() throws Exception {
+		when(failurePort.findOpenByScopeKey("user@example.com")).thenReturn(List.of(
+				openFailure("file-1"), openFailure("deleted-since")));
+		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"));
+		stubDownload("file-1", "bytes");
+
+		InitialSyncResult result = service.synchronize(ACCESS, SCOPE, null);
+
+		FailureChanges changes = commits.commits.getFirst().failureChanges();
+		assertTrue(changes.failed().isEmpty());
+		assertEquals(List.of("file-1", "deleted-since"), changes.resolvedFileIds());
+		assertTrue(result.failures().isEmpty());
+	}
+
+	@Test
+	void aFileThatFailsAgainStaysOpenInsteadOfBeingResolved() throws Exception {
+		when(failurePort.findOpenByScopeKey("user@example.com")).thenReturn(List.of(openFailure("file-1")));
+		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"));
+		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("forbidden"));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		FailureChanges changes = commits.commits.getFirst().failureChanges();
+		assertEquals(1, changes.failed().size());
+		assertTrue(changes.resolvedFileIds().isEmpty());
+	}
+
+	@Test
+	void tooManySkippedFilesEndTheRunWithoutCommittingAnything() throws Exception {
+		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"),
+				file("file-2", "B.pdf", "", "application/pdf", "r1"),
+				file("file-3", "C.pdf", "", "application/pdf", "r1"));
+		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("forbidden"));
+		stubDownload("file-2", "bytes");
+		when(contentPort.download(ACCESS, "file-3")).thenThrow(new IOException("forbidden"));
+
+		IllegalStateException stopped = assertThrows(IllegalStateException.class,
+				() -> limitedService(1).synchronize(ACCESS, SCOPE, null));
+
+		assertTrue(stopped.getMessage().contains("limit is 1"), stopped.getMessage());
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
+	}
+
+	@Test
+	void anUnbrokenStreakOfFailuresEndsTheRunLikeAnOutage() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < DownloadFailureLimit.MAX_CONSECUTIVE_FAILURES; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			when(contentPort.download(ACCESS, "file-" + i)).thenThrow(new IOException("forbidden"));
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		IllegalStateException stopped = assertThrows(IllegalStateException.class,
+				() -> service.synchronize(ACCESS, SCOPE, null));
+
+		assertTrue(stopped.getMessage().contains("in a row"), stopped.getMessage());
+		assertTrue(commits.commits.isEmpty());
+	}
+
+	@Test
+	void aFailureThatIsNotAboutOneFileStillEndsTheRun() throws Exception {
+		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"));
+		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IllegalStateException("not signed in"));
 
 		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
 
-		assertEquals(List.of("open", "discard"), log);
 		assertTrue(commits.commits.isEmpty());
 	}
 
@@ -405,7 +502,7 @@ class InitialDriveSyncServiceTest {
 		stubDrive("token", file("file-1", "A.pdf", "", "application/pdf", "r1"));
 		when(contentPort.download(ACCESS, "file-1")).thenThrow(new IOException("connection reset"));
 
-		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
+		service.synchronize(ACCESS, SCOPE, null);
 
 		verify(progressTracker).downloadStarted("file-1", "A.pdf", "My Drive/A.pdf", null);
 		verify(progressTracker).downloadAborted("file-1");
@@ -627,7 +724,7 @@ class InitialDriveSyncServiceTest {
 	}
 
 	@Test
-	void aDownloadFailureAmongParallelDownloadsDiscardsTheStagedArchiveAndCommitsNothing() throws Exception {
+	void aDownloadFailureAmongParallelDownloadsSkipsOnlyThatFile() throws Exception {
 		List<StoredFile> files = new ArrayList<>();
 		for (int i = 0; i < 6; i++) {
 			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
@@ -642,11 +739,12 @@ class InitialDriveSyncServiceTest {
 		}
 		stubDrive("token", files.toArray(StoredFile[]::new));
 
-		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
 
-		assertEquals(List.of("open", "discard"), log);
-		assertTrue(commits.commits.isEmpty());
-		assertTrue(sessions.allStagedReleased(), "content fetched but never written is released");
+		assertEquals(List.of("open", "publish", "commit"), log);
+		assertEquals(5, sessions.entries.size());
+		assertEquals(List.of("file-2"), result.failures().stream().map(DownloadFailure::fileId).toList());
+		assertTrue(sessions.allStagedReleased(), "every staged spool is written or released");
 	}
 
 	@Test

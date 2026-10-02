@@ -26,7 +26,16 @@ public class SqliteDatabase {
 	}
 
 	Connection openConnection() throws SQLException {
-		return DriverManager.getConnection(jdbcUrl(databasePath.get()));
+		Connection connection = DriverManager.getConnection(jdbcUrl(databasePath.get()));
+		try (Statement statement = connection.createStatement()) {
+			// Both settings are per connection, so every connection needs them.
+			statement.execute("PRAGMA foreign_keys = ON");
+			statement.execute("PRAGMA busy_timeout = 5000");
+		} catch (SQLException exception) {
+			connection.close();
+			throw exception;
+		}
+		return connection;
 	}
 
 	public void initialize() {

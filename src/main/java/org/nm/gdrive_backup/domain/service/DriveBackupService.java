@@ -120,7 +120,7 @@ public class DriveBackupService implements DriveBackupUseCase {
 		}
 		try {
 			var result = changeSyncUseCase.synchronize(access, scope, scopeDisplayName);
-			return new BackupResult(result.scope(), result.changeCount(), false, result.cancelled());
+			return new BackupResult(result.scope(), result.changeCount(), false, result.cancelled(), null, result.failures());
 		} catch (StaleDrivePageTokenException exception) {
 			return runFullInventory(access, scope, scopeDisplayName);
 		}
@@ -130,6 +130,6 @@ public class DriveBackupService implements DriveBackupUseCase {
 	// failed or cancelled full run leaves the previous cursor (and the incremental chain) intact.
 	private BackupResult runFullInventory(ServiceAccountAccess access, DriveScope scope, String scopeDisplayName) {
 		var result = initialSyncUseCase.synchronize(access, scope, scopeDisplayName);
-		return new BackupResult(result.scope(), result.fileCount(), true, result.cancelled());
+		return new BackupResult(result.scope(), result.fileCount(), true, result.cancelled(), null, result.failures());
 	}
 }

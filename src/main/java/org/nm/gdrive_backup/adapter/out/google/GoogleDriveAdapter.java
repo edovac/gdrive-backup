@@ -46,15 +46,23 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	@Override
 	public List<AvailableDrive> listAvailableDrives(ServiceAccountAccess access) {
 		try {
-			Drive.Drives.List request = drive(access).drives().list()
-					.setPageSize(100)
-					.setFields("drives(id,name),nextPageToken");
-			List<AvailableDrive> drives = request.execute().getDrives().stream()
-					.map(sharedDrive -> new AvailableDrive(sharedDrive.getId(), sharedDrive.getName(), true))
-					.toList();
-			return java.util.stream.Stream.concat(
-					java.util.stream.Stream.of(new AvailableDrive("root", "My Drive", false)),
-					drives.stream()).toList();
+			Drive drive = drive(access);
+			List<AvailableDrive> drives = new java.util.ArrayList<>();
+			drives.add(new AvailableDrive("root", "My Drive", false));
+			String pageToken = null;
+			do {
+				Drive.Drives.List request = drive.drives().list()
+						.setPageSize(100)
+						.setPageToken(pageToken)
+						.setFields("drives(id,name),nextPageToken");
+				var response = retry.call(request::execute);
+				if (response.getDrives() != null) {
+					response.getDrives().forEach(
+							sharedDrive -> drives.add(new AvailableDrive(sharedDrive.getId(), sharedDrive.getName(), true)));
+				}
+				pageToken = response.getNextPageToken();
+			} while (pageToken != null && !pageToken.isBlank());
+			return List.copyOf(drives);
 		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list available drives", exception);
 		}
@@ -64,13 +72,8 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	public List<DriveItem> listMyDriveItems(ServiceAccountAccess access, String parentId) {
 		String effectiveParentId = parentId == null || parentId.isBlank() ? DEFAULT_PARENT_ID : parentId;
 		try {
-			Drive.Files.List request = drive(access).files().list()
-					.setQ("'" + effectiveParentId + "' in parents")
-					.setSpaces("drive")
-					.setFields("files(id,name,mimeType,driveId,trashed),nextPageToken")
-					.setSupportsAllDrives(true)
-					.setIncludeItemsFromAllDrives(true);
-			return mapFiles(request.execute().getFiles());
+			return listItems(access, "My Drive", request -> request
+					.setQ("'" + quoted(effectiveParentId) + "' in parents"));
 		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list My Drive items", exception);
 		}
@@ -82,18 +85,39 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 			throw new IllegalArgumentException("driveId must not be blank");
 		}
 		try {
-			Drive.Files.List request = drive(access).files().list()
-					.setQ("'" + driveId + "' in parents")
+			return listItems(access, "Shared Drive", request -> request
+					.setQ("'" + quoted(driveId) + "' in parents")
 					.setCorpora("drive")
-					.setDriveId(driveId)
+					.setDriveId(driveId));
+		} catch (IOException exception) {
+			throw new GoogleDriveException("Unable to list Shared Drive items", exception);
+		}
+	}
+
+	/** Every item of a folder, following the page tokens: a folder past one page must not look truncated. */
+	private List<DriveItem> listItems(ServiceAccountAccess access, String what,
+			java.util.function.UnaryOperator<Drive.Files.List> scope) throws IOException {
+		Drive drive = drive(access);
+		List<DriveItem> items = new java.util.ArrayList<>();
+		String pageToken = null;
+		do {
+			Drive.Files.List request = scope.apply(drive.files().list())
+					.setPageSize(1000)
+					.setPageToken(pageToken)
 					.setSpaces("drive")
 					.setFields("files(id,name,mimeType,driveId,trashed),nextPageToken")
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true);
-			return mapFiles(request.execute().getFiles());
-		} catch (IOException exception) {
-			throw new GoogleDriveException("Unable to list Shared Drive items", exception);
-		}
+			var response = retry.call(request::execute);
+			items.addAll(mapFiles(response.getFiles()));
+			pageToken = response.getNextPageToken();
+		} while (pageToken != null && !pageToken.isBlank());
+		return List.copyOf(items);
+	}
+
+	/** An id for use inside a single-quoted {@code q} string: the backslash and the quote are escaped. */
+	static String quoted(String value) {
+		return value.replace("\\", "\\\\").replace("'", "\\'");
 	}
 
 	@Override
@@ -102,7 +126,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 			Drive.Changes.GetStartPageToken request = drive(access).changes().getStartPageToken()
 					.setSupportsAllDrives(true);
 			configureDriveScope(request, scope);
-			return request.execute().getStartPageToken();
+			return retry.call(request::execute).getStartPageToken();
 		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to get Drive change start token", exception);
 		}
@@ -123,7 +147,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size,"
 							+ "ownedByMe)),nextPageToken,newStartPageToken");
 			configureDriveScope(request, scope);
-			var response = request.execute();
+			var response = retry.call(request::execute);
 			List<DriveChange> changes = response.getChanges() == null ? List.of() : response.getChanges().stream()
 				.map(change -> mapChange(change, scope, content))
 				.toList();
@@ -155,7 +179,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 						.setIncludeItemsFromAllDrives(!ownedOnly)
 						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size),nextPageToken");
 				configureFileScope(request, scope);
-				var response = request.execute();
+				var response = retry.call(request::execute);
 				if (response.getFiles() != null) {
 					files.addAll(response.getFiles().stream()
 							.map(file -> mapStoredFile(file, scope.key())).toList());

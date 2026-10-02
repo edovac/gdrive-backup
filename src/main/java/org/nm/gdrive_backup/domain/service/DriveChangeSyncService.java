@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
@@ -22,7 +23,10 @@ import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveChange;
 import org.nm.gdrive_backup.domain.model.DriveChangePage;
 import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.DownloadFailure;
+import org.nm.gdrive_backup.domain.model.FailureChanges;
 import org.nm.gdrive_backup.domain.model.FetchedFile;
+import org.nm.gdrive_backup.domain.model.FileDownloadException;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.StreamedFile;
@@ -35,6 +39,7 @@ import org.nm.gdrive_backup.domain.model.SyncResult;
 import org.nm.gdrive_backup.domain.model.SyncState;
 import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.ArchiveSessionPort;
+import org.nm.gdrive_backup.domain.port.out.DownloadFailurePort;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
@@ -58,12 +63,27 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final BackupCancellation cancellation;
 	private final IntSupplier downloadConcurrency;
 	private final Supplier<PersonalDriveContent> personalDriveContent;
+	private final DownloadFailurePort failurePort;
+	private final IntSupplier maxDownloadFailures;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
 			BackupProgressTracker progressTracker, BackupCancellation cancellation, IntSupplier downloadConcurrency,
 			Supplier<PersonalDriveContent> personalDriveContent) {
+		this(changePort, syncStatePort, fileMetadataPort, contentStreamingService, archiveSessionPort,
+				archiveRunPlanner, syncCommitPort, progressTracker, cancellation, downloadConcurrency,
+				personalDriveContent, NoDownloadFailures.INSTANCE, () -> DownloadFailureLimit.DEFAULT_MAX_FAILURES);
+	}
+
+	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
+			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
+			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
+			BackupProgressTracker progressTracker, BackupCancellation cancellation, IntSupplier downloadConcurrency,
+			Supplier<PersonalDriveContent> personalDriveContent, DownloadFailurePort failurePort,
+			IntSupplier maxDownloadFailures) {
+		this.failurePort = failurePort;
+		this.maxDownloadFailures = maxDownloadFailures;
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
@@ -108,10 +128,19 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			return new SyncResult(scope, changeCount, null, null, true);
 		}
 
+		// Files skipped by earlier runs are tried again whether or not Drive reports a change to them; the cursor
+		// has moved past the change that first failed, so nothing else would bring them back.
+		Set<String> openFailureFileIds = failurePort.findOpenByScopeKey(scope.key()).stream()
+				.map(DownloadFailure::fileId).collect(Collectors.toCollection(LinkedHashSet::new));
+		pending.addRetries(openFailureFileIds);
+		Set<String> fileIdsToFetch = pending.fileIdsToFetch();
+
 		SyncState newState = new SyncState(scope.key(), pageToken);
 		List<StoredFile> files = new ArrayList<>(pending.files.values());
-		if (!pending.hasAnythingToArchive()) {
-			syncCommitPort.commit(new PendingCommit(null, files, List.of(), List.of(), newState));
+		if (!pending.hasAnythingToArchive() && fileIdsToFetch.isEmpty()) {
+			// Nothing was fetched, so no open failure can fail again: those left are gone from Drive or need no backup.
+			syncCommitPort.commit(new PendingCommit(null, files, List.of(), List.of(), newState,
+					new FailureChanges(scope.key(), List.of(), List.copyOf(openFailureFileIds))));
 			return new SyncResult(scope, changeCount, pageToken, null, false);
 		}
 
@@ -126,7 +155,8 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 					DrivePathResolver.rootLabel(scope, scopeDisplayNameOrNull),
 					id -> pending.files.containsKey(id) ? pending.files.get(id)
 							: earlierRuns.computeIfAbsent(id, fileMetadataPort::findByFileId).orElse(null));
-			boolean completed = contentFetcher.process(List.copyOf(pending.contentFileIds), fileId -> true,
+			DownloadFailureLimit failureLimit = new DownloadFailureLimit(maxDownloadFailures.getAsInt());
+			boolean completed = contentFetcher.process(List.copyOf(fileIdsToFetch), fileId -> true,
 					fileId -> {
 						StoredFile file = pending.files.get(fileId);
 						progressTracker.downloadStarted(fileId, file.name(), drivePaths.pathOf(file), file.sizeBytes());
@@ -134,6 +164,9 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 						try {
 							fetched = contentStreamingService.fetch(access, file, session,
 									bytes -> progressTracker.downloadProgressed(fileId, bytes));
+						} catch (FileDownloadException exception) {
+							progressTracker.downloadAborted(fileId);
+							return DownloadOutcome.failed(exception);
 						} catch (RuntimeException | Error exception) {
 							progressTracker.downloadAborted(fileId);
 							throw exception;
@@ -141,13 +174,32 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 						// The exact size, even for a file too quick to report while it streamed.
 						progressTracker.downloadProgressed(fileId, fetched.content().size());
 						progressTracker.downloadFinished(fileId);
-						return fetched;
+						return DownloadOutcome.fetched(fetched);
 					},
 					cancellation::isImmediateStopRequested,
-					(fileId, fetched) -> streamedByFileId.put(fileId, contentStreamingService.write(
-							pending.files.get(fileId), fetched, session, "content/" + fileId)));
+					(fileId, outcome) -> {
+						StoredFile file = pending.files.get(fileId);
+						if (outcome.failure() != null) {
+							failureLimit.failed(DownloadFailure.found(scope.key(), fileId, file.name(),
+									drivePaths.pathOf(file), DownloadOutcome.reasonOf(outcome.failure()), Instant.now()));
+						} else {
+							failureLimit.succeeded();
+							streamedByFileId.put(fileId, contentStreamingService.write(file, outcome.fetched(), session,
+									"content/" + fileId));
+						}
+					});
 			if (!completed) {
 				return new SyncResult(scope, changeCount, null, null, true);
+			}
+			List<DownloadFailure> failures = failureLimit.failures();
+			Set<String> failedFileIds = failures.stream().map(DownloadFailure::fileId).collect(Collectors.toSet());
+			FailureChanges failureChanges = new FailureChanges(scope.key(), failures,
+					openFailureFileIds.stream().filter(id -> !failedFileIds.contains(id)).toList());
+			if (!pending.hasAnythingToArchive() && streamedByFileId.isEmpty()) {
+				// Only retries of earlier failures ran, and they all failed again: an archive holding nothing new would
+				// be noise, so the report is updated and the staged archive is discarded.
+				syncCommitPort.commit(new PendingCommit(null, files, List.of(), List.of(), newState, failureChanges));
+				return new SyncResult(scope, changeCount, pageToken, null, false, failures);
 			}
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();
@@ -156,8 +208,9 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 					plan.baseSequenceNumber(), createdAt, fromPageToken, pageToken, List.of(),
 					manifestFiles(pending, streamedByFileId), manifestEvents(pending.events)));
 			List<FileCapture> captures = streamedByFileId.values().stream().map(StreamedFile::capture).toList();
-			Archive saved = syncCommitPort.commit(new PendingCommit(archive, files, pending.events, captures, newState));
-			return new SyncResult(scope, changeCount, pageToken, saved, false);
+			Archive saved = syncCommitPort.commit(
+					new PendingCommit(archive, files, pending.events, captures, newState, failureChanges));
+			return new SyncResult(scope, changeCount, pageToken, saved, false, failures);
 		} catch (IOException exception) {
 			throw new IllegalStateException("Unable to write archive " + plan.relativeTargetPath(), exception);
 		}
@@ -192,8 +245,33 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		final Map<String, StoredFile> files = new LinkedHashMap<>();
 		final List<FileEvent> events = new ArrayList<>();
 		final Set<String> contentFileIds = new LinkedHashSet<>();
+		/** Files an earlier run skipped that are fetched again; they alone never make a run worth an archive. */
+		final Set<String> retryFileIds = new LinkedHashSet<>();
 		final Set<String> removedFileIds = new LinkedHashSet<>();
 		private boolean sawNewFile;
+
+		Set<String> fileIdsToFetch() {
+			Set<String> ids = new LinkedHashSet<>(contentFileIds);
+			ids.addAll(retryFileIds);
+			return ids;
+		}
+
+		/** Queues the skipped files that still exist, are not in the trash and have content to fetch. */
+		void addRetries(Set<String> skippedFileIds) {
+			for (String fileId : skippedFileIds) {
+				if (removedFileIds.contains(fileId) || contentFileIds.contains(fileId)) {
+					continue;
+				}
+				StoredFile known = files.get(fileId);
+				if (known == null) {
+					known = fileMetadataPort.findByFileId(fileId).orElse(null);
+				}
+				if (known != null && !known.trashed() && FileContentStreamingService.hasBackableContent(known)) {
+					files.putIfAbsent(fileId, known);
+					retryFileIds.add(fileId);
+				}
+			}
+		}
 
 		/**
 		 * A file seen for the first time changes the tree even with no event and no content (a new folder, a Form),
@@ -204,16 +282,12 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		}
 
 		void apply(DriveChange change) {
-			if (change.outOfScope()) {
-				// A file this scope already holds has left it (its ownership moved away, say), so for this backup it
-				// is gone; one it never held is not its business.
-				if (files.containsKey(change.fileId()) || fileMetadataPort.findByFileId(change.fileId()).isPresent()) {
+			if (change.outOfScope() || change.removed()) {
+				// A file this scope already holds has left it (removed, or its ownership moved away, say), so for this
+				// backup it is gone; one it never held is not its business, and gets no event and no archive.
+				if (isKnown(change.fileId())) {
 					remove(change.fileId());
 				}
-				return;
-			}
-			if (change.removed()) {
-				remove(change.fileId());
 				return;
 			}
 			StoredFile current = change.file();
@@ -231,6 +305,10 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			if (shouldBackUpContent(previous, current)) {
 				contentFileIds.add(current.fileId());
 			}
+		}
+
+		private boolean isKnown(String fileId) {
+			return files.containsKey(fileId) || fileMetadataPort.findByFileId(fileId).isPresent();
 		}
 
 		private void remove(String fileId) {

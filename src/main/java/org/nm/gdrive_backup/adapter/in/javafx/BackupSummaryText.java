@@ -14,11 +14,11 @@ public final class BackupSummaryText {
 	}
 
 	public static String summary(List<BackupResult> results, List<AvailableDrive> selectedDrives, boolean cancelled) {
-		long failed = results.stream().filter(BackupResult::failed).count();
-		StringBuilder text = new StringBuilder(headline(failed, cancelled));
+		StringBuilder text = new StringBuilder(headline(results, cancelled));
 		for (BackupResult result : results) {
 			text.append("\n").append(scopeLabel(result.scope(), selectedDrives)).append(": ")
 					.append(itemSummary(result));
+			text.append(FailedFilesText.summaryLines(result.skippedFiles()));
 		}
 		// Results follow the selection order and a stop only ever cuts the run short, so the rest never started.
 		for (AvailableDrive drive : selectedDrives.subList(Math.min(results.size(), selectedDrives.size()),
@@ -31,15 +31,19 @@ public final class BackupSummaryText {
 
 	/** The headline alone, e.g. for the Backup tab's footer once each drive's own row shows its own outcome. */
 	public static String headline(List<BackupResult> results, boolean cancelled) {
-		return headline(results.stream().filter(BackupResult::failed).count(), cancelled);
-	}
-
-	private static String headline(long failed, boolean cancelled) {
+		long failed = results.stream().filter(BackupResult::failed).count();
+		long skipped = results.stream().mapToLong(result -> result.skippedFiles().size()).sum();
+		String skippedText = skipped + " file(s) could not be backed up";
 		if (cancelled) {
-			return "Synchronization cancelled." + (failed > 0 ? " " + failed + " drive(s) failed." : "");
+			return "Synchronization cancelled." + (failed > 0 ? " " + failed + " drive(s) failed." : "")
+					+ (skipped > 0 ? " " + skippedText + "." : "");
 		}
-		return failed == 0 ? "Synchronization complete."
-				: "Synchronization complete with " + failed + " failed drive(s).";
+		if (failed == 0) {
+			return skipped == 0 ? "Synchronization complete."
+					: "Synchronization complete, but " + skippedText + ".";
+		}
+		return "Synchronization complete with " + failed + " failed drive(s)"
+				+ (skipped > 0 ? " and " + skippedText : "") + ".";
 	}
 
 	static String itemSummary(BackupResult result) {

@@ -3,18 +3,23 @@ package org.nm.gdrive_backup.domain.service;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest;
 import org.nm.gdrive_backup.domain.model.ArchiveManifest.ManifestFile;
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveScope;
+import org.nm.gdrive_backup.domain.model.DownloadFailure;
+import org.nm.gdrive_backup.domain.model.FailureChanges;
 import org.nm.gdrive_backup.domain.model.FetchedFile;
+import org.nm.gdrive_backup.domain.model.FileDownloadException;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.InitialSyncResult;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
@@ -27,6 +32,7 @@ import org.nm.gdrive_backup.domain.model.SyncState;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.ArchiveSessionPort;
 import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
+import org.nm.gdrive_backup.domain.port.out.DownloadFailurePort;
 import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
 import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
 
@@ -46,12 +52,27 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	private final BackupCancellation cancellation;
 	private final IntSupplier downloadConcurrency;
 	private final Supplier<PersonalDriveContent> personalDriveContent;
+	private final DownloadFailurePort failurePort;
+	private final IntSupplier maxDownloadFailures;
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileContentStreamingService contentStreamingService, ArchiveSessionPort archiveSessionPort,
 			ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort, BackupProgressTracker progressTracker,
 			BackupCancellation cancellation, IntSupplier downloadConcurrency,
 			Supplier<PersonalDriveContent> personalDriveContent) {
+		this(fileListingPort, changePort, contentStreamingService, archiveSessionPort, archiveRunPlanner,
+				syncCommitPort, progressTracker, cancellation, downloadConcurrency, personalDriveContent,
+				NoDownloadFailures.INSTANCE, () -> DownloadFailureLimit.DEFAULT_MAX_FAILURES);
+	}
+
+	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
+			FileContentStreamingService contentStreamingService, ArchiveSessionPort archiveSessionPort,
+			ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort, BackupProgressTracker progressTracker,
+			BackupCancellation cancellation, IntSupplier downloadConcurrency,
+			Supplier<PersonalDriveContent> personalDriveContent, DownloadFailurePort failurePort,
+			IntSupplier maxDownloadFailures) {
+		this.failurePort = failurePort;
+		this.maxDownloadFailures = maxDownloadFailures;
 		this.fileListingPort = fileListingPort;
 		this.changePort = changePort;
 		this.contentStreamingService = contentStreamingService;
@@ -90,6 +111,11 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 			}
 			Set<String> reservedEntryNames = Set.copyOf(entryNames.values());
 			int[] processed = {0};
+			// A file whose content cannot be fetched is skipped and reported rather than failing the run; every file
+			// is attempted again by each full run, so the failures open from before are re-tried here.
+			Set<String> openFailureFileIds = failurePort.findOpenByScopeKey(scope.key()).stream()
+					.map(DownloadFailure::fileId).collect(Collectors.toCollection(LinkedHashSet::new));
+			DownloadFailureLimit failureLimit = new DownloadFailureLimit(maxDownloadFailures.getAsInt());
 			// Read per run, so a change in Settings applies to the next run and never mid-run.
 			ParallelContentFetcher contentFetcher = new ParallelContentFetcher(downloadConcurrency.getAsInt());
 			// Downloads overlap and each is written to the archive as soon as it completes, so one very large file
@@ -103,6 +129,10 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 						try {
 							fetched = contentStreamingService.fetch(access, file, session,
 									bytes -> progressTracker.downloadProgressed(file.fileId(), bytes));
+						} catch (FileDownloadException exception) {
+							progressTracker.downloadAborted(file.fileId());
+							progressTracker.itemProcessed(file.name());
+							return DownloadOutcome.failed(exception);
 						} catch (RuntimeException | Error exception) {
 							progressTracker.downloadAborted(file.fileId());
 							throw exception;
@@ -111,21 +141,29 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 						progressTracker.downloadProgressed(file.fileId(), fetched.content().size());
 						progressTracker.downloadFinished(file.fileId());
 						progressTracker.itemProcessed(file.name());
-						return fetched;
+						return DownloadOutcome.fetched(fetched);
 					},
 					cancellation::isImmediateStopRequested,
-					(file, fetched) -> {
-						if (fetched != null) {
-							streamedByFileId.put(file.fileId(), contentStreamingService.write(file, fetched, session,
-									entryNames.get(file.fileId()), reservedEntryNames));
-						} else {
+					(file, outcome) -> {
+						if (outcome == null) {
 							progressTracker.itemProcessed(file.name());
+						} else if (outcome.failure() != null) {
+							failureLimit.failed(DownloadFailure.found(scope.key(), file.fileId(), file.name(),
+									drivePaths.pathOf(file), DownloadOutcome.reasonOf(outcome.failure()), Instant.now()));
+						} else {
+							failureLimit.succeeded();
+							streamedByFileId.put(file.fileId(), contentStreamingService.write(file, outcome.fetched(),
+									session, entryNames.get(file.fileId()), reservedEntryNames));
 						}
 						processed[0]++;
 					});
 			if (!completed) {
 				return new InitialSyncResult(scope, processed[0], null, null, true);
 			}
+			List<DownloadFailure> failures = failureLimit.failures();
+			// Whatever was open before and did not fail again was captured now or no longer needs a backup.
+			Set<String> failedFileIds = failures.stream().map(DownloadFailure::fileId).collect(Collectors.toSet());
+			List<String> resolvedFileIds = openFailureFileIds.stream().filter(id -> !failedFileIds.contains(id)).toList();
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();
 			Archive archive = plan.toArchive(createdAt, null, null);
@@ -133,8 +171,8 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 					null, createdAt, null, null, List.of(), manifestFiles(files, streamedByFileId), List.of()));
 			List<FileCapture> captures = streamedByFileId.values().stream().map(StreamedFile::capture).toList();
 			Archive saved = syncCommitPort.commit(new PendingCommit(archive, files, List.of(), captures,
-					new SyncState(scope.key(), pageToken)));
-			return new InitialSyncResult(scope, files.size(), pageToken, saved, false);
+					new SyncState(scope.key(), pageToken), new FailureChanges(scope.key(), failures, resolvedFileIds)));
+			return new InitialSyncResult(scope, files.size(), pageToken, saved, false, failures);
 		} catch (IOException exception) {
 			throw new IllegalStateException("Unable to write archive " + plan.relativeTargetPath(), exception);
 		}

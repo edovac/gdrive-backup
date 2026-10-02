@@ -67,6 +67,12 @@ public class DatabaseConfiguration {
 		return args -> database.initialize();
 	}
 
+	/** Nothing runs yet at launch, so temp files an earlier crash left behind can go. */
+	@Bean
+	ApplicationRunner sweepLeftoverTempFiles(LocalBackupRoot backupRoot) {
+		return args -> backupRoot.sweepLeftovers();
+	}
+
 	/** Every launch starts here; the admin changes the location for the session in the UI. */
 	private static Path defaultDirectory() {
 		return Path.of(System.getProperty("user.home"), ".gdrive-backup");

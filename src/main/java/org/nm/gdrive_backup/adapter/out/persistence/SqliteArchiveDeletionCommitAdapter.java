@@ -69,13 +69,16 @@ public class SqliteArchiveDeletionCommitAdapter implements ArchiveDeletionCommit
 		}
 	}
 
+	/** Events and the download-failure report both name the archive of the run that wrote them. */
 	private static void repointEvents(Connection connection, long fromArchiveId, long mergedArchiveId)
 			throws SQLException {
-		try (var statement = connection.prepareStatement(
-				"UPDATE file_events SET archive_id = ? WHERE archive_id = ?")) {
-			statement.setLong(1, mergedArchiveId);
-			statement.setLong(2, fromArchiveId);
-			statement.executeUpdate();
+		for (String table : new String[] { "file_events", "download_failures" }) {
+			try (var statement = connection.prepareStatement(
+					"UPDATE " + table + " SET archive_id = ? WHERE archive_id = ?")) {
+				statement.setLong(1, mergedArchiveId);
+				statement.setLong(2, fromArchiveId);
+				statement.executeUpdate();
+			}
 		}
 	}
 

@@ -5,10 +5,13 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.nm.gdrive_backup.domain.model.Archive;
+import org.nm.gdrive_backup.domain.model.DownloadFailure;
+import org.nm.gdrive_backup.domain.model.FailureChanges;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.FileEvent;
 import org.nm.gdrive_backup.domain.model.PendingCommit;
@@ -53,6 +56,7 @@ public class SqliteSyncCommitAdapter implements SyncCommitPort {
 				for (Map.Entry<String, Long> entry : latestCaptureIdByFile.entrySet()) {
 					setCurrentVersion(connection, entry.getKey(), entry.getValue());
 				}
+				applyFailureChanges(connection, commit.failureChanges(), archiveId);
 				if (commit.newSyncState() != null) {
 					upsertSyncState(connection, commit.newSyncState().scopeKey(), commit.newSyncState().pageToken());
 				}
@@ -64,6 +68,47 @@ public class SqliteSyncCommitAdapter implements SyncCommitPort {
 			}
 		} catch (SQLException exception) {
 			throw new IllegalStateException("Unable to commit backup run to SQLite", exception);
+		}
+	}
+
+	/**
+	 * Files that were captured or no longer need a backup are closed with a resolution time; a file that failed again
+	 * has its older open row closed without one, since nothing was resolved, and gets a new open row for this run.
+	 */
+	private static void applyFailureChanges(Connection connection, FailureChanges changes, Long archiveId)
+			throws SQLException {
+		if (changes.isEmpty()) {
+			return;
+		}
+		String now = Instant.now().toString();
+		for (String fileId : changes.resolvedFileIds()) {
+			closeOpenFailures(connection, changes.scopeKey(), fileId, now);
+		}
+		for (DownloadFailure failure : changes.failed()) {
+			closeOpenFailures(connection, changes.scopeKey(), failure.fileId(), null);
+			try (var statement = connection.prepareStatement(
+					"INSERT INTO download_failures(scope_key, file_id, file_name, drive_path, reason, failed_at, "
+							+ "archive_id, open) VALUES (?, ?, ?, ?, ?, ?, ?, 1)")) {
+				statement.setString(1, changes.scopeKey());
+				statement.setString(2, failure.fileId());
+				statement.setString(3, failure.fileName());
+				statement.setString(4, failure.drivePath());
+				statement.setString(5, failure.reason());
+				statement.setString(6, failure.failedAt().toString());
+				setNullableLong(statement, 7, archiveId);
+				statement.executeUpdate();
+			}
+		}
+	}
+
+	private static void closeOpenFailures(Connection connection, String scopeKey, String fileId, String resolvedAt)
+			throws SQLException {
+		try (var statement = connection.prepareStatement(
+				"UPDATE download_failures SET open = 0, resolved_at = ? WHERE scope_key = ? AND file_id = ? AND open = 1")) {
+			statement.setString(1, resolvedAt);
+			statement.setString(2, scopeKey);
+			statement.setString(3, fileId);
+			statement.executeUpdate();
 		}
 	}
 

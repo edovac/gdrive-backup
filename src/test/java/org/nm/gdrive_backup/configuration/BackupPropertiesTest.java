@@ -16,18 +16,18 @@ class BackupPropertiesTest {
 
 	@Test
 	void acceptsConcurrenciesFromOneToTheMaximum() {
-		assertEquals(1, new BackupProperties(1, PersonalDriveContent.OWNED_ONLY).downloadConcurrency());
+		assertEquals(1, new BackupProperties(1, PersonalDriveContent.OWNED_ONLY, 50).downloadConcurrency());
 		assertEquals(DownloadConcurrencyService.MAXIMUM,
-				new BackupProperties(DownloadConcurrencyService.MAXIMUM, PersonalDriveContent.OWNED_ONLY)
+				new BackupProperties(DownloadConcurrencyService.MAXIMUM, PersonalDriveContent.OWNED_ONLY, 50)
 						.downloadConcurrency());
 	}
 
 	@Test
 	void rejectsConcurrenciesOutsideTheSupportedRange() {
-		assertThrows(IllegalArgumentException.class, () -> new BackupProperties(0, PersonalDriveContent.OWNED_ONLY));
-		assertThrows(IllegalArgumentException.class, () -> new BackupProperties(-3, PersonalDriveContent.OWNED_ONLY));
+		assertThrows(IllegalArgumentException.class, () -> new BackupProperties(0, PersonalDriveContent.OWNED_ONLY, 50));
+		assertThrows(IllegalArgumentException.class, () -> new BackupProperties(-3, PersonalDriveContent.OWNED_ONLY, 50));
 		assertThrows(IllegalArgumentException.class,
-				() -> new BackupProperties(DownloadConcurrencyService.MAXIMUM + 1, PersonalDriveContent.OWNED_ONLY));
+				() -> new BackupProperties(DownloadConcurrencyService.MAXIMUM + 1, PersonalDriveContent.OWNED_ONLY, 50));
 	}
 
 	@Test
