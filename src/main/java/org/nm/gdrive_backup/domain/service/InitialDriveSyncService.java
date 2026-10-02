@@ -40,11 +40,12 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 	private final SyncCommitPort syncCommitPort;
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
+	private final ParallelContentFetcher contentFetcher;
 
 	public InitialDriveSyncService(DriveFileListingPort fileListingPort, DriveChangePort changePort,
 			FileContentStreamingService contentStreamingService, ArchiveSessionPort archiveSessionPort,
 			ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort, BackupProgressTracker progressTracker,
-			BackupCancellation cancellation) {
+			BackupCancellation cancellation, int downloadConcurrency) {
 		this.fileListingPort = fileListingPort;
 		this.changePort = changePort;
 		this.contentStreamingService = contentStreamingService;
@@ -53,6 +54,7 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		this.syncCommitPort = syncCommitPort;
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
+		this.contentFetcher = new ParallelContentFetcher(downloadConcurrency);
 	}
 
 	@Override
@@ -68,17 +70,22 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planFull(scope, scopeDisplayNameOrNull);
 		Map<String, StreamedFile> streamedByFileId = new HashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
-			int processed = 0;
-			for (StoredFile file : files) {
-				if (cancellation.isImmediateStopRequested()) {
-					return new InitialSyncResult(scope, processed, null, null, true);
-				}
-				if (isEligible(file)) {
-					streamedByFileId.put(file.fileId(), contentStreamingService.stream(access, file, session,
-							resolver.resolveEntryName(file)));
-				}
-				progressTracker.itemProcessed(file.name());
-				processed++;
+			int[] processed = {0};
+			// Downloads overlap, but results come back here in listing order, so the archive, its entry names and
+			// the progress reporting are the same as a one-at-a-time run.
+			boolean completed = contentFetcher.process(files, InitialDriveSyncService::isEligible,
+					file -> contentStreamingService.fetch(access, file, session),
+					cancellation::isImmediateStopRequested,
+					(file, fetched) -> {
+						if (fetched != null) {
+							streamedByFileId.put(file.fileId(), contentStreamingService.write(file, fetched, session,
+									resolver.resolveEntryName(file)));
+						}
+						progressTracker.itemProcessed(file.name());
+						processed[0]++;
+					});
+			if (!completed) {
+				return new InitialSyncResult(scope, processed[0], null, null, true);
 			}
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();

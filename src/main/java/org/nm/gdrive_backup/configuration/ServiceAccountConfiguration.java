@@ -158,9 +158,10 @@ public class ServiceAccountConfiguration {
 			@Qualifier("driveChangePort") DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation, BackupProperties backupProperties) {
 		return new DriveChangeSyncService(changePort, syncStatePort, fileMetadataPort, contentStreamingService,
-				archiveSessionPort, archiveRunPlanner, syncCommitPort, progressTracker, cancellation);
+				archiveSessionPort, archiveRunPlanner, syncCommitPort, progressTracker, cancellation,
+				backupProperties.downloadConcurrency());
 	}
 
 	@Bean
@@ -169,9 +170,10 @@ public class ServiceAccountConfiguration {
 			@Qualifier("driveChangePort") DriveChangePort changePort,
 			FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation, BackupProperties backupProperties) {
 		return new InitialDriveSyncService(fileListingPort, changePort, contentStreamingService, archiveSessionPort,
-				archiveRunPlanner, syncCommitPort, progressTracker, cancellation);
+				archiveRunPlanner, syncCommitPort, progressTracker, cancellation,
+				backupProperties.downloadConcurrency());
 	}
 
 	@Bean

@@ -19,6 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -56,7 +58,10 @@ class InitialDriveSyncServiceTest {
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
 	private final InitialDriveSyncService service = new InitialDriveSyncService(listingPort, changePort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation);
+			progressTracker, cancellation, 1);
+	private final InitialDriveSyncService parallelService = new InitialDriveSyncService(listingPort, changePort,
+			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
+			progressTracker, cancellation, 4);
 
 	@Test
 	void streamsEveryFileIntoADriveShapedArchiveAndCommitsAfterPublishing() throws Exception {
@@ -252,6 +257,148 @@ class InitialDriveSyncServiceTest {
 
 		assertThrows(IllegalStateException.class, () -> service.synchronize(ACCESS, SCOPE, null));
 
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
+	}
+
+	@Test
+	void downloadsInParallelButWritesTheArchiveAndReportsProgressInListingOrder() throws Exception {
+		int count = 8;
+		List<StoredFile> files = new ArrayList<>();
+		CountDownLatch firstWindowStarted = new CountDownLatch(4);
+		for (int i = 0; i < count; i++) {
+			int index = i;
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "revision-" + i));
+			when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+				firstWindowStarted.countDown();
+				// Four downloads must be in flight together, which a one-at-a-time run can never reach.
+				assertTrue(firstWindowStarted.await(5, TimeUnit.SECONDS), "downloads did not overlap");
+				// Earlier files take longer, so they finish after the later ones.
+				Thread.sleep((count - index) * 10L);
+				return new ByteArrayInputStream(new byte[] { (byte) index });
+			});
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		assertEquals(count, result.fileCount());
+		List<String> expectedEntries = files.stream().map(StoredFile::name).toList();
+		assertEquals(expectedEntries, List.copyOf(sessions.entries.keySet()));
+		for (int i = 0; i < count; i++) {
+			assertEquals(i, sessions.entries.get("F" + i + ".pdf")[0]);
+		}
+		assertEquals(expectedEntries,
+				commits.commits.getFirst().captures().stream().map(capture -> capture.entryName()).toList());
+		assertEquals(files.stream().map(StoredFile::fileId).toList(),
+				sessions.publishedManifest.files().stream().map(record -> record.fileId()).toList());
+		InOrder order = inOrder(progressTracker);
+		for (StoredFile file : files) {
+			order.verify(progressTracker).itemProcessed(file.name());
+		}
+		order.verify(progressTracker).packaging();
+		assertEquals(List.of("open", "publish", "commit"), log);
+		assertTrue(sessions.allStagedReleased());
+	}
+
+	@Test
+	void parallelDownloadsStillSkipFoldersAndFilesWithoutContentAndKeepEveryFileInTheListing() throws Exception {
+		StoredFile folder = file("folder-1", "Docs", "", FOLDER, null);
+		StoredFile first = file("file-1", "A.pdf", "folder-1", "application/pdf", "r1");
+		StoredFile form = file("file-2", "Survey", "folder-1", "application/vnd.google-apps.form", "v1");
+		StoredFile second = file("file-3", "B.pdf", "folder-1", "application/pdf", "r1");
+		stubDrive("token", folder, first, form, second);
+		stubDownload("file-1", "a");
+		stubDownload("file-3", "b");
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(List.of("Docs/A.pdf", "Docs/B.pdf"), List.copyOf(sessions.entries.keySet()));
+		assertEquals(List.of(folder, first, form, second), commits.commits.getFirst().files());
+		verify(contentPort, never()).download(ACCESS, "file-2");
+	}
+
+	@Test
+	void contentIsStoredOrCompressedPerFileType() throws Exception {
+		stubDrive("token", file("file-1", "Report.pdf", "", "application/pdf", "r1"),
+				file("file-2", "notes.txt", "", "text/plain", "r1"),
+				file("file-3", "Budget", "", "application/vnd.google-apps.spreadsheet", "v3"));
+		stubDownload("file-1", "pdf");
+		stubDownload("file-2", "text");
+		when(contentPort.export(ACCESS, "file-3",
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		service.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(false, sessions.compressedByEntry.get("Report.pdf"));
+		assertEquals(true, sessions.compressedByEntry.get("notes.txt"));
+		assertEquals(false, sessions.compressedByEntry.get("Budget.xlsx"));
+	}
+
+	@Test
+	void aPdfFallbackDuringParallelDownloadsIsRenamedAgainstTheNamesAlreadyInTheArchive() throws Exception {
+		StoredFile existingPdf = file("file-1", "Report.pdf", "", "application/pdf", "r1");
+		StoredFile doc = file("file-2", "Report", "", "application/vnd.google-apps.document", "v3");
+		stubDrive("token", existingPdf, doc);
+		stubDownload("file-1", "pdf");
+		when(contentPort.export(ACCESS, "file-2",
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+				.thenThrow(new org.nm.gdrive_backup.domain.model.DriveExportLimitException("too large", null));
+		when(contentPort.export(ACCESS, "file-2", "application/pdf"))
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(List.of("Report.pdf", "Report (2).pdf"), List.copyOf(sessions.entries.keySet()));
+		assertEquals("Report (2).pdf", sessions.publishedManifest.files().get(1).entry());
+	}
+
+	@Test
+	void aDownloadFailureAmongParallelDownloadsDiscardsTheStagedArchiveAndCommitsNothing() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 2) {
+				when(contentPort.download(ACCESS, "file-2")).thenAnswer(invocation -> {
+					Thread.sleep(100);
+					throw new IOException("connection reset");
+				});
+			} else {
+				stubDownload("file-" + i, "bytes");
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
+
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
+		assertTrue(sessions.allStagedReleased(), "content fetched but never written is released");
+	}
+
+	@Test
+	void anImmediateStopDuringParallelDownloadsDiscardsTheStagedArchiveAndCommitsNothing() throws Exception {
+		List<StoredFile> files = new ArrayList<>();
+		for (int i = 0; i < 6; i++) {
+			files.add(file("file-" + i, "F" + i + ".pdf", "", "application/pdf", "r1"));
+			if (i == 0) {
+				when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+					cancellation.requestStop(BackupStopMode.IMMEDIATE);
+					return new ByteArrayInputStream(new byte[] { 1 });
+				});
+			} else {
+				stubDownload("file-" + i, "bytes");
+			}
+		}
+		stubDrive("token", files.toArray(StoredFile[]::new));
+
+		InitialSyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertTrue(result.cancelled());
+		assertNull(result.archive());
+		assertNull(result.pageToken());
 		assertEquals(List.of("open", "discard"), log);
 		assertTrue(commits.commits.isEmpty());
 	}

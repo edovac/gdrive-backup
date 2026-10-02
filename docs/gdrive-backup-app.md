@@ -408,7 +408,7 @@ sequenceDiagram
 | Admin SDK (user enumeration) | `google-api-services-admin-directory` |
 | Auth / credentials | `google-auth-library-oauth2-http` (`ServiceAccountCredentials`, `UserCredentials`) |
 | OAuth loopback flow | `google-oauth-client-jetty` or a manual local HTTP listener |
-| Backoff/retry | `google-http-client`'s `ExponentialBackOff` |
+| Backoff/retry | `DriveRetry` in `GoogleDriveAdapter` (exponential backoff with jitter on the parsed Drive error, so rate-limit 403s are told apart from export-size 403s) |
 | Local DB | `org.xerial:sqlite-jdbc`, optionally Spring Data JPA on top |
 | UI | JavaFX (+ `javafx-weaver` for Spring DI into controllers) |
 | Credential storage | `com.microsoft.credentialstorage` (Windows Credential Manager) or JNA |
@@ -566,6 +566,29 @@ storage path both rely on "an email contains `@`, a Drive ID doesn't".
    or cancelled run writes nothing and the next run replays the change feed
    from the last committed cursor. A full run likewise commits its metadata
    snapshot and baseline cursor only after its archive is published.
+7. **Parallel downloads.** Downloads are latency-bound (connection setup and,
+   for Google-native files, Drive's server-side export), so both sync services
+   fetch several files at once — `gdrive-backup.backup.download-concurrency`,
+   default 4, range 1–16. A ZIP can only be written by one thread, so each
+   download is first copied into a spool file next to the staged archive
+   (`.spool-*.tmp`), and a single writer then appends the spooled files to the
+   ZIP **in listing order** (full run) or change-feed order (incremental).
+   Entry order, entry names (including PDF-fallback renames, which depend on the
+   names already taken) and progress reporting are therefore identical to a
+   one-at-a-time run. At most twice the concurrency of fetched files wait to be
+   written, which bounds spool disk use. A stop request, a failed download or a
+   failed write aborts the run exactly as before: outstanding downloads are
+   cancelled, spool files are deleted, the staged ZIP is discarded and nothing
+   is committed. Content that is already in a compressed container (Office and
+   OpenDocument files, PDF, images such as JPEG and PNG, video, compressed audio,
+   archives) is **stored** in the ZIP without compression, since deflating it
+   costs CPU for almost no size gain; everything else is deflated at the fastest
+   level. The spool step is what makes stored entries possible: a ZIP stored
+   entry needs its size and CRC-32 before it is written, and both are known once
+   the content is spooled. Content calls to Drive are retried with exponential
+   backoff on HTTP 429, 5xx, a 403 whose reason is a rate limit, and connection
+   resets or timeouts; any other 403 (for example an export that is too large)
+   is never retried.
 
 ---
 
@@ -694,8 +717,9 @@ stateDiagram-v2
 subtree. **There is no capture store** — file content is never written to disk
 as loose files or as an id-keyed or Drive-shaped folder tree. Content streams
 from Drive (or, for a full archive built from deltas, from earlier archives)
-directly into the ZIP being written, so the only other thing ever on disk is
-the single temp ZIP being staged next to its final location.
+directly into the ZIP being written, so the only other things ever on disk are
+the single temp ZIP being staged next to its final location and the short-lived
+spool files of in-flight downloads beside it.
 
 - A **full** archive gets its folder tree from the `files` metadata at the
   moment the archive is written: real names, collision suffixes, live files
@@ -709,7 +733,10 @@ the single temp ZIP being staged next to its final location.
   re-downloading from Drive (for the current state) or a complete surviving
   chain.
 - Peak extra disk use during a run is one temp ZIP, on the same volume as the
-  final archive so the publishing move stays atomic.
+  final archive so the publishing move stays atomic, plus the spool files of
+  downloads fetched but not yet written (at most twice the download concurrency;
+  see **Sync algorithm**, step 7). Spool files are deleted as they are written
+  and when a run ends or is discarded.
 
 The per-archive manifest identifies its scope (personal drive or a specific
 Shared Drive), backup mode, the files it touched (with enough metadata to place

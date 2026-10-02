@@ -51,11 +51,12 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 	private final SyncCommitPort syncCommitPort;
 	private final BackupProgressTracker progressTracker;
 	private final BackupCancellation cancellation;
+	private final ParallelContentFetcher contentFetcher;
 
 	public DriveChangeSyncService(DriveChangePort changePort, SyncStatePort syncStatePort,
 			FileMetadataPort fileMetadataPort, FileContentStreamingService contentStreamingService,
 			ArchiveSessionPort archiveSessionPort, ArchiveRunPlanner archiveRunPlanner, SyncCommitPort syncCommitPort,
-			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
+			BackupProgressTracker progressTracker, BackupCancellation cancellation, int downloadConcurrency) {
 		this.changePort = changePort;
 		this.syncStatePort = syncStatePort;
 		this.fileMetadataPort = fileMetadataPort;
@@ -65,6 +66,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		this.syncCommitPort = syncCommitPort;
 		this.progressTracker = progressTracker;
 		this.cancellation = cancellation;
+		this.contentFetcher = new ParallelContentFetcher(downloadConcurrency);
 	}
 
 	@Override
@@ -106,12 +108,13 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planIncremental(scope, scopeDisplayNameOrNull);
 		Map<String, StreamedFile> streamedByFileId = new LinkedHashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
-			for (String fileId : pending.contentFileIds) {
-				if (cancellation.isImmediateStopRequested()) {
-					return new SyncResult(scope, changeCount, null, null, true);
-				}
-				streamedByFileId.put(fileId, contentStreamingService.stream(access, pending.files.get(fileId), session,
-						"content/" + fileId));
+			boolean completed = contentFetcher.process(List.copyOf(pending.contentFileIds), fileId -> true,
+					fileId -> contentStreamingService.fetch(access, pending.files.get(fileId), session),
+					cancellation::isImmediateStopRequested,
+					(fileId, fetched) -> streamedByFileId.put(fileId, contentStreamingService.write(
+							pending.files.get(fileId), fetched, session, "content/" + fileId)));
+			if (!completed) {
+				return new SyncResult(scope, changeCount, null, null, true);
 			}
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();

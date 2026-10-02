@@ -11,7 +11,7 @@ document.
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-09-26
+Last reviewed: 2026-10-01
 
 ### Completed
 
@@ -275,6 +275,15 @@ of truth for expected behavior.
 - [x] History view: search backed-up files by name and see one file's renames,
   moves, trashing and captured revisions in time order, with the archive that
   recorded each (`FileHistoryUseCase`, `FileHistoryPanel`, in the History tab).
+
+- [x] Download throughput: both sync services download several files at once
+  (`gdrive-backup.backup.download-concurrency`, default 4) through
+  `ParallelContentFetcher`. Downloads are spooled next to the staged ZIP and
+  written by a single thread in list order, so archives, entry names, progress
+  and the commit protocol are unchanged. Already-compressed content is stored
+  rather than deflated, and Drive content calls retry with backoff (`DriveRetry`).
+  See [download-throughput-plan.md](download-throughput-plan.md) and **Sync
+  algorithm**, step 7.
 
 **P3 — delivery and UX refinements**
 

@@ -35,6 +35,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 	private static final String DEFAULT_PARENT_ID = "root";
 
 	private final GoogleServiceAccountAdapter credentialAdapter;
+	private final DriveRetry retry = DriveRetry.standard();
 
 	public GoogleDriveAdapter(GoogleServiceAccountAdapter credentialAdapter) {
 		this.credentialAdapter = credentialAdapter;
@@ -170,9 +171,9 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 		if (fileId == null || fileId.isBlank()) {
 			throw new IllegalArgumentException("fileId must not be blank");
 		}
-		return drive(access).files().get(fileId)
+		return retry.call(() -> drive(access).files().get(fileId)
 				.setSupportsAllDrives(true)
-				.executeMediaAsInputStream();
+				.executeMediaAsInputStream());
 	}
 
 	@Override
@@ -181,7 +182,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 			throw new IllegalArgumentException("fileId and exportMimeType must not be blank");
 		}
 		try {
-			return drive(access).files().export(fileId, exportMimeType).executeMediaAsInputStream();
+			return retry.call(() -> drive(access).files().export(fileId, exportMimeType).executeMediaAsInputStream());
 		} catch (GoogleJsonResponseException exception) {
 			if (isExportLimitExceeded(exception)) {
 				throw new DriveExportLimitException("Google export exceeds the supported size limit", exception);

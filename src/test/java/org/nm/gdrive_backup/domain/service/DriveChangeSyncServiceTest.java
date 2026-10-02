@@ -20,8 +20,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
+import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.DriveScopeType;
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
@@ -61,7 +65,23 @@ class DriveChangeSyncServiceTest {
 	private final BackupProgressTracker progressTracker = mock(BackupProgressTracker.class);
 	private final DriveChangeSyncService service = new DriveChangeSyncService(changePort, statePort, metadataPort,
 			new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort), commits,
-			progressTracker, cancellation);
+			progressTracker, cancellation, 1);
+
+	private final DriveChangeSyncService parallelService = new DriveChangeSyncService(changePort, statePort,
+			metadataPort, new FileContentStreamingService(contentPort), sessions, new ArchiveRunPlanner(archivePort),
+			commits, progressTracker, cancellation, 4);
+
+	/** Stubs a feed that adds {@code count} new PDFs (file-0 ...) in one page. */
+	private void stubNewFiles(int count) {
+		baseline("old-token");
+		List<DriveChange> changes = new ArrayList<>();
+		for (int i = 0; i < count; i++) {
+			changes.add(new DriveChange("file-" + i, false, new StoredFile("file-" + i, "user@example.com",
+					"F" + i + ".pdf", "", null, "application/pdf", false, "revision-" + i, null)));
+		}
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token"))
+				.thenReturn(new DriveChangePage(changes, null, "new-token"));
+	}
 
 	private void baseline(String token) {
 		when(statePort.findByScopeKey("user@example.com")).thenReturn(Optional.of(new SyncState("user@example.com", token)));
@@ -429,6 +449,93 @@ class DriveChangeSyncServiceTest {
 
 		assertNull(result.archive());
 		assertTrue(sessions.openedPaths.isEmpty());
+	}
+
+	@Test
+	void downloadsChangedFilesInParallelButArchivesThemInTheOrderTheFeedReportedThem() throws Exception {
+		int count = 8;
+		stubNewFiles(count);
+		CountDownLatch firstWindowStarted = new CountDownLatch(4);
+		for (int i = 0; i < count; i++) {
+			int index = i;
+			when(contentPort.download(ACCESS, "file-" + i)).thenAnswer(invocation -> {
+				firstWindowStarted.countDown();
+				// Four downloads must be in flight together, which a one-at-a-time run can never reach.
+				assertTrue(firstWindowStarted.await(5, TimeUnit.SECONDS), "downloads did not overlap");
+				// Earlier files take longer, so they finish after the later ones.
+				Thread.sleep((count - index) * 10L);
+				return new ByteArrayInputStream(new byte[] { (byte) index });
+			});
+		}
+
+		SyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertFalse(result.cancelled());
+		List<String> expectedEntries = IntStream.range(0, count).mapToObj(i -> "content/file-" + i).toList();
+		assertEquals(expectedEntries, List.copyOf(sessions.entries.keySet()));
+		assertEquals(expectedEntries, commits.commits.getFirst().captures().stream().map(FileCapture::entryName).toList());
+		assertEquals(expectedEntries, sessions.publishedManifest.files().stream().map(file -> file.entry()).toList());
+		for (int i = 0; i < count; i++) {
+			assertEquals(i, sessions.entries.get("content/file-" + i)[0]);
+		}
+		assertEquals(List.of("open", "publish", "commit"), log);
+		assertTrue(sessions.allStagedReleased());
+	}
+
+	@Test
+	void changedContentIsStoredOrCompressedPerFileType() throws Exception {
+		baseline("old-token");
+		StoredFile pdf = new StoredFile("pdf-1", "user@example.com", "A.pdf", "", null, "application/pdf", false, "r1", null);
+		StoredFile text = new StoredFile("txt-1", "user@example.com", "B.txt", "", null, "text/plain", false, "r1", null);
+		when(contentPort.download(ACCESS, "pdf-1")).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		when(contentPort.download(ACCESS, "txt-1")).thenReturn(new ByteArrayInputStream(new byte[] { 2 }));
+		when(changePort.listChanges(ACCESS, SCOPE, "old-token")).thenReturn(new DriveChangePage(
+				List.of(new DriveChange("pdf-1", false, pdf), new DriveChange("txt-1", false, text)), null, "new-token"));
+
+		parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertEquals(false, sessions.compressedByEntry.get("content/pdf-1"));
+		assertEquals(true, sessions.compressedByEntry.get("content/txt-1"));
+	}
+
+	@Test
+	void aDownloadFailureAmongParallelDownloadsDiscardsTheDeltaAndCommitsNothing() throws Exception {
+		stubNewFiles(6);
+		for (int i = 0; i < 6; i++) {
+			if (i == 2) {
+				when(contentPort.download(ACCESS, "file-2")).thenAnswer(invocation -> {
+					Thread.sleep(100);
+					throw new IOException("connection reset");
+				});
+			} else {
+				when(contentPort.download(ACCESS, "file-" + i)).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+			}
+		}
+
+		assertThrows(IllegalStateException.class, () -> parallelService.synchronize(ACCESS, SCOPE, null));
+
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
+		assertTrue(sessions.allStagedReleased(), "content fetched but never written is released");
+	}
+
+	@Test
+	void aStopWhileDownloadingInParallelDiscardsTheDeltaAndCommitsNothing() throws Exception {
+		stubNewFiles(6);
+		when(contentPort.download(ACCESS, "file-0")).thenAnswer(invocation -> {
+			cancellation.requestStop(BackupStopMode.IMMEDIATE);
+			return new ByteArrayInputStream(new byte[] { 1 });
+		});
+		for (int i = 1; i < 6; i++) {
+			when(contentPort.download(ACCESS, "file-" + i)).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));
+		}
+
+		SyncResult result = parallelService.synchronize(ACCESS, SCOPE, null);
+
+		assertTrue(result.cancelled());
+		assertNull(result.archive());
+		assertEquals(List.of("open", "discard"), log);
+		assertTrue(commits.commits.isEmpty());
 	}
 
 	@Test

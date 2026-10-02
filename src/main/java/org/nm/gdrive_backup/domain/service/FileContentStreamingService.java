@@ -5,9 +5,11 @@ import java.io.InputStream;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.nm.gdrive_backup.domain.model.ArchiveSession;
 import org.nm.gdrive_backup.domain.model.DriveExportLimitException;
+import org.nm.gdrive_backup.domain.model.FetchedFile;
 import org.nm.gdrive_backup.domain.model.FileCapture;
 import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
@@ -26,6 +28,13 @@ public class FileContentStreamingService {
 				new ExportFormat("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"));
 	private static final String NATIVE_MIME_PREFIX = "application/vnd.google-apps.";
 	private static final ExportFormat PDF_FALLBACK = new ExportFormat("application/pdf", ".pdf");
+	private static final Set<String> ALREADY_COMPRESSED_TYPES = Set.of(
+			"application/pdf", "application/zip", "application/x-zip-compressed", "application/gzip",
+			"application/x-gzip", "application/x-bzip2", "application/x-7z-compressed", "application/vnd.rar",
+			"application/x-rar-compressed", "application/java-archive",
+			"image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif");
+	private static final Set<String> UNCOMPRESSED_AUDIO_TYPES = Set.of(
+			"audio/wav", "audio/x-wav", "audio/wave", "audio/aiff", "audio/x-aiff");
 
 	private final DriveContentPort contentPort;
 
@@ -35,6 +44,14 @@ public class FileContentStreamingService {
 
 	/** Returns an uncommitted capture (no id, no archive id) naming the entry that now holds the content. */
 	public StreamedFile stream(ServiceAccountAccess access, StoredFile file, ArchiveSession session, String entryName) {
+		return write(file, fetch(access, file, session), session, entryName);
+	}
+
+	/**
+	 * Downloads (or exports) the file and stages its bytes in the session, without choosing an entry name or
+	 * touching the archive. Safe to run on several threads at once; {@link #write} then appends the result.
+	 */
+	public FetchedFile fetch(ServiceAccountAccess access, StoredFile file, ArchiveSession session) {
 		if (file == null || file.fileId() == null || file.fileId().isBlank()) {
 			throw new IllegalArgumentException("file with an id is required");
 		}
@@ -43,14 +60,13 @@ public class FileContentStreamingService {
 		}
 		ExportFormat exportFormat = EXPORT_FORMATS.get(file.mimeType());
 		try {
-			return streamContent(access, file, exportFormat, session, entryName);
+			return fetchContent(access, file, exportFormat, session, null);
 		} catch (DriveExportLimitException exception) {
 			if (exportFormat == null) {
 				throw new IllegalStateException("Unexpected export limit for a non-native Drive file", exception);
 			}
-			String fallbackEntry = pdfEntryName(entryName, exportFormat.extension(), session);
 			try {
-				return streamContent(access, file, PDF_FALLBACK, session, fallbackEntry);
+				return fetchContent(access, file, PDF_FALLBACK, session, exportFormat.extension());
 			} catch (DriveExportLimitException fallbackException) {
 				throw new IllegalStateException("Google PDF fallback also exceeded the export limit", fallbackException);
 			} catch (IOException fallbackException) {
@@ -61,17 +77,52 @@ public class FileContentStreamingService {
 		}
 	}
 
-	private StreamedFile streamContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
-			ArchiveSession session, String entryName) throws IOException {
-		// The stream is opened before the entry so an export-limit failure leaves nothing half-written.
+	/**
+	 * Appends fetched content to the archive as {@code entryName} and releases it. Must run on the single thread
+	 * that writes the archive: a PDF fallback renames the entry against the names already taken.
+	 */
+	public StreamedFile write(StoredFile file, FetchedFile fetched, ArchiveSession session, String entryName) {
+		try (fetched) {
+			String finalName = fetched.fallbackFromExtension() == null
+					? entryName
+					: pdfEntryName(entryName, fetched.fallbackFromExtension(), session);
+			String contentMimeType = fetched.exportMimeType() == null ? file.mimeType() : fetched.exportMimeType();
+			long size = session.writeEntry(finalName, fetched.content(), !isAlreadyCompressed(contentMimeType));
+			FileCapture capture = new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(), null,
+					finalName, size);
+			return new StreamedFile(capture, fetched.exportMimeType());
+		} catch (IOException exception) {
+			throw new IllegalStateException(fetched.fallbackFromExtension() == null
+					? "Unable to back up file content"
+					: "Unable to back up file content using PDF fallback", exception);
+		}
+	}
+
+	private FetchedFile fetchContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
+			ArchiveSession session, String fallbackFromExtension) throws IOException {
+		// The stream is opened before anything is staged so an export-limit failure leaves nothing behind.
 		try (InputStream content = exportFormat == null
 				? contentPort.download(access, file.fileId())
 				: contentPort.export(access, file.fileId(), exportFormat.mimeType())) {
-			long size = session.writeEntry(entryName, content);
-			FileCapture capture = new FileCapture(null, file.fileId(), file.headRevisionId(), Instant.now(), null,
-					entryName, size);
-			return new StreamedFile(capture, exportFormat == null ? null : exportFormat.mimeType());
+			return new FetchedFile(session.stage(content), exportFormat == null ? null : exportFormat.mimeType(),
+					fallbackFromExtension);
 		}
+	}
+
+	/**
+	 * Whether a file of this type is already in a compressed container, so deflating it again costs CPU for
+	 * almost no size gain: Office and OpenDocument files are ZIPs, and PDF, archives, JPEG/PNG-style images,
+	 * video and compressed audio are compressed by their own format.
+	 */
+	static boolean isAlreadyCompressed(String mimeType) {
+		if (mimeType == null) {
+			return false;
+		}
+		return ALREADY_COMPRESSED_TYPES.contains(mimeType)
+				|| mimeType.startsWith("application/vnd.openxmlformats-officedocument.")
+				|| mimeType.startsWith("application/vnd.oasis.opendocument.")
+				|| mimeType.startsWith("video/")
+				|| mimeType.startsWith("audio/") && !UNCOMPRESSED_AUDIO_TYPES.contains(mimeType);
 	}
 
 	/**
