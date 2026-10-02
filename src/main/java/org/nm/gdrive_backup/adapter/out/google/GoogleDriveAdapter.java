@@ -49,7 +49,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 			Drive.Drives.List request = drive(access).drives().list()
 					.setPageSize(100)
 					.setFields("drives(id,name),nextPageToken");
-			List<AvailableDrive> drives = request.execute().getDrives().stream()
+			List<AvailableDrive> drives = retry.call(request::execute).getDrives().stream()
 					.map(sharedDrive -> new AvailableDrive(sharedDrive.getId(), sharedDrive.getName(), true))
 					.toList();
 			return java.util.stream.Stream.concat(
@@ -70,7 +70,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setFields("files(id,name,mimeType,driveId,trashed),nextPageToken")
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true);
-			return mapFiles(request.execute().getFiles());
+			return mapFiles(retry.call(request::execute).getFiles());
 		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list My Drive items", exception);
 		}
@@ -90,7 +90,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setFields("files(id,name,mimeType,driveId,trashed),nextPageToken")
 					.setSupportsAllDrives(true)
 					.setIncludeItemsFromAllDrives(true);
-			return mapFiles(request.execute().getFiles());
+			return mapFiles(retry.call(request::execute).getFiles());
 		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to list Shared Drive items", exception);
 		}
@@ -102,7 +102,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 			Drive.Changes.GetStartPageToken request = drive(access).changes().getStartPageToken()
 					.setSupportsAllDrives(true);
 			configureDriveScope(request, scope);
-			return request.execute().getStartPageToken();
+			return retry.call(request::execute).getStartPageToken();
 		} catch (IOException exception) {
 			throw new GoogleDriveException("Unable to get Drive change start token", exception);
 		}
@@ -123,7 +123,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 					.setFields("changes(fileId,removed,file(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size,"
 							+ "ownedByMe)),nextPageToken,newStartPageToken");
 			configureDriveScope(request, scope);
-			var response = request.execute();
+			var response = retry.call(request::execute);
 			List<DriveChange> changes = response.getChanges() == null ? List.of() : response.getChanges().stream()
 				.map(change -> mapChange(change, scope, content))
 				.toList();
@@ -155,7 +155,7 @@ public class GoogleDriveAdapter implements DriveReadPort, DriveChangePort, Drive
 						.setIncludeItemsFromAllDrives(!ownedOnly)
 						.setFields("files(id,name,parents,driveId,mimeType,trashed,headRevisionId,version,size),nextPageToken");
 				configureFileScope(request, scope);
-				var response = request.execute();
+				var response = retry.call(request::execute);
 				if (response.getFiles() != null) {
 					files.addAll(response.getFiles().stream()
 							.map(file -> mapStoredFile(file, scope.key())).toList());

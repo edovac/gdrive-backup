@@ -64,6 +64,41 @@ class FileContentStreamingServiceTest {
 	}
 
 	@Test
+	void startsAFileAgainWhenItsStreamFailsPartWay() throws Exception {
+		StoredFile file = file("file-1", "Report.pdf", "application/pdf");
+		InputStream dropped = new InputStream() {
+			@Override
+			public int read() throws IOException {
+				throw new java.net.SocketException("Connection reset");
+			}
+		};
+		when(contentPort.download(ACCESS, "file-1")).thenReturn(dropped)
+				.thenReturn(new ByteArrayInputStream(new byte[] { 1, 2, 3 }));
+
+		try (var session = sessions.open("archives/x.zip")) {
+			StreamedFile streamed = service.stream(ACCESS, file, session, "Report.pdf");
+
+			assertEquals(3, streamed.capture().sizeBytes());
+		}
+	}
+
+	@Test
+	void givesUpWhenTheStreamKeepsFailing() throws Exception {
+		StoredFile file = file("file-1", "Report.pdf", "application/pdf");
+		when(contentPort.download(ACCESS, "file-1")).thenAnswer(invocation -> new InputStream() {
+			@Override
+			public int read() throws IOException {
+				throw new java.net.SocketException("Connection reset");
+			}
+		});
+
+		try (var session = sessions.open("archives/x.zip")) {
+			assertThrows(IllegalStateException.class, () -> service.stream(ACCESS, file, session, "Report.pdf"));
+		}
+		verify(contentPort, org.mockito.Mockito.times(3)).download(ACCESS, "file-1");
+	}
+
+	@Test
 	void exportsGoogleDocsToDocx() throws Exception {
 		StoredFile file = file("file-1", "Report", "application/vnd.google-apps.document");
 		when(contentPort.export(ACCESS, "file-1", DOCX)).thenReturn(new ByteArrayInputStream(new byte[] { 1 }));

@@ -2,6 +2,7 @@ package org.nm.gdrive_backup.domain.service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -36,6 +37,9 @@ public class FileContentStreamingService {
 			"image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/avif");
 	private static final Set<String> UNCOMPRESSED_AUDIO_TYPES = Set.of(
 			"audio/wav", "audio/x-wav", "audio/wave", "audio/aiff", "audio/x-aiff");
+
+	/** How many times a file is started when its stream fails part-way, the first try included. */
+	private static final int MAX_STREAM_ATTEMPTS = 3;
 
 	private final DriveContentPort contentPort;
 
@@ -122,12 +126,21 @@ public class FileContentStreamingService {
 
 	private FetchedFile fetchContent(ServiceAccountAccess access, StoredFile file, ExportFormat exportFormat,
 			ArchiveSession session, String fallbackFromExtension, LongConsumer onBytesDownloaded) throws IOException {
-		// The stream is opened before anything is staged so an export-limit failure leaves nothing behind.
-		try (InputStream content = exportFormat == null
-				? contentPort.download(access, file.fileId())
-				: contentPort.export(access, file.fileId(), exportFormat.mimeType())) {
-			return new FetchedFile(session.stage(new ReportingInputStream(content, onBytesDownloaded)),
-					exportFormat == null ? null : exportFormat.mimeType(), fallbackFromExtension);
+		for (int attempt = 1;; attempt++) {
+			// The stream is opened before anything is staged so an export-limit failure leaves nothing behind.
+			try (InputStream content = exportFormat == null
+					? contentPort.download(access, file.fileId())
+					: contentPort.export(access, file.fileId(), exportFormat.mimeType())) {
+				return new FetchedFile(session.stage(new ReportingInputStream(content, onBytesDownloaded)),
+						exportFormat == null ? null : exportFormat.mimeType(), fallbackFromExtension);
+			} catch (IOException exception) {
+				// A connection that drops part-way through a large file is routine; the port only retries opening the
+				// stream, so start the file again rather than lose the whole run. A failed stage has already released its spool.
+				if (attempt >= MAX_STREAM_ATTEMPTS || exception instanceof DriveExportLimitException
+						|| exception instanceof InterruptedIOException || Thread.currentThread().isInterrupted()) {
+					throw exception;
+				}
+			}
 		}
 	}
 
