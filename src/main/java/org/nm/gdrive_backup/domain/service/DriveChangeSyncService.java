@@ -44,6 +44,8 @@ import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
 import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Applies Drive's change feed from the saved cursor. Metadata, events and the new cursor are held in memory;
@@ -51,6 +53,8 @@ import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
  * only once that archive is published, so an interrupted run replays from the last committed cursor.
  */
 public class DriveChangeSyncService implements DriveChangeSyncUseCase {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(DriveChangeSyncService.class);
 
 	private final DriveChangePort changePort;
 	private final SyncStatePort syncStatePort;
@@ -105,6 +109,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 		// Read per run, like the download concurrency, so a change in Settings never applies mid-run.
 		PersonalDriveContent content = personalDriveContent.get();
 		PendingChanges pending = new PendingChanges();
+		LOGGER.info("Incremental sync of {} from page token {}", scope.key(), fromPageToken);
 		String pageToken = fromPageToken;
 		int changeCount = 0;
 		String newStartPageToken = null;
@@ -134,11 +139,14 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 				.map(DownloadFailure::fileId).collect(Collectors.toCollection(LinkedHashSet::new));
 		pending.addRetries(openFailureFileIds);
 		Set<String> fileIdsToFetch = pending.fileIdsToFetch();
+		LOGGER.info("Incremental sync of {}: {} change(s), {} file(s) to download, {} earlier failure(s) retried", scope.key(),
+				changeCount, fileIdsToFetch.size(), openFailureFileIds.size());
 
 		SyncState newState = new SyncState(scope.key(), pageToken);
 		List<StoredFile> files = new ArrayList<>(pending.files.values());
 		if (!pending.hasAnythingToArchive() && fileIdsToFetch.isEmpty()) {
 			// Nothing was fetched, so no open failure can fail again: those left are gone from Drive or need no backup.
+			LOGGER.info("Incremental sync of {}: nothing changed, no archive written", scope.key());
 			syncCommitPort.commit(new PendingCommit(null, files, List.of(), List.of(), newState,
 					new FailureChanges(scope.key(), List.of(), List.copyOf(openFailureFileIds))));
 			return new SyncResult(scope, changeCount, pageToken, null, false);
@@ -180,6 +188,7 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 					(fileId, outcome) -> {
 						StoredFile file = pending.files.get(fileId);
 						if (outcome.failure() != null) {
+							LOGGER.warn("Skipping {} ({}): {}", file.name(), fileId, DownloadOutcome.reasonOf(outcome.failure()));
 							failureLimit.failed(DownloadFailure.found(scope.key(), fileId, file.name(),
 									drivePaths.pathOf(file), DownloadOutcome.reasonOf(outcome.failure()), Instant.now()));
 						} else {
@@ -210,8 +219,11 @@ public class DriveChangeSyncService implements DriveChangeSyncUseCase {
 			List<FileCapture> captures = streamedByFileId.values().stream().map(StreamedFile::capture).toList();
 			Archive saved = syncCommitPort.commit(
 					new PendingCommit(archive, files, pending.events, captures, newState, failureChanges));
+			LOGGER.info("Incremental archive {} published and committed for {}: {} file(s) captured, {} skipped",
+					plan.relativeTargetPath(), scope.key(), streamedByFileId.size(), failures.size());
 			return new SyncResult(scope, changeCount, pageToken, saved, false, failures);
 		} catch (IOException exception) {
+			LOGGER.error("Unable to write archive {}", plan.relativeTargetPath(), exception);
 			throw new IllegalStateException("Unable to write archive " + plan.relativeTargetPath(), exception);
 		}
 	}

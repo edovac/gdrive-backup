@@ -18,9 +18,13 @@ import org.nm.gdrive_backup.domain.model.StreamedFile;
 import org.nm.gdrive_backup.domain.model.ServiceAccountAccess;
 import org.nm.gdrive_backup.domain.model.StoredFile;
 import org.nm.gdrive_backup.domain.port.out.DriveContentPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Streams a file's content from Drive straight into the archive session being staged. */
 public class FileContentStreamingService {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(FileContentStreamingService.class);
 
 	private static final Map<String, ExportFormat> EXPORT_FORMATS = Map.of(
 			"application/vnd.google-apps.document",
@@ -87,9 +91,12 @@ public class FileContentStreamingService {
 			} catch (DriveExportLimitException fallbackException) {
 				throw new FileDownloadException("Google PDF fallback also exceeded the export limit", fallbackException);
 			} catch (IOException fallbackException) {
+				LOGGER.error("Unable to fetch {} ({}, {}) even as PDF", file.name(), file.fileId(), file.mimeType(),
+						fallbackException);
 				throw downloadFailure("Unable to back up file content using PDF fallback", fallbackException);
 			}
 		} catch (IOException exception) {
+			LOGGER.error("Unable to fetch {} ({}, {}) from Drive", file.name(), file.fileId(), file.mimeType(), exception);
 			throw downloadFailure("Unable to back up file content", exception);
 		}
 	}
@@ -129,6 +136,8 @@ public class FileContentStreamingService {
 					finalName, size);
 			return new StreamedFile(capture, fetched.exportMimeType());
 		} catch (IOException exception) {
+			LOGGER.error("Unable to write {} ({}, {}) into the archive as {}", file.name(), file.fileId(),
+					file.mimeType(), entryName, exception);
 			throw new IllegalStateException(fetched.fallbackFromExtension() == null
 					? "Unable to back up file content"
 					: "Unable to back up file content using PDF fallback", exception);

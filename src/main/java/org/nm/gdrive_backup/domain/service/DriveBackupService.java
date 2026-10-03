@@ -16,9 +16,13 @@ import org.nm.gdrive_backup.domain.port.in.DriveChangeSyncUseCase;
 import org.nm.gdrive_backup.domain.port.in.InitialDriveSyncUseCase;
 import org.nm.gdrive_backup.domain.port.out.DriveMetadataPort;
 import org.nm.gdrive_backup.domain.port.out.SyncStatePort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Selects the appropriate synchronization flow for a Drive scope. */
 public class DriveBackupService implements DriveBackupUseCase {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(DriveBackupService.class);
 
 	private final SyncStatePort syncStatePort;
 	private final InitialDriveSyncUseCase initialSyncUseCase;
@@ -79,19 +83,29 @@ public class DriveBackupService implements DriveBackupUseCase {
 			progressTracker.jobStarted(selectedDrives);
 			cancellation.begin();
 			List<BackupResult> results = new ArrayList<>();
+			LOGGER.info("Backup started: {} backup of {} drive(s) for {}", mode, selectedDrives.size(),
+					access.impersonatedUserEmail());
 			try {
 				for (AvailableDrive drive : selectedDrives) {
 					if (cancellation.isStopRequested()) {
+						LOGGER.info("Backup stopped before {} because a stop was requested", drive.name());
 						break;
 					}
 					DriveScope scope = drive.shared() ? DriveScope.sharedDrive(drive.id())
 							: DriveScope.personal(access.impersonatedUserEmail());
 					progressTracker.driveStarted(drive);
+					LOGGER.info("Drive started: {} ({}, {})", drive.name(), scope.type(), scope.key());
 					// One failing drive must not stop the others: each scope commits on its own, and a failed
 					// one wrote nothing, so it simply replays from its last cursor on the next run.
 					try {
-						results.add(synchronizeScope(access, scope, mode, drive.name()));
+						BackupResult result = synchronizeScope(access, scope, mode, drive.name());
+						results.add(result);
+						LOGGER.info("Drive finished: {} ({}), {} item(s) processed, {} file(s) skipped{}", drive.name(),
+								result.initialSync() ? "full inventory" : "incremental", result.processedItemCount(),
+								result.skippedFiles().size(), result.cancelled() ? ", cancelled before completion" : "");
 					} catch (RuntimeException exception) {
+						LOGGER.error("Drive failed: {} ({}, {}); nothing was committed for it and the next run replays "
+								+ "from its last cursor", drive.name(), scope.type(), scope.key(), exception);
 						results.add(BackupResult.failed(scope, failureMessage(exception)));
 						progressTracker.driveFailed();
 						continue;
@@ -103,14 +117,16 @@ public class DriveBackupService implements DriveBackupUseCase {
 				}
 			} finally {
 				progressTracker.jobFinished();
+				LOGGER.info("Backup finished: {} of {} drive(s) failed", results.stream().filter(BackupResult::failed).count(),
+						selectedDrives.size());
 			}
 			return results;
 		});
 	}
 
+	/** The whole cause chain, so the UI shows why (a full disk, a 403) and not just the outermost wrapper's text. */
 	private static String failureMessage(RuntimeException exception) {
-		String message = exception.getMessage();
-		return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+		return DownloadOutcome.reasonOf(exception);
 	}
 
 	private BackupResult synchronizeScope(ServiceAccountAccess access, DriveScope scope, BackupMode mode,
