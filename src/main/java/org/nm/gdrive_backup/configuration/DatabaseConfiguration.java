@@ -3,6 +3,10 @@ package org.nm.gdrive_backup.configuration;
 import java.nio.file.Path;
 
 import org.nm.gdrive_backup.adapter.out.persistence.LocalArchiveReaderAdapter;
+import org.nm.gdrive_backup.adapter.out.persistence.LocalArchiveScanAdapter;
+import org.nm.gdrive_backup.adapter.out.persistence.SqliteDatabaseRebuildAdapter;
+import org.nm.gdrive_backup.domain.port.out.ArchiveScanPort;
+import org.nm.gdrive_backup.domain.port.out.DatabaseRebuildPort;
 import org.nm.gdrive_backup.adapter.out.persistence.LocalArchiveSessionAdapter;
 import org.nm.gdrive_backup.adapter.out.persistence.LocalArchiveStorageAdapter;
 import org.nm.gdrive_backup.adapter.out.persistence.LocalBackupLocationAdapter;
@@ -50,6 +54,16 @@ public class DatabaseConfiguration {
 	@Bean
 	ArchiveStoragePort archiveStoragePort(LocalBackupRoot backupRoot) {
 		return new LocalArchiveStorageAdapter(backupRoot);
+	}
+
+	@Bean
+	ArchiveScanPort archiveScanPort(LocalBackupRoot backupRoot) {
+		return new LocalArchiveScanAdapter(backupRoot);
+	}
+
+	@Bean
+	DatabaseRebuildPort databaseRebuildPort(SqliteDatabase database) {
+		return new SqliteDatabaseRebuildAdapter(database);
 	}
 
 	@Bean

@@ -9,6 +9,7 @@ import java.util.function.Supplier;
 
 import org.nm.gdrive_backup.domain.model.ArchiveState;
 import org.nm.gdrive_backup.domain.model.ArchiveView;
+import org.nm.gdrive_backup.domain.model.DatabaseRebuildResult;
 import org.nm.gdrive_backup.domain.model.DeletionPlan;
 import org.nm.gdrive_backup.domain.model.DeletionResult;
 import org.nm.gdrive_backup.domain.model.MergeResult;
@@ -16,6 +17,7 @@ import org.nm.gdrive_backup.domain.model.ScopeArchives;
 import org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase;
 import org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase;
+import org.nm.gdrive_backup.domain.port.in.DatabaseRebuildUseCase;
 
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
@@ -43,6 +45,7 @@ public final class ArchiveManagerPanel {
 	private final ArchiveCatalogUseCase catalogUseCase;
 	private final ArchiveMergeUseCase mergeUseCase;
 	private final ArchiveDeletionUseCase deletionUseCase;
+	private final DatabaseRebuildUseCase rebuildUseCase;
 	private final Runnable onOperationStarted;
 	private final Runnable onOperationFinished;
 
@@ -50,6 +53,7 @@ public final class ArchiveManagerPanel {
 	private final TableView<ArchiveView> table = new TableView<>();
 	private final Label warnings = new Label();
 	private final Label status = new Label();
+	private final Button rebuildButton = new Button("Rebuild database...");
 	private final Button refreshButton = new Button("Refresh");
 	private final Button mergeButton = new Button("Merge into a full backup...");
 	private final Button deleteButton = new Button("Delete obsolete archives...");
@@ -59,10 +63,12 @@ public final class ArchiveManagerPanel {
 	private boolean externallyBusy;
 
 	public ArchiveManagerPanel(ArchiveCatalogUseCase catalogUseCase, ArchiveMergeUseCase mergeUseCase,
-			ArchiveDeletionUseCase deletionUseCase, Runnable onOperationStarted, Runnable onOperationFinished) {
+			ArchiveDeletionUseCase deletionUseCase, DatabaseRebuildUseCase rebuildUseCase, Runnable onOperationStarted,
+			Runnable onOperationFinished) {
 		this.catalogUseCase = catalogUseCase;
 		this.mergeUseCase = mergeUseCase;
 		this.deletionUseCase = deletionUseCase;
+		this.rebuildUseCase = rebuildUseCase;
 		this.onOperationStarted = onOperationStarted;
 		this.onOperationFinished = onOperationFinished;
 
@@ -94,7 +100,10 @@ public final class ArchiveManagerPanel {
 		deleteButton.getStyleClass().add("secondary-button");
 		deleteButton.setOnAction(event -> prepareDeletion());
 
-		VBox buttons = new VBox(6, mergeButton, deleteButton, refreshButton);
+		rebuildButton.getStyleClass().add("secondary-button");
+		rebuildButton.setOnAction(event -> confirmAndRebuild());
+
+		VBox buttons = new VBox(6, mergeButton, deleteButton, rebuildButton, refreshButton);
 		buttons.setAlignment(Pos.CENTER);
 		root = new VBox(6, title, note, scopePicker, table, warnings, buttons, status);
 		root.setAlignment(Pos.CENTER);
@@ -202,8 +211,34 @@ public final class ArchiveManagerPanel {
 		boolean busy = operationRunning || externallyBusy;
 		mergeButton.setDisable(busy || selected == null || !selected.canMerge());
 		deleteButton.setDisable(busy || selected == null || !selected.hasObsolete());
+		rebuildButton.setDisable(busy);
 		refreshButton.setDisable(operationRunning);
 		scopePicker.setDisable(operationRunning);
+	}
+
+	/** Reachable with no archives listed, since a missing database is exactly when the list is empty. */
+	private void confirmAndRebuild() {
+		status.setText("Checking the database...");
+		CompletableFuture.supplyAsync(rebuildUseCase::status).whenComplete((databaseStatus, error) -> Platform.runLater(() -> {
+			if (error != null) {
+				status.setText("Failed: " + messageFor(error));
+				return;
+			}
+			if (!confirm("Rebuild database", "Rebuild the database from the archives?",
+					ArchiveManagerText.rebuildConfirmation(databaseStatus), "Rebuild")) {
+				status.setText("");
+				return;
+			}
+			status.setText("Rebuilding the database...");
+			run(() -> rebuildUseCase.rebuild(true), (DatabaseRebuildResult result) -> {
+				status.setText(result.cancelled() ? ArchiveManagerText.rebuildResult(result) : "Database rebuilt.");
+				if (!result.cancelled()) {
+					showText(result.problems().isEmpty() ? Alert.AlertType.INFORMATION : Alert.AlertType.WARNING,
+							"Rebuild database", "Database rebuilt", ArchiveManagerText.rebuildResult(result));
+				}
+				refresh();
+			});
+		}));
 	}
 
 	private void confirmAndMerge() {

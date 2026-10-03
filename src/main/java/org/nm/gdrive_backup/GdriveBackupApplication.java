@@ -47,7 +47,8 @@ public class GdriveBackupApplication {
 		JavaFxApplication.setArchiveServices(
 				springContext.getBeanProvider(org.nm.gdrive_backup.domain.port.in.ArchiveCatalogUseCase.class).getIfAvailable(),
 				springContext.getBeanProvider(org.nm.gdrive_backup.domain.port.in.ArchiveMergeUseCase.class).getIfAvailable(),
-				springContext.getBeanProvider(org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase.class).getIfAvailable());
+				springContext.getBeanProvider(org.nm.gdrive_backup.domain.port.in.ArchiveDeletionUseCase.class).getIfAvailable(),
+				springContext.getBeanProvider(org.nm.gdrive_backup.domain.port.in.DatabaseRebuildUseCase.class).getIfAvailable());
 		JavaFxApplication.setDriveServices(
 				springContext.getBeanProvider(ServiceAccountAuthenticationUseCase.class).getIfAvailable(),
 				driveReadPort(springContext),

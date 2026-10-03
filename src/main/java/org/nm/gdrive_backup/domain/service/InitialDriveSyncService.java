@@ -35,12 +35,16 @@ import org.nm.gdrive_backup.domain.port.out.DriveChangePort;
 import org.nm.gdrive_backup.domain.port.out.DownloadFailurePort;
 import org.nm.gdrive_backup.domain.port.out.DriveFileListingPort;
 import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Builds a full archive from scratch: every live file is re-downloaded into a Drive-shaped ZIP, and the
  * run's database effects are committed only after that ZIP is published.
  */
 public class InitialDriveSyncService implements InitialDriveSyncUseCase {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(InitialDriveSyncService.class);
 
 	private final DriveFileListingPort fileListingPort;
 	private final DriveChangePort changePort;
@@ -94,9 +98,13 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 		// Read per run, like the download concurrency, so a change in Settings never applies mid-run.
 		List<StoredFile> files = fileListingPort.listAllFiles(access, scope, personalDriveContent.get());
 		progressTracker.enumerated(files.size());
+		LOGGER.info("Full inventory of {}: {} file(s) listed, {} to download, baseline page token {}", scope.key(),
+				files.size(), files.stream().filter(InitialDriveSyncService::isEligible).count(), pageToken);
 
 		FlatTreePathResolver resolver = new FlatTreePathResolver(namesWithExportExtensions(files));
 		ArchiveRunPlanner.Plan plan = archiveRunPlanner.planFull(scope, scopeDisplayNameOrNull);
+		LOGGER.info("Staging full archive {} with {} parallel download(s)", plan.relativeTargetPath(),
+				downloadConcurrency.getAsInt());
 		Map<String, StreamedFile> streamedByFileId = new HashMap<>();
 		try (ArchiveSession session = archiveSessionPort.open(plan.relativeTargetPath())) {
 			DrivePathResolver drivePaths = new DrivePathResolver(
@@ -148,6 +156,8 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 						if (outcome == null) {
 							progressTracker.itemProcessed(file.name());
 						} else if (outcome.failure() != null) {
+							LOGGER.warn("Skipping {} ({}): {}", file.name(), file.fileId(),
+									DownloadOutcome.reasonOf(outcome.failure()));
 							failureLimit.failed(DownloadFailure.found(scope.key(), file.fileId(), file.name(),
 									drivePaths.pathOf(file), DownloadOutcome.reasonOf(outcome.failure()), Instant.now()));
 						} else {
@@ -158,6 +168,8 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 						processed[0]++;
 					});
 			if (!completed) {
+				LOGGER.info("Full inventory of {} stopped on request after {} file(s); nothing was archived", scope.key(),
+						processed[0]);
 				return new InitialSyncResult(scope, processed[0], null, null, true);
 			}
 			List<DownloadFailure> failures = failureLimit.failures();
@@ -172,8 +184,11 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 			List<FileCapture> captures = streamedByFileId.values().stream().map(StreamedFile::capture).toList();
 			Archive saved = syncCommitPort.commit(new PendingCommit(archive, files, List.of(), captures,
 					new SyncState(scope.key(), pageToken), new FailureChanges(scope.key(), failures, resolvedFileIds)));
+			LOGGER.info("Full archive {} published and committed for {}: {} file(s) captured, {} skipped", plan.relativeTargetPath(),
+					scope.key(), streamedByFileId.size(), failures.size());
 			return new InitialSyncResult(scope, files.size(), pageToken, saved, false, failures);
 		} catch (IOException exception) {
+			LOGGER.error("Unable to write archive {}", plan.relativeTargetPath(), exception);
 			throw new IllegalStateException("Unable to write archive " + plan.relativeTargetPath(), exception);
 		}
 	}

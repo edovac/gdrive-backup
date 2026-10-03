@@ -243,6 +243,15 @@ Last reviewed: 2026-10-03
   into a `q` string are escaped (`GoogleDriveAdapter`).
 
 - [x] Backup trigger, progress reporting, and partial-failure handling. The UI selects initial or incremental synchronization for the selected user and shows a live progress bar with current-operation status and elapsed/estimated-remaining time (per drive and, for a multi-drive job, for the whole job), then reports the number of inventoried files or processed changes per selected drive on completion. The admin can cancel a running job (see the interruptible-backups item above). If one selected drive fails, the run records the failure and continues with the remaining drives, and the completion summary names each failed drive with its reason and any drive never started after a cancel (each drive commits independently, so a failed one replays from its last cursor).
+- [x] Database rebuild from archive manifests: `DatabaseRebuildService` scans
+  `archives/` (`ArchiveScanPort`), reads each manifest, and replays the archives
+  oldest first per drive through `SyncCommitPort` into a fresh database built
+  beside the current one (`DatabaseRebuildPort`, `SqliteDatabaseRebuildAdapter`),
+  which is swapped in at the end with the old file kept as `backup.db.<date>.bak`.
+  Restores archives, sources, files, captures, events, Shared Drive names and the
+  cursor of each drive's newest archive; names unreadable archives and broken
+  links; exclusive, cancellable, with progress. UI: **Rebuild database...** in the
+  Archive manager. Covered by `DatabaseRebuildEndToEndTest`.
 
 ### In progress
 
@@ -296,6 +305,13 @@ of truth for expected behavior.
 - [x] Partial-failure handling and a completion summary for the drives selected
   for one user: a failing drive no longer stops the others, and a file that
   cannot be downloaded is skipped and reported instead of failing its drive.
+- [x] Database rebuild: recreate a corrupted or missing `backup.db` from the
+  archives' manifests alone (`archives`, `archive_sources`, per-file state and
+  the `sync_state` cursor), so incremental backups continue the chain. An
+  exclusive operation that never touches an archive, reports unreadable
+  manifests and chain gaps by name, and confirms before replacing a usable
+  database. See **Database rebuild** under Core requirements in
+  [gdrive-backup-app.md](gdrive-backup-app.md).
 
 **P2 — operational improvements**
 

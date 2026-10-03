@@ -155,6 +155,17 @@ public class ServiceAccountConfiguration {
 				syncCommitPort, backupActivity, progressTracker, cancellation);
 	}
 
+	/** Archive-only like the merge, so it is always wired. */
+	@Bean
+	org.nm.gdrive_backup.domain.port.in.DatabaseRebuildUseCase databaseRebuildUseCase(
+			org.nm.gdrive_backup.domain.port.out.ArchiveScanPort archiveScanPort, ArchiveReaderPort archiveReaderPort,
+			org.nm.gdrive_backup.domain.port.out.DatabaseRebuildPort databaseRebuildPort, SyncCommitPort syncCommitPort,
+			org.nm.gdrive_backup.domain.port.out.DriveMetadataPort driveMetadataPort, BackupActivity backupActivity,
+			BackupProgressTracker progressTracker, BackupCancellation cancellation) {
+		return new org.nm.gdrive_backup.domain.service.DatabaseRebuildService(archiveScanPort, archiveReaderPort,
+				databaseRebuildPort, syncCommitPort, driveMetadataPort, backupActivity, progressTracker, cancellation);
+	}
+
 	@Bean
 	FileContentStreamingService fileContentStreamingService(@Qualifier("driveContentPort") DriveContentPort contentPort) {
 		return new FileContentStreamingService(contentPort);

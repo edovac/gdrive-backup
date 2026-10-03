@@ -8,6 +8,8 @@ import java.util.List;
 import org.nm.gdrive_backup.domain.model.ArchiveMode;
 import org.nm.gdrive_backup.domain.model.ArchiveState;
 import org.nm.gdrive_backup.domain.model.ArchiveView;
+import org.nm.gdrive_backup.domain.model.DatabaseRebuildResult;
+import org.nm.gdrive_backup.domain.model.DatabaseStatus;
 import org.nm.gdrive_backup.domain.model.DeletionPlan;
 import org.nm.gdrive_backup.domain.model.DeletionResult;
 import org.nm.gdrive_backup.domain.model.MergeResult;
@@ -91,6 +93,39 @@ final class ArchiveManagerText {
 			return "Merge cancelled. Nothing was written.";
 		}
 		return "Merged into archive " + result.archive().sequenceNumber() + " (" + result.archive().archivePath() + ").";
+	}
+
+	static String rebuildConfirmation(DatabaseStatus status) {
+		String current = switch (status) {
+			case MISSING -> "There is no database file at the moment.";
+			case UNUSABLE -> "The current database cannot be opened or failed its integrity check.";
+			case USABLE -> "The current database is working. Replacing it loses the download-failure report, "
+					+ "which is not stored in the archives.";
+		};
+		return current + "\n\nThe database is rebuilt from the manifests of the archives in the backup folder, without "
+				+ "contacting Google. A database that is there is kept beside the new one as backup.db.<date>.bak, and "
+				+ "no archive is changed.";
+	}
+
+	static String rebuildResult(DatabaseRebuildResult result) {
+		if (result.cancelled()) {
+			return "Rebuild cancelled. The database was not changed.";
+		}
+		StringBuilder text = new StringBuilder("Rebuilt the database from ").append(result.archivesRestored())
+				.append(" archives of ").append(result.drivesRestored()).append(" drives.");
+		if (result.previousDatabaseBackup() != null) {
+			text.append("\nThe previous database was kept as ").append(result.previousDatabaseBackup()).append('.');
+		}
+		if (!result.scopesWithoutCursor().isEmpty()) {
+			text.append("\nThe newest archive of these drives records no change cursor, so their next incremental "
+					+ "backup starts with a full inventory: ").append(String.join(", ", result.scopesWithoutCursor()))
+					.append('.');
+		}
+		if (!result.problems().isEmpty()) {
+			text.append("\n\nProblems:");
+			result.problems().forEach(problem -> text.append("\n  - ").append(problem));
+		}
+		return text.toString();
 	}
 
 	static String deletionSummary(DeletionPlan plan) {
