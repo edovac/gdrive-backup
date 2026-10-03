@@ -185,6 +185,33 @@ build order live in [plan.md](plan.md).
   - The merged archive records the archives it was built from — in its
     manifest and in the database (`archive_sources`) — so the relationship is
     checkable without opening the sources.
+- **Database rebuild**: as an admin, I want to rebuild the database from the
+  archives' manifests, so that I can recover from a corrupted or missing
+  `backup.db`.
+  - The archives are authoritative, and each manifest already mirrors its
+    chain metadata (see **Self-describing deltas**), so the rebuild reads only
+    the archives under `backupRoot/archives/...`, never Google.
+  - It recreates the `archives` and `archive_sources` rows and the
+    per-file state the manifests record, and the `sync_state` cursor from the
+    `to_page_token` of each drive's latest archive, so the next incremental
+    backup continues the chain instead of starting a new one.
+  - It is started from the Archive manager (**Rebuild database...**), which
+    stays available when no archives are listed because the database is gone.
+    The new database is built beside the old one and swapped in only when
+    complete; the old file is kept as `backup.db.<date>.bak`, so a failed or
+    cancelled rebuild changes nothing. A `FULL` archive's manifest has no
+    `to_page_token`, so a drive whose newest archive is a from-scratch full
+    gets no cursor and its next incremental backup starts with a full
+    inventory; the result says which drives.
+  - It refuses to replace a database that is still usable unless the admin
+    confirms, and it never modifies or deletes an archive. An archive whose
+    manifest is unreadable, or a chain with a missing link, is reported by name
+    rather than skipped silently.
+  - It is an exclusive operation: it does not start beside a backup or another
+    operation, and reports progress like a merge.
+  - Information that lives only in the database and in no manifest, such as
+    the open `download_failures` list, is not recovered. The UI says so, and
+    the next incremental backup re-evaluates those files.
 - **Backup mode**: the admin chooses a full backup or an incremental backup.
   A full backup inventories the selected scope regardless of its change cursor
   and archives it in full; an incremental backup uses the saved `changes.list`

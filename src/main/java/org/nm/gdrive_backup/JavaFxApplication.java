@@ -101,6 +101,7 @@ public class JavaFxApplication extends Application {
 	private static org.nm.gdrive_backup.domain.port.in.FileHistoryUseCase fileHistoryUseCase;
 	private static org.nm.gdrive_backup.domain.port.in.DownloadFailureReportUseCase downloadFailureReportUseCase;
 	private static ArchiveDeletionUseCase archiveDeletionUseCase;
+	private static org.nm.gdrive_backup.domain.port.in.DatabaseRebuildUseCase databaseRebuildUseCase;
 
 	private final Button signIn = new Button("Sign in with Google");
 	private final Label connectionStatus = new Label();
@@ -173,10 +174,12 @@ public class JavaFxApplication extends Application {
 	}
 
 	static void setArchiveServices(ArchiveCatalogUseCase catalogUseCase, ArchiveMergeUseCase mergeUseCase,
-			ArchiveDeletionUseCase deletionUseCase) {
+			ArchiveDeletionUseCase deletionUseCase,
+			org.nm.gdrive_backup.domain.port.in.DatabaseRebuildUseCase rebuildUseCase) {
 		archiveCatalogUseCase = catalogUseCase;
 		archiveMergeUseCase = mergeUseCase;
 		archiveDeletionUseCase = deletionUseCase;
+		databaseRebuildUseCase = rebuildUseCase;
 	}
 
 	static void setDriveServices(ServiceAccountAuthenticationUseCase authenticationUseCase,
@@ -282,7 +285,7 @@ public class JavaFxApplication extends Application {
 		archiveProgressPanel = new OperationProgressPanel(backupProgressPort, backupCancellationUseCase,
 				"Starting archive operation...");
 		archiveManagerPanel = new ArchiveManagerPanel(archiveCatalogUseCase, archiveMergeUseCase,
-				archiveDeletionUseCase, () -> {
+				archiveDeletionUseCase, databaseRebuildUseCase, () -> {
 					archiveProgressPanel.start();
 					syncNow.setDisable(true);
 					locationsPanel.setChangesDisabled(true);

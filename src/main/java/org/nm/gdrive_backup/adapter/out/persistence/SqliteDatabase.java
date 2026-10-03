@@ -59,6 +59,11 @@ public class SqliteDatabase {
 		databasePath.set(newDatabasePath);
 	}
 
+	/** Routes later connections to {@code path} without touching the file, for swapping databases that are already set up. */
+	void redirect(Path path) {
+		databasePath.set(path);
+	}
+
 	private static void initialize(Path path) {
 		try (Connection connection = DriverManager.getConnection(jdbcUrl(path));
 			Statement statement = connection.createStatement()) {
