@@ -14,6 +14,8 @@ import java.util.Optional;
 
 import org.nm.gdrive_backup.domain.model.DatabaseStatus;
 import org.nm.gdrive_backup.domain.port.out.DatabaseRebuildPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Builds the new database as {@code backup.db.rebuild} next to the current one and only renames it into place when
@@ -21,6 +23,7 @@ import org.nm.gdrive_backup.domain.port.out.DatabaseRebuildPort;
  */
 public class SqliteDatabaseRebuildAdapter implements DatabaseRebuildPort {
 
+	private static final Logger LOGGER = LoggerFactory.getLogger(SqliteDatabaseRebuildAdapter.class);
 	private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
 	private final SqliteDatabase database;
@@ -47,6 +50,7 @@ public class SqliteDatabaseRebuildAdapter implements DatabaseRebuildPort {
 				return tables.next() && tables.getInt(1) == 3 ? DatabaseStatus.USABLE : DatabaseStatus.UNUSABLE;
 			}
 		} catch (SQLException exception) {
+			LOGGER.error("The database {} cannot be opened or checked", path, exception);
 			return DatabaseStatus.UNUSABLE;
 		}
 	}
@@ -61,6 +65,7 @@ public class SqliteDatabaseRebuildAdapter implements DatabaseRebuildPort {
 			throw new IllegalStateException("Unable to remove an earlier unfinished rebuild " + fresh, exception);
 		}
 		database.switchTo(fresh);
+		LOGGER.info("Building the new database at {}", fresh);
 	}
 
 	@Override
@@ -82,10 +87,13 @@ public class SqliteDatabaseRebuildAdapter implements DatabaseRebuildPort {
 			} catch (IOException restoreFailure) {
 				exception.addSuppressed(restoreFailure);
 			}
+			LOGGER.error("Unable to swap the rebuilt database {} in for {}", fresh, current, exception);
 			throw new IllegalStateException("Unable to put the rebuilt database in place: " + exception.getMessage(),
 					exception);
 		}
 		database.redirect(current);
+		LOGGER.info("The rebuilt database is now {}; {}", current,
+				kept == null ? "there was no previous database" : "the previous one was kept as " + kept.getFileName());
 		return Optional.ofNullable(kept).map(path -> path.getFileName().toString());
 	}
 
@@ -94,6 +102,7 @@ public class SqliteDatabaseRebuildAdapter implements DatabaseRebuildPort {
 		Path fresh = database.path();
 		database.redirect(current);
 		if (!fresh.equals(current)) {
+			LOGGER.info("Discarding the unfinished rebuilt database {}; {} is unchanged", fresh, current);
 			try {
 				Files.deleteIfExists(fresh);
 			} catch (IOException ignored) {

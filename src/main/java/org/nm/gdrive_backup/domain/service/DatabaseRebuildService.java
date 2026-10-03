@@ -33,6 +33,8 @@ import org.nm.gdrive_backup.domain.port.out.ArchiveScanPort;
 import org.nm.gdrive_backup.domain.port.out.DatabaseRebuildPort;
 import org.nm.gdrive_backup.domain.port.out.DriveMetadataPort;
 import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Recreates the database from the archives' own manifests. Each archive, oldest first within its drive, is committed
@@ -41,6 +43,8 @@ import org.nm.gdrive_backup.domain.port.out.SyncCommitPort;
  * Only the archives are read: Google, and whatever is left of the old database, play no part.
  */
 public class DatabaseRebuildService implements DatabaseRebuildUseCase {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(DatabaseRebuildService.class);
 
 	private final ArchiveScanPort scanPort;
 	private final ArchiveReaderPort readerPort;
@@ -75,6 +79,8 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 			if (!replaceUsable && databasePort.status() == DatabaseStatus.USABLE) {
 				throw new IllegalStateException("The database is usable; confirm before replacing it");
 			}
+			LOGGER.info("Database rebuild started (current database: {}, replacing a usable one: {})",
+					databasePort.status(), replaceUsable);
 			cancellation.begin();
 			progressTracker.jobStarted(List.of(new AvailableDrive("database", "Database rebuild", false)));
 			progressTracker.driveStarted(new AvailableDrive("database", "Database rebuild", false));
@@ -82,6 +88,9 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 				DatabaseRebuildResult result = rebuildNow();
 				progressTracker.driveCompleted();
 				return result;
+			} catch (RuntimeException exception) {
+				LOGGER.error("Database rebuild failed; the current database was left as it was", exception);
+				throw exception;
 			} finally {
 				progressTracker.jobFinished();
 			}
@@ -93,9 +102,12 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 		List<String> problems = new ArrayList<>();
 		Map<DriveScope, List<Found>> byScope = readManifests(problems);
 		if (byScope == null) {
+			LOGGER.info("Database rebuild cancelled while reading manifests; the database was not changed");
 			return DatabaseRebuildResult.cancelledRun();
 		}
 		int total = byScope.values().stream().mapToInt(List::size).sum();
+		LOGGER.info("Read {} archive manifest(s) for {} drive(s); {} archive(s) could not be used", total, byScope.size(),
+				problems.size());
 		progressTracker.enumerated(total);
 
 		databasePort.startFresh();
@@ -104,11 +116,17 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 			Replay replay = new Replay(problems);
 			for (Map.Entry<DriveScope, List<Found>> scope : byScope.entrySet()) {
 				if (!replay.replayScope(scope.getKey(), scope.getValue())) {
+					LOGGER.info("Database rebuild cancelled while restoring {}; the database was not changed",
+							scope.getKey().key());
 					return DatabaseRebuildResult.cancelledRun();
 				}
 			}
 			String previous = databasePort.complete().orElse(null);
 			swapped = true;
+			LOGGER.info("Database rebuild finished: {} archive(s) of {} drive(s) restored, {} problem(s)",
+					replay.archivesRestored, byScope.size(), problems.size());
+			replay.scopesWithoutCursor.forEach(key -> LOGGER.info(
+					"No change cursor restored for {}; its next incremental backup starts with a full inventory", key));
 			return new DatabaseRebuildResult(false, replay.archivesRestored, byScope.size(), List.copyOf(problems),
 					List.copyOf(replay.scopesWithoutCursor), previous);
 		} finally {
@@ -135,6 +153,7 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 				ArchiveManifest manifest = reader.manifest();
 				byScope.computeIfAbsent(manifest.scope(), key -> new ArrayList<>()).add(new Found(path, manifest));
 			} catch (IOException | RuntimeException exception) {
+				LOGGER.error("Archive {} cannot be read and is left out of the rebuild", path, exception);
 				problems.add(path + " was skipped: " + exception.getMessage());
 			}
 		}
@@ -170,11 +189,14 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 				if (seen.add(found.manifest().sequenceNumber())) {
 					unique.add(found);
 				} else {
+					LOGGER.error("{} repeats archive number {} of {}; it is left out of the rebuild", found.path(),
+							found.manifest().sequenceNumber(), scope.key());
 					problems.add(found.path() + " was skipped: archive number " + found.manifest().sequenceNumber()
 							+ " already exists for this drive");
 				}
 			}
 			archives = unique;
+			LOGGER.info("Restoring {} ({}): {} archive(s)", scope.key(), scope.type(), archives.size());
 			for (Found found : archives) {
 				if (cancellation.isImmediateStopRequested()) {
 					return false;
@@ -185,6 +207,8 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 				if (manifest.baseSequenceNumber() != null) {
 					base = savedBySequence.get(manifest.baseSequenceNumber());
 					if (base == null) {
+						LOGGER.error("{} chains onto archive {} of {}, which was not found; restoring it without that link",
+								found.path(), manifest.baseSequenceNumber(), scope.key());
 						problems.add(found.path() + " chains onto archive " + manifest.baseSequenceNumber()
 								+ ", which was not found; it is restored without that link");
 					}
@@ -203,6 +227,9 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 				Archive saved = syncCommitPort.commit(commit);
 				savedBySequence.put(manifest.sequenceNumber(), saved);
 				archivesRestored++;
+				LOGGER.info("Restored archive {} ({}) of {}: {} file record(s), {} content record(s), {} event(s)",
+						manifest.sequenceNumber(), manifest.mode(), scope.key(), commit.files().size(),
+						commit.captures().size(), commit.events().size());
 				newest = saved;
 			}
 			if (newest != null && scope.type() == DriveScopeType.SHARED_DRIVE) {
@@ -241,6 +268,10 @@ public class DatabaseRebuildService implements DatabaseRebuildUseCase {
 				if (knownFileIds.contains(event.fileId())) {
 					events.add(new FileEvent(null, event.fileId(), event.eventType(), event.oldValue(), event.newValue(),
 							event.timestamp() == null ? Instant.EPOCH : event.timestamp(), null));
+				} else {
+					LOGGER.info("Skipped the {} event for file {} in archive {} of {}: no archive describes that file, "
+							+ "so there is no record to attach it to", event.eventType(), event.fileId(),
+							manifest.sequenceNumber(), scope.key());
 				}
 			}
 			List<Long> sources = manifest.sourceArchives().stream()
