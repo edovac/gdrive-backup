@@ -34,6 +34,7 @@ import org.nm.gdrive_backup.domain.port.in.WorkspaceUserListingUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveBackupUseCase;
 import org.nm.gdrive_backup.domain.port.in.DriveUserProfileUseCase;
 import org.nm.gdrive_backup.domain.model.ApplicationInfo;
+import org.nm.gdrive_backup.adapter.in.javafx.AppIcons;
 import org.nm.gdrive_backup.adapter.in.javafx.ApplicationInfoText;
 import org.nm.gdrive_backup.adapter.in.javafx.ArchiveManagerPanel;
 import org.nm.gdrive_backup.adapter.in.javafx.BackupDrivePanel;
@@ -205,6 +206,8 @@ public class JavaFxApplication extends Application {
 		root.setStyle("-fx-background-color: #f7f8fa;");
 		Scene scene = new Scene(root, 900, 680);
 		scene.getStylesheets().add("/login.css");
+		AppIcons.install();
+		stage.setTitle("Google Drive Backup");
 		stage.setScene(scene);
 		stage.setMinWidth(720);
 		stage.setMinHeight(480);
@@ -399,7 +402,9 @@ public class JavaFxApplication extends Application {
 		content.setAlignment(Pos.CENTER);
 		content.setMaxWidth(560);
 		content.setPadding(new Insets(12));
-		return content;
+		VBox centered = new VBox(content);
+		centered.setAlignment(Pos.TOP_CENTER);
+		return centered;
 	}
 
 	private static Node scrollable(Node content) {
