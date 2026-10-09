@@ -108,6 +108,9 @@ public final class ArchiveManagerPanel {
 
 		VBox buttons = new VBox(6, mergeButton, deleteButton, deleteEarlierButton, rebuildButton, refreshButton);
 		buttons.setAlignment(Pos.CENTER);
+		// Every button takes the column's width, so they all match the widest label.
+		buttons.setMaxWidth(260);
+		buttons.getChildren().forEach(button -> ((Button) button).setMaxWidth(Double.MAX_VALUE));
 		root = new VBox(6, title, note, scopePicker, table, warnings, buttons, status);
 		root.setAlignment(Pos.CENTER);
 		hide();
