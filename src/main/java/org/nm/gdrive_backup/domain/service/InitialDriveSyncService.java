@@ -178,9 +178,11 @@ public class InitialDriveSyncService implements InitialDriveSyncUseCase {
 			List<String> resolvedFileIds = openFailureFileIds.stream().filter(id -> !failedFileIds.contains(id)).toList();
 			progressTracker.packaging();
 			Instant createdAt = Instant.now();
-			Archive archive = plan.toArchive(createdAt, null, null);
+			// The baseline goes into the archive too: a database rebuilt from the archives gets its cursor from the
+			// newest manifest, and without it the drive's next incremental backup would start a new chain.
+			Archive archive = plan.toArchive(createdAt, null, pageToken);
 			session.publish(new ArchiveManifest(scope, plan.mode(), RevisionMode.LATEST_ONLY, plan.sequenceNumber(),
-					null, createdAt, null, null, List.of(), manifestFiles(files, streamedByFileId), List.of()));
+					null, createdAt, null, pageToken, List.of(), manifestFiles(files, streamedByFileId), List.of()));
 			List<FileCapture> captures = streamedByFileId.values().stream().map(StreamedFile::capture).toList();
 			Archive saved = syncCommitPort.commit(new PendingCommit(archive, files, List.of(), captures,
 					new SyncState(scope.key(), pageToken), new FailureChanges(scope.key(), failures, resolvedFileIds)));

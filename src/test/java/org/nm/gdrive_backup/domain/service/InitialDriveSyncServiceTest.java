@@ -116,7 +116,10 @@ class InitialDriveSyncServiceTest {
 		assertEquals(RevisionMode.LATEST_ONLY, sessions.publishedManifest.revisionMode());
 		assertEquals(DriveScope.personal("user@example.com"), sessions.publishedManifest.scope());
 		assertNull(sessions.publishedManifest.baseSequenceNumber());
-		assertNull(sessions.publishedManifest.toPageToken());
+		// The baseline is in the archive itself, so a database rebuilt from the archives gets its cursor back.
+		assertNull(sessions.publishedManifest.fromPageToken());
+		assertEquals("baseline-token", sessions.publishedManifest.toPageToken());
+		assertEquals("baseline-token", commit.archiveOrNull().toPageToken());
 	}
 
 	@Test

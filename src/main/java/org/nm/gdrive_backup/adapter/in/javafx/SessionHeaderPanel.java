@@ -107,13 +107,17 @@ public final class SessionHeaderPanel {
 		Button signOut = new Button("Sign out");
 		signOut.getStyleClass().add("secondary-button");
 		signOut.setOnAction(event -> onSignOut.run());
-		for (Label label : List.of(title, version, domainLabel, workingAs, status, fixedUser, adminName)) {
+		// Only the title and the controls keep their full width. The other labels shorten with an ellipsis in a
+		// narrow window: if they could not, the header's minimum width would exceed the window and the whole view,
+		// tabs included, would be laid out that wide and cut off on the right.
+		for (Label label : List.of(title, workingAs)) {
 			label.setMinWidth(Region.USE_PREF_SIZE);
 		}
 		settings.setMinWidth(Region.USE_PREF_SIZE);
 		signOut.setMinWidth(Region.USE_PREF_SIZE);
+		userPicker.setMinWidth(0);
 
-		// Two rows so nothing is truncated at the minimum window width: identity and session on top, user below.
+		// Two rows: identity and session on top, user below.
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
 		HBox sessionRow = new HBox(8, favicon, title, version, domainLabel, spacer, status, adminBox, settings,

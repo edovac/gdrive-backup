@@ -312,6 +312,108 @@ class ArchiveDeletionServiceTest {
 		assertThrows(IllegalStateException.class, () -> activity.duringBackup(() -> service.execute(SCOPE, plan)));
 	}
 
+	/** Archives 1 and 2 are a chain that a from-scratch full (3) and its incremental (4) replaced. */
+	private void buildANewChainAfterAnEarlierOne() {
+		Archive newFull = row(3, null, ArchiveMode.FULL, P3);
+		when(archivePort.findByScopeKey("user@example.com")).thenReturn(List.of(full, incremental, newFull, next));
+		when(archivePort.findSourceArchiveIds(3L)).thenReturn(List.of());
+		readers.add(P3, manifest(ArchiveMode.FULL, 3,
+				new ManifestFile("a", false, "a.pdf", List.of(), null, PDF, false, "r2", "a.pdf", 3L, null),
+				new ManifestFile("t", false, "t.pdf", List.of(), null, PDF, true, null, null, null, null)),
+				Map.of("a.pdf", "A22"));
+		readers.add(P4, manifest(ArchiveMode.INCREMENTAL, 4,
+				new ManifestFile("b", false, "b.pdf", List.of(), null, PDF, false, "r2", "content/b", 2L, null)),
+				Map.of("content/b", "B2"));
+		// the new chain captured a and b again; t (trashed) and gone are still known only from the earlier chain
+		when(metadataPort.findByFileId("a")).thenReturn(Optional.of(file("a", "a.pdf", false, 20L)));
+		when(metadataPort.findByFileId("b")).thenReturn(Optional.of(file("b", "b.pdf", false, 21L)));
+	}
+
+	@Test
+	void anEarlierChainsPlanVerifiesTheWholeCurrentChainAndListsWhatGoes() throws Exception {
+		buildANewChainAfterAnEarlierOne();
+
+		DeletionPlan plan = service.prepareEarlierChains(SCOPE, null).orElseThrow();
+
+		assertTrue(plan.verified(), plan.verificationProblems().toString());
+		assertEquals(3L, plan.mergedArchiveId());
+		assertEquals(4L, plan.tipArchiveId());
+		assertEquals(List.of(1, 2), plan.obsolete().stream().map(a -> a.sequenceNumber()).toList());
+		assertEquals(150L, plan.totalBytes());
+		assertEquals(0, plan.capturesToRepoint());
+		assertEquals(5, plan.capturesToRemove());
+		assertEquals(6, plan.eventsToRepoint());
+		assertEquals(List.of("t", "gone"), plan.lostContent().stream().map(l -> l.fileId()).toList());
+		assertTrue(plan.lostContent().get(0).reason().startsWith("Trashed file"));
+		assertTrue(plan.lostContent().get(1).reason().startsWith("Not captured by the current chain"));
+		verify(progressTracker).enumerated(2);
+		verify(progressTracker).itemProcessed("a.pdf");
+		verify(progressTracker).itemProcessed("b.pdf");
+		verify(commitPort, never()).apply(any());
+		verify(storagePort, never()).delete(any());
+	}
+
+	@Test
+	void aDamagedArchiveAnywhereInTheCurrentChainBlocksDeletingEarlierChains() {
+		buildANewChainAfterAnEarlierOne();
+		readers.add(P4, manifest(ArchiveMode.INCREMENTAL, 4,
+				new ManifestFile("b", false, "b.pdf", List.of(), null, PDF, false, "r2", "content/b", 2L, null)),
+				Map.of());
+
+		DeletionPlan plan = service.prepareEarlierChains(SCOPE, null).orElseThrow();
+
+		assertFalse(plan.verified());
+		assertTrue(plan.verificationProblems().getFirst().contains("content/b"));
+		assertThrows(IllegalStateException.class, () -> service.executeEarlierChains(SCOPE, plan));
+		verify(commitPort, never()).apply(any());
+	}
+
+	@Test
+	void executingAnEarlierChainsPlanRemovesItsIndexRowsThenItsFilesNewestFirst() throws Exception {
+		buildANewChainAfterAnEarlierOne();
+		DeletionPlan plan = service.prepareEarlierChains(SCOPE, null).orElseThrow();
+
+		DeletionResult result = service.executeEarlierChains(SCOPE, plan);
+
+		ArgumentCaptor<DeletionCommit> commit = ArgumentCaptor.forClass(DeletionCommit.class);
+		var order = inOrder(commitPort, storagePort);
+		order.verify(commitPort).apply(commit.capture());
+		order.verify(storagePort).delete(P2);
+		order.verify(storagePort).delete(P1);
+		assertEquals(3L, commit.getValue().mergedArchiveId());
+		assertEquals(List.of(2L, 1L), commit.getValue().obsoleteArchiveIds());
+		assertTrue(commit.getValue().captureIdToNewEntry().isEmpty());
+		assertEquals(List.of(10L, 11L, 12L, 13L, 14L), commit.getValue().captureIdsToRemove());
+		assertEquals(2, result.deletedFiles());
+		assertEquals(150L, result.freedBytes());
+	}
+
+	@Test
+	void anEarlierChainsPlanIsRefusedAsStaleOnceTheChainMovedOn() {
+		buildANewChainAfterAnEarlierOne();
+		DeletionPlan plan = service.prepareEarlierChains(SCOPE, null).orElseThrow();
+		Archive newFull = row(3, null, ArchiveMode.FULL, P3);
+		Archive later = row(5, 4L, ArchiveMode.INCREMENTAL, "archives/x/archive-0005-incremental.zip");
+		when(archivePort.findByScopeKey("user@example.com"))
+				.thenReturn(List.of(full, incremental, newFull, next, later));
+
+		IllegalStateException exception = assertThrows(IllegalStateException.class,
+				() -> service.executeEarlierChains(SCOPE, plan));
+
+		assertTrue(exception.getMessage().contains("review it again"));
+		verify(commitPort, never()).apply(any());
+	}
+
+	@Test
+	void obsoleteArchivesOfTheCurrentChainAreNotAnEarlierChain() {
+		assertThrows(IllegalStateException.class, () -> service.prepareEarlierChains(SCOPE, null));
+	}
+
+	private ArchiveManifest manifest(ArchiveMode mode, int sequenceNumber, ManifestFile... files) {
+		return new ArchiveManifest(SCOPE, mode, RevisionMode.LATEST_ONLY, sequenceNumber, null, Instant.now(), null,
+				"t" + sequenceNumber, List.of(), List.of(files), List.of());
+	}
+
 	private ArchiveManifest mergedManifest(ManifestFile... files) {
 		return new ArchiveManifest(SCOPE, ArchiveMode.MERGED_FULL, RevisionMode.LATEST_ONLY, 3, null, Instant.now(), null,
 				"t3", List.of(), List.of(files), List.of());

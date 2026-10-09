@@ -11,7 +11,7 @@ document.
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-10-03
+Last reviewed: 2026-10-09
 
 ### Completed
 
@@ -170,6 +170,18 @@ Last reviewed: 2026-10-03
   merged full, index and event history survive, backups continue, a later merge
   still equals a from-scratch full, and a corrupted merged full blocks it.
 
+- [x] Deletion of earlier chains: `ArchiveDeletionUseCase.prepareEarlierChains`
+  / `executeEarlierChains` remove every archive of a drive that is neither in
+  the current chain nor obsolete (the chains a later from-scratch full left
+  behind). `prepare` re-reads every archive of the current chain, the same
+  entry-by-entry check as above, and lists the archives, the capture rows that
+  go and the content only the earlier chains hold; `execute` has the same
+  refusals and database-first order, removes the captures and re-points the
+  events at the current chain's root. `ScopeArchives.hasEarlierChains` enables
+  **Delete earlier chains...** in the Archive manager only when the current
+  chain has no warning. Covered by `ArchiveDeletionServiceTest` and
+  `ArchiveDeletionEndToEndTest`.
+
 - [x] Archive manager UI: `ArchiveManagerPanel` (the first class in the new
   `adapter.in.javafx` package, kept out of `JavaFxApplication`) is shown after
   sign-in. A drive picker feeds a table of its archives (number, kind, created,
@@ -251,7 +263,11 @@ Last reviewed: 2026-10-03
   Restores archives, sources, files, captures, events, Shared Drive names and the
   cursor of each drive's newest archive; names unreadable archives and broken
   links; exclusive, cancellable, with progress. UI: **Rebuild database...** in the
-  Archive manager. Covered by `DatabaseRebuildEndToEndTest`.
+  Archive manager. Covered by `DatabaseRebuildEndToEndTest`. A from-scratch
+  `FULL` now records its baseline token as `to_page_token` (manifest and
+  `archives` row), so a drive whose newest archive is a full keeps its cursor
+  through a rebuild; before, such a drive started a new chain on its next
+  incremental backup.
 
 ### In progress
 

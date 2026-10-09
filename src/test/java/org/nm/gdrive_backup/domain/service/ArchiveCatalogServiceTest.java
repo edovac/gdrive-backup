@@ -104,6 +104,19 @@ class ArchiveCatalogServiceTest {
 				states(scope));
 		assertFalse(scope.hasObsolete());
 		assertFalse(scope.canMerge());
+		assertTrue(scope.hasEarlierChains());
+	}
+
+	@Test
+	void anEarlierChainIsNotOfferedForDeletionWhileTheCurrentChainHasAProblem() {
+		add(1, null, ArchiveMode.FULL, "user@example.com");
+		add(2, null, ArchiveMode.FULL, "user@example.com");
+		when(storagePort.sizeOf(path(2))).thenReturn(OptionalLong.empty());
+
+		ScopeArchives scope = only();
+
+		assertEquals(List.of(ArchiveState.PREVIOUS_CHAIN, ArchiveState.CHAIN_ROOT), states(scope));
+		assertFalse(scope.hasEarlierChains());
 	}
 
 	@Test

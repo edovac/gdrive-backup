@@ -185,6 +185,24 @@ build order live in [plan.md](plan.md).
   - The merged archive records the archives it was built from — in its
     manifest and in the database (`archive_sources`) — so the relationship is
     checkable without opening the sources.
+- **Removing earlier chains**: as an admin, I want to delete the chains an
+  earlier full backup left behind, so that a drive that started a new chain
+  does not keep its old one forever.
+  - A from-scratch `FULL` starts a new chain and leaves the previous one on
+    disk as an **earlier chain**: every archive of the drive that is neither in
+    the current chain nor made obsolete by a merge in it. They are not needed
+    to restore the drive as it is now.
+  - The Archive manager offers **Delete earlier chains...** per drive. It
+    removes all of a drive's earlier chains together, never part of one, and is
+    not offered while the current chain has a warning (a broken link or a
+    missing file).
+  - The same guard as for obsolete archives applies, but against the whole
+    current chain, since it becomes the drive's only backup: every archive in
+    it is re-read and its entries and sizes checked against its manifest. The
+    admin then sees the exact list of archives to be deleted and confirms.
+  - An earlier chain can hold content the current one does not: files trashed
+    or deleted before the new full ran, or skipped by it. These are listed as
+    content that will be lost before the admin confirms.
 - **Database rebuild**: as an admin, I want to rebuild the database from the
   archives' manifests, so that I can recover from a corrupted or missing
   `backup.db`.
@@ -199,10 +217,12 @@ build order live in [plan.md](plan.md).
     stays available when no archives are listed because the database is gone.
     The new database is built beside the old one and swapped in only when
     complete; the old file is kept as `backup.db.<date>.bak`, so a failed or
-    cancelled rebuild changes nothing. A `FULL` archive's manifest has no
-    `to_page_token`, so a drive whose newest archive is a from-scratch full
-    gets no cursor and its next incremental backup starts with a full
-    inventory; the result says which drives.
+    cancelled rebuild changes nothing. A `FULL` archive's manifest records
+    the baseline token its run fetched before listing as `to_page_token`, so
+    a drive whose newest archive is a from-scratch full continues its chain
+    too. Full archives written before that was recorded have no
+    `to_page_token`: such a drive gets no cursor and its next incremental
+    backup starts with a full inventory; the result says which drives.
   - It refuses to replace a database that is still usable unless the admin
     confirms, and it never modifies or deletes an archive. An archive whose
     manifest is unreadable, or a chain with a missing link, is reported by name
@@ -542,7 +562,7 @@ archives                   -- one row per archive written; the chain's source of
   created_at
   archive_path             -- relative to backupRoot; where the archive was written
   from_page_token          -- cursor range this delta covers; null for a full archive
-  to_page_token
+  to_page_token            -- where the next incremental resumes; a full archive's is its baseline token
   cancelled                -- true if the run that produced this archive was interrupted
 
 archive_sources            -- which archives a merged archive was built from
@@ -558,6 +578,14 @@ superseded revisions that no archive carries any more are removed, and the
 `file_events` history rows are kept and re-pointed at the merged full (whose
 manifest records the net-effect events it superseded), so the operation history
 stays complete.
+
+Deleting an earlier chain removes its `archives` and `archive_sources` rows and
+every `file_captures` row that points at them (the current chain has its own
+rows for whatever it captured, so none is re-pointed). A file whose
+`current_version_id` was one of those rows is left without a current version.
+Its `file_events` rows are kept and re-pointed at the current chain's root.
+This history lives only in the database: the surviving manifests do not record
+it, so a later database rebuild does not bring it back.
 
 Each archive's manifest mirrors its `archives` row so the chain can be checked
 and trusted from the archive alone (see **Manifest format**; it links to its
@@ -950,7 +978,7 @@ archive, and to re-link it into its chain, without `backup.db`.
 | `sequence_number` | The archive's number within the drive's archive folder; matches the `NNNN` in its filename. |
 | `base_sequence_number` | The archive this one chains onto (an incremental's predecessor). Absent for a chain root (`FULL`, `MERGED_FULL`). It is a sequence number, not the database id, because ids do not survive a rebuild of the database from the archives. |
 | `created_at` | When the archive was built. |
-| `from_page_token`, `to_page_token` | The change-feed range an incremental covers. `to_page_token` on a `MERGED_FULL` is the last merged incremental's. Absent on a from-scratch `FULL`. |
+| `from_page_token`, `to_page_token` | The change-feed range an incremental covers. `to_page_token` on a from-scratch `FULL` is the baseline token fetched before its listing (it has no `from_page_token`), and on a `MERGED_FULL` it is the chain tip's. Either way it is the cursor the next incremental resumes from, which is what a database rebuild restores. Full archives written by older versions have none. |
 | `source_archives` | `MERGED_FULL` only: the `sequence_number` and filename of every archive it was built from. |
 | `files` | One record per file, below. |
 | `events` | The run's events, below. Empty for a full. |
@@ -1060,7 +1088,10 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   operation per drive (all current incrementals plus the base into a new full
   that becomes the chain's root, after which incremental backups continue) and
   can choose to delete the obsolete partial archives, with the exact file list
-  shown beforehand and a confirmation step before any deletion.
+  shown beforehand and a confirmation step before any deletion. A chain that a
+  later from-scratch full replaced is shown as an earlier chain, and
+  **Delete earlier chains...** removes it under the same guard (see
+  **Removing earlier chains**).
 - **History view**: query `file_events` + `file_captures` for a selected file
   to show renames/moves/trashes and when its content was captured over time,
   including which archive holds each capture. The admin finds the file by a

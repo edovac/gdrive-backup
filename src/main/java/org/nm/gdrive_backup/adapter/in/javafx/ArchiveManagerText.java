@@ -154,6 +154,33 @@ final class ArchiveManagerText {
 		return text.toString();
 	}
 
+	static String earlierChainsSummary(DeletionPlan plan) {
+		StringBuilder text = new StringBuilder();
+		if (plan.verified()) {
+			text.append("Verification passed: every archive of the current chain was read completely and matches its "
+					+ "manifest.\n\n");
+		} else {
+			text.append("Verification FAILED. The current chain must be intact before an earlier one is deleted:\n");
+			plan.verificationProblems().forEach(problem -> text.append("  - ").append(problem).append('\n'));
+			text.append('\n');
+		}
+		text.append("Archives of earlier chains that would be deleted (").append(plan.obsolete().size()).append(", ")
+				.append(size(plan.totalBytes())).append("):\n");
+		plan.obsolete().forEach(archive -> text.append("  ").append(archive.path()).append("  (")
+				.append(size(archive.sizeBytes())).append(")\n"));
+		text.append("\nThe current chain becomes the only backup of this drive. In the database: ")
+				.append(plan.capturesToRemove()).append(" content records of the earlier chains are removed and ")
+				.append(plan.eventsToRepoint()).append(" history events are kept.\n");
+		if (!plan.lostContent().isEmpty()) {
+			text.append("\nContent that will no longer exist anywhere (").append(plan.lostContent().size())
+					.append(" files):\n");
+			plan.lostContent().forEach(lost -> text.append("  ").append(lost.name()).append(" - ").append(lost.reason())
+					.append('\n'));
+			text.append("If one of these files is restored in Drive, the next backup captures it again.\n");
+		}
+		return text.toString();
+	}
+
 	static String deletionResult(DeletionResult result) {
 		StringBuilder text = new StringBuilder("Deleted ").append(result.deletedFiles()).append(" archive files, freeing ")
 				.append(size(result.freedBytes())).append('.');

@@ -214,15 +214,23 @@ class DatabaseRebuildEndToEndTest {
 	}
 
 	@Test
-	void aFullBackupAloneLeavesNoCursorSoTheNextIncrementalInventoriesAgain() throws Exception {
+	void aFullBackupAloneKeepsItsCursorSoTheNextIncrementalChainsOntoIt() throws Exception {
 		drive.create("a", "a.pdf", "", PDF, "A1");
 		full.synchronize(ACCESS, SCOPE, null);
+		String cursorBefore = savedCursor();
 		Files.delete(database.path());
 
 		DatabaseRebuildResult result = rebuild.rebuild(false);
 
-		assertEquals(List.of(USER), result.scopesWithoutCursor());
-		assertEquals(null, savedCursor());
+		assertEquals(List.of(), result.scopesWithoutCursor());
+		assertEquals(cursorBefore, savedCursor());
+
+		drive.edit("a", "A2");
+		Archive next = incremental.synchronize(ACCESS, SCOPE, null).archive();
+
+		assertEquals(ArchiveMode.INCREMENTAL, next.mode());
+		assertEquals(2, next.sequenceNumber());
+		assertEquals(archives.findByScopeKey(USER).getFirst().id(), next.baseArchiveId());
 	}
 
 	private Path archiveFile(String name) throws Exception {

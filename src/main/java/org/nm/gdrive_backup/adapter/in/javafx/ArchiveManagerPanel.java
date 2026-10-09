@@ -37,7 +37,7 @@ import javafx.scene.layout.VBox;
 
 /**
  * The Archive manager: lists each drive's archive chain, merges it into a new full backup and deletes the archives
- * a merge made obsolete. Long operations run off the FX thread and report progress through the application's
+ * a merge made obsolete or an earlier chain left behind. Long operations run off the FX thread and report progress through the application's
  * progress panel, which the owner starts and stops through the two hooks.
  */
 public final class ArchiveManagerPanel {
@@ -57,6 +57,7 @@ public final class ArchiveManagerPanel {
 	private final Button refreshButton = new Button("Refresh");
 	private final Button mergeButton = new Button("Merge into a full backup...");
 	private final Button deleteButton = new Button("Delete obsolete archives...");
+	private final Button deleteEarlierButton = new Button("Delete earlier chains...");
 	private final VBox root;
 
 	private boolean operationRunning;
@@ -99,12 +100,17 @@ public final class ArchiveManagerPanel {
 		mergeButton.setOnAction(event -> confirmAndMerge());
 		deleteButton.getStyleClass().add("secondary-button");
 		deleteButton.setOnAction(event -> prepareDeletion());
+		deleteEarlierButton.getStyleClass().add("secondary-button");
+		deleteEarlierButton.setOnAction(event -> confirmAndPrepareEarlierChainsDeletion());
 
 		rebuildButton.getStyleClass().add("secondary-button");
 		rebuildButton.setOnAction(event -> confirmAndRebuild());
 
-		VBox buttons = new VBox(6, mergeButton, deleteButton, rebuildButton, refreshButton);
+		VBox buttons = new VBox(6, mergeButton, deleteButton, deleteEarlierButton, rebuildButton, refreshButton);
 		buttons.setAlignment(Pos.CENTER);
+		// Every button takes the column's width, so they all match the widest label.
+		buttons.setMaxWidth(260);
+		buttons.getChildren().forEach(button -> ((Button) button).setMaxWidth(Double.MAX_VALUE));
 		root = new VBox(6, title, note, scopePicker, table, warnings, buttons, status);
 		root.setAlignment(Pos.CENTER);
 		hide();
@@ -211,6 +217,7 @@ public final class ArchiveManagerPanel {
 		boolean busy = operationRunning || externallyBusy;
 		mergeButton.setDisable(busy || selected == null || !selected.canMerge());
 		deleteButton.setDisable(busy || selected == null || !selected.hasObsolete());
+		deleteEarlierButton.setDisable(busy || selected == null || !selected.hasEarlierChains());
 		rebuildButton.setDisable(busy);
 		refreshButton.setDisable(operationRunning);
 		scopePicker.setDisable(operationRunning);
@@ -298,6 +305,45 @@ public final class ArchiveManagerPanel {
 		}
 		status.setText("Deleting obsolete archives...");
 		run(() -> deletionUseCase.execute(selected.scope(), plan), (DeletionResult result) -> {
+			status.setText(ArchiveManagerText.deletionResult(result));
+			refresh();
+		});
+	}
+
+	private void confirmAndPrepareEarlierChainsDeletion() {
+		ScopeArchives selected = scopePicker.getValue();
+		if (selected == null || !confirm("Delete earlier chains", "Delete the earlier chains of this drive?",
+				"A later full backup started a new chain for " + selected.label() + ", and the archives before it are "
+						+ "no longer needed to restore the drive as it is now. First every archive of the current chain "
+						+ "is verified, and you will see exactly what would be removed before anything is deleted.",
+				"Review deletion...")) {
+			return;
+		}
+		status.setText("Verifying the current chain...");
+		run(() -> deletionUseCase.prepareEarlierChains(selected.scope(),
+				ArchiveManagerText.displayName(selected.label(), selected.scope().key())),
+				(Optional<DeletionPlan> plan) -> {
+					if (plan.isEmpty()) {
+						status.setText("Verification cancelled. Nothing was deleted.");
+						return;
+					}
+					reviewEarlierChainsDeletion(selected, plan.get());
+				});
+	}
+
+	private void reviewEarlierChainsDeletion(ScopeArchives selected, DeletionPlan plan) {
+		String summary = ArchiveManagerText.earlierChainsSummary(plan);
+		if (!plan.verified()) {
+			showText(Alert.AlertType.ERROR, "Delete earlier chains", "The current chain did not verify", summary);
+			status.setText("Nothing was deleted: verification failed.");
+			return;
+		}
+		if (!confirmText("Delete earlier chains", "Delete these archives permanently?", summary, "Delete")) {
+			status.setText("Nothing was deleted.");
+			return;
+		}
+		status.setText("Deleting earlier chains...");
+		run(() -> deletionUseCase.executeEarlierChains(selected.scope(), plan), (DeletionResult result) -> {
 			status.setText(ArchiveManagerText.deletionResult(result));
 			refresh();
 		});
