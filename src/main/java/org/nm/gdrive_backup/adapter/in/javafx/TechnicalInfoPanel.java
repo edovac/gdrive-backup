@@ -78,10 +78,12 @@ public final class TechnicalInfoPanel {
 		Label note = new Label("Nothing is loaded automatically. Storage and the report follow the selected user.");
 		note.getStyleClass().add("scope");
 		note.setWrapText(true);
+		note.setMaxWidth(540);
 
 		FlowPane cards = new FlowPane(12, 12, storageCard.node, reportCard.node, cloudCard.node, applicationCard);
-		cards.setAlignment(Pos.TOP_LEFT);
+		cards.setAlignment(Pos.TOP_CENTER);
 		root = new VBox(12, title, note, refreshAll, cards);
+		root.setAlignment(Pos.TOP_CENTER);
 		root.setPadding(new Insets(12));
 		reset();
 	}

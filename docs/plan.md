@@ -357,6 +357,8 @@ of truth for expected behavior.
   app-image, not an installer — see the Completed list).
 - [x] Header identity polish: app version, domain favicon, admin avatar (see
   the Completed list).
+- [x] Application icon (window title bar, taskbar and the packaged `.exe`) and
+  centered Archives / Technical info tabs.
 
 Implementation sequence: runtime location selection; backup-job options and
 state; drive scope selection; progress/cancellation/recovery; per-drive archive
