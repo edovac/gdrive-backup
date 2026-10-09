@@ -138,6 +138,33 @@ class ArchiveManagerTextTest {
 		assertTrue(withFailures.contains("a.zip (in use)"));
 	}
 
+	@Test
+	void theEarlierChainsSummarySaysTheCurrentChainWasVerifiedAndWhatGoes() {
+		DeletionPlan plan = new DeletionPlan(SCOPE, 3, 4,
+				List.of(new ObsoleteArchive(1, 1, "archives/x/archive-0001-full.zip", 2048L)),
+				List.of(new LostContent("t", "old report.pdf", "r1", "Trashed file: its content exists only in an earlier chain")),
+				0, 5, 6, List.of());
+
+		String text = ArchiveManagerText.earlierChainsSummary(plan);
+
+		assertTrue(text.startsWith("Verification passed: every archive of the current chain"));
+		assertTrue(text.contains("(1, 2.0 KB)"));
+		assertTrue(text.contains("archive-0001-full.zip"));
+		assertTrue(text.contains("5 content records of the earlier chains are removed and 6 history events are kept"));
+		assertTrue(text.contains("old report.pdf - Trashed file"));
+	}
+
+	@Test
+	void theEarlierChainsSummaryLeadsWithAFailedVerification() {
+		DeletionPlan plan = new DeletionPlan(SCOPE, 3, 4, List.of(), List.of(), 0, 0, 0,
+				List.of("Entry a.pdf cannot be read: missing"));
+
+		String text = ArchiveManagerText.earlierChainsSummary(plan);
+
+		assertTrue(text.startsWith("Verification FAILED"));
+		assertTrue(text.contains("Entry a.pdf cannot be read"));
+	}
+
 	private static ArchiveView view(ArchiveState state, boolean missing) {
 		Archive archive = new Archive(1L, "user@example.com", DriveScopeType.PERSONAL, 1, null, ArchiveMode.FULL,
 				RevisionMode.LATEST_ONLY, Instant.now(), "archives/x/a.zip", null, null, false);
@@ -145,6 +172,6 @@ class ArchiveManagerTextTest {
 	}
 
 	private static ScopeArchives scope(ArchiveView... views) {
-		return new ScopeArchives(SCOPE, "My Drive (user@example.com)", List.of(views), List.of(), true, false);
+		return new ScopeArchives(SCOPE, "My Drive (user@example.com)", List.of(views), List.of(), true, false, false);
 	}
 }

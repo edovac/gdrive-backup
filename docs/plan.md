@@ -170,6 +170,18 @@ Last reviewed: 2026-10-09
   merged full, index and event history survive, backups continue, a later merge
   still equals a from-scratch full, and a corrupted merged full blocks it.
 
+- [x] Deletion of earlier chains: `ArchiveDeletionUseCase.prepareEarlierChains`
+  / `executeEarlierChains` remove every archive of a drive that is neither in
+  the current chain nor obsolete (the chains a later from-scratch full left
+  behind). `prepare` re-reads every archive of the current chain, the same
+  entry-by-entry check as above, and lists the archives, the capture rows that
+  go and the content only the earlier chains hold; `execute` has the same
+  refusals and database-first order, removes the captures and re-points the
+  events at the current chain's root. `ScopeArchives.hasEarlierChains` enables
+  **Delete earlier chains...** in the Archive manager only when the current
+  chain has no warning. Covered by `ArchiveDeletionServiceTest` and
+  `ArchiveDeletionEndToEndTest`.
+
 - [x] Archive manager UI: `ArchiveManagerPanel` (the first class in the new
   `adapter.in.javafx` package, kept out of `JavaFxApplication`) is shown after
   sign-in. A drive picker feeds a table of its archives (number, kind, created,

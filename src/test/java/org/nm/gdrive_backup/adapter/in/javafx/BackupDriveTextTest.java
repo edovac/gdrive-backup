@@ -177,6 +177,6 @@ class BackupDriveTextTest {
 
 	private static ScopeArchives scope(List<String> warnings, ArchiveView... views) {
 		return new ScopeArchives(DriveScope.personal("user@example.com"), "My Drive (user@example.com)",
-				List.of(views), warnings, true, false);
+				List.of(views), warnings, true, false, false);
 	}
 }

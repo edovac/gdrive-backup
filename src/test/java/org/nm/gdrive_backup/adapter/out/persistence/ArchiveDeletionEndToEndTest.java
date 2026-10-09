@@ -180,6 +180,48 @@ class ArchiveDeletionEndToEndTest {
 		assertEquals(3, filesOnDisk());
 	}
 
+	@Test
+	void deletingAnEarlierChainLeavesTheNewChainIntactAndBackupsContinue() throws Exception {
+		drive.create("a", "a.pdf", "", PDF, "A1");
+		drive.create("b", "b.pdf", "", PDF, "B1");
+		full.synchronize(ACCESS, SCOPE, null);
+		drive.edit("a", "A2");
+		incremental.synchronize(ACCESS, SCOPE, null);
+		drive.trash("b");
+		Archive newFull = full.synchronize(ACCESS, SCOPE, null).archive();
+		drive.edit("a", "A3");
+		Archive newIncremental = incremental.synchronize(ACCESS, SCOPE, null).archive();
+		int eventsBefore = count("file_events");
+		assertTrue(catalog.listScopes().getFirst().hasEarlierChains());
+
+		DeletionPlan plan = deletion.prepareEarlierChains(SCOPE, null).orElseThrow();
+		assertTrue(plan.verified(), plan.verificationProblems().toString());
+		assertEquals(List.of(1, 2), plan.obsolete().stream().map(a -> a.sequenceNumber()).toList());
+		// b was trashed before the new full, so only the earlier chain holds its bytes
+		assertEquals(List.of("b"), plan.lostContent().stream().map(l -> l.fileId()).toList());
+		DeletionResult result = deletion.executeEarlierChains(SCOPE, plan);
+
+		assertEquals(2, result.deletedFiles());
+		assertTrue(result.filesThatCouldNotBeDeleted().isEmpty());
+		assertEquals(List.of(newFull, newIncremental), archives.findByScopeKey(USER));
+		assertEquals(2, filesOnDisk());
+		assertEquals(eventsBefore, count("file_events"));
+		assertEquals(0, count("file_events WHERE archive_id NOT IN (SELECT id FROM archives)"));
+		assertEquals(0, count("file_captures WHERE archive_id NOT IN (SELECT id FROM archives)"));
+		assertEquals(0, count("files WHERE current_version_id IS NOT NULL AND current_version_id NOT IN "
+				+ "(SELECT id FROM file_captures)"));
+
+		ScopeArchives view = catalog.listScopes().getFirst();
+		assertEquals(List.of(ArchiveState.CHAIN_ROOT, ArchiveState.CHAIN_INCREMENTAL),
+				view.archives().stream().map(a -> a.state()).toList());
+		assertFalse(view.hasEarlierChains());
+
+		drive.edit("a", "A4");
+		Archive next = incremental.synchronize(ACCESS, SCOPE, null).archive();
+		assertEquals(newIncremental.id(), next.baseArchiveId());
+		assertEquals(Map.of("a.pdf", "A4"), extract(merge.merge(SCOPE, null).archive()));
+	}
+
 	private void assertThrowsRefusal(DeletionPlan plan) {
 		org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () -> deletion.execute(SCOPE, plan));
 	}

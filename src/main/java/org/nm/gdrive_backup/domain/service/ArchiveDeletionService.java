@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import org.nm.gdrive_backup.domain.model.Archive;
 import org.nm.gdrive_backup.domain.model.ArchiveChainException;
@@ -43,7 +44,8 @@ import org.nm.gdrive_backup.domain.port.out.FileMetadataPort;
  * Deletes the archives a merge made obsolete, but only after the merged full has been re-read completely and the
  * admin has seen exactly what goes. The archives are the only copy of the data, so {@link #prepare} changes
  * nothing, {@link #execute} refuses an unverified or out-of-date plan, and the database is updated before any file
- * is removed (a failure part-way leaves files behind, never rows pointing at missing files).
+ * is removed (a failure part-way leaves files behind, never rows pointing at missing files). The chains an earlier
+ * from-scratch full left behind go the same way, after every archive of the current chain has been re-read.
  */
 public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 
@@ -76,6 +78,26 @@ public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 
 	@Override
 	public Optional<DeletionPlan> prepare(DriveScope scope, String scopeDisplayNameOrNull) {
+		return preparing(scope, scopeDisplayNameOrNull, () -> prepareVerifiedPlan(scope));
+	}
+
+	@Override
+	public DeletionResult execute(DriveScope scope, DeletionPlan plan) {
+		return backupActivity.duringExclusiveOperation(() -> carryOut(scope, plan));
+	}
+
+	@Override
+	public Optional<DeletionPlan> prepareEarlierChains(DriveScope scope, String scopeDisplayNameOrNull) {
+		return preparing(scope, scopeDisplayNameOrNull, () -> prepareEarlierChainsPlan(scope));
+	}
+
+	@Override
+	public DeletionResult executeEarlierChains(DriveScope scope, DeletionPlan plan) {
+		return backupActivity.duringExclusiveOperation(() -> carryOutEarlierChains(scope, plan));
+	}
+
+	private Optional<DeletionPlan> preparing(DriveScope scope, String scopeDisplayNameOrNull,
+			Supplier<Optional<DeletionPlan>> work) {
 		return backupActivity.duringExclusiveOperation(() -> {
 			AvailableDrive drive = new AvailableDrive(scope.key(),
 					scopeDisplayNameOrNull != null ? scopeDisplayNameOrNull : scope.key(),
@@ -84,18 +106,13 @@ public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 			progressTracker.jobStarted(List.of(drive));
 			progressTracker.driveStarted(drive);
 			try {
-				Optional<DeletionPlan> plan = prepareVerifiedPlan(scope);
+				Optional<DeletionPlan> plan = work.get();
 				progressTracker.driveCompleted();
 				return plan;
 			} finally {
 				progressTracker.jobFinished();
 			}
 		});
-	}
-
-	@Override
-	public DeletionResult execute(DriveScope scope, DeletionPlan plan) {
-		return backupActivity.duringExclusiveOperation(() -> carryOut(scope, plan));
 	}
 
 	private Optional<DeletionPlan> prepareVerifiedPlan(DriveScope scope) {
@@ -121,7 +138,53 @@ public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 		}
 
 		IndexChanges changes = manifest == null ? IndexChanges.EMPTY : indexChanges(context.obsolete(), manifest, problems);
-		List<ObsoleteArchive> obsolete = context.obsolete().stream()
+		return Optional.of(new DeletionPlan(scope, context.merged().id(), context.tip().id(),
+				describe(context.obsolete()), changes.lostContent(), changes.repoint().size(), changes.remove().size(),
+				changes.events(), problems));
+	}
+
+	/** Re-reads every archive of the current chain: once the earlier chains are gone it is the drive's only backup. */
+	private Optional<DeletionPlan> prepareEarlierChainsPlan(DriveScope scope) {
+		EarlierChains context = earlierChains(scope);
+		progressTracker.enumerating();
+		List<String> problems = new ArrayList<>();
+		List<ArchiveReader> readers = new ArrayList<>();
+		try {
+			int entries = 0;
+			for (Archive archive : context.chain()) {
+				try {
+					ArchiveReader reader = archiveReaderPort.open(archive.archivePath());
+					readers.add(reader);
+					checkManifest(scope, archive, reader.manifest(), problems);
+					entries += (int) reader.manifest().files().stream().filter(file -> file.entry() != null).count();
+				} catch (IOException exception) {
+					problems.add("Archive " + archive.sequenceNumber() + " of the current chain (" + archive.archivePath()
+							+ ") cannot be read: " + exception.getMessage());
+				}
+			}
+			progressTracker.enumerated(entries);
+			for (ArchiveReader reader : readers) {
+				for (ManifestFile file : reader.manifest().files()) {
+					if (file.entry() == null) {
+						continue;
+					}
+					if (cancellation.isImmediateStopRequested()) {
+						return Optional.empty();
+					}
+					progressTracker.itemProcessed(file.name());
+					verifyEntry(reader, file, problems);
+				}
+			}
+		} finally {
+			readers.forEach(ArchiveReader::close);
+		}
+		IndexChanges changes = earlierChainChanges(context.earlier());
+		return Optional.of(new DeletionPlan(scope, context.root().id(), context.tip().id(), describe(context.earlier()),
+				changes.lostContent(), 0, changes.remove().size(), changes.events(), problems));
+	}
+
+	private List<ObsoleteArchive> describe(List<Archive> archives) {
+		return archives.stream()
 				.sorted(Comparator.comparingInt(Archive::sequenceNumber))
 				.map(archive -> {
 					OptionalLong size = archiveStoragePort.sizeOf(archive.archivePath());
@@ -129,8 +192,6 @@ public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 							size.isPresent() ? size.getAsLong() : null);
 				})
 				.toList();
-		return Optional.of(new DeletionPlan(scope, context.merged().id(), context.tip().id(), obsolete,
-				changes.lostContent(), changes.repoint().size(), changes.remove().size(), changes.events(), problems));
 	}
 
 	private DeletionResult carryOut(DriveScope scope, DeletionPlan plan) {
@@ -165,10 +226,34 @@ public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 			throw staleError();
 		}
 
-		List<Archive> newestFirst = context.obsolete().stream()
+		return commitAndDelete(context.merged(), context.obsolete(), changes);
+	}
+
+	private DeletionResult carryOutEarlierChains(DriveScope scope, DeletionPlan plan) {
+		if (!plan.verified()) {
+			throw new IllegalStateException("The deletion has verification problems and cannot be carried out: "
+					+ String.join("; ", plan.verificationProblems()));
+		}
+		EarlierChains context = earlierChains(scope);
+		Set<Long> currentEarlier = new HashSet<>();
+		context.earlier().forEach(archive -> currentEarlier.add(archive.id()));
+		Set<Long> plannedEarlier = new HashSet<>();
+		plan.obsolete().forEach(archive -> plannedEarlier.add(archive.id()));
+		IndexChanges changes = earlierChainChanges(context.earlier());
+		if (context.root().id() != plan.mergedArchiveId() || context.tip().id() != plan.tipArchiveId()
+				|| !currentEarlier.equals(plannedEarlier) || changes.remove().size() != plan.capturesToRemove()
+				|| changes.events() != plan.eventsToRepoint()) {
+			throw staleError();
+		}
+		return commitAndDelete(context.root(), context.earlier(), changes);
+	}
+
+	/** Database first, then the files, newest first: a failure part-way never leaves a row pointing at a missing file. */
+	private DeletionResult commitAndDelete(Archive kept, List<Archive> removed, IndexChanges changes) {
+		List<Archive> newestFirst = removed.stream()
 				.sorted(Comparator.comparingInt(Archive::sequenceNumber).reversed())
 				.toList();
-		deletionCommitPort.apply(new DeletionCommit(context.merged().id(),
+		deletionCommitPort.apply(new DeletionCommit(kept.id(),
 				newestFirst.stream().map(Archive::id).toList(), changes.repoint(), changes.remove()));
 
 		int deleted = 0;
@@ -217,13 +302,34 @@ public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 		return new Context(root, inspection.chain().archives().getLast(), obsolete);
 	}
 
-	private static void checkManifest(DriveScope scope, Archive merged, ArchiveManifest manifest, List<String> problems) {
-		if (!scope.equals(manifest.scope())) {
-			problems.add("The merged archive belongs to " + manifest.scope() + ", not " + scope);
+	/** The drive's archives as removing earlier chains needs them: a sound current chain and everything outside it. */
+	private EarlierChains earlierChains(DriveScope scope) {
+		List<Archive> archives = archivePort.findByScopeKey(scope.key());
+		if (archives.isEmpty()) {
+			throw new IllegalStateException("This drive has no archives");
 		}
-		if (manifest.sequenceNumber() != merged.sequenceNumber() || manifest.mode() != merged.mode()) {
-			problems.add("The merged archive says it is " + manifest.mode() + " number " + manifest.sequenceNumber()
-					+ " but the records say " + merged.mode() + " number " + merged.sequenceNumber());
+		ArchiveChainInspector inspection = ArchiveChainInspector.inspect(archives, archivePort);
+		if (inspection.chain().problem() != null) {
+			throw new ArchiveChainException(inspection.chain().problem());
+		}
+		List<Archive> earlier = archives.stream()
+				.filter(archive -> !inspection.chainIds().contains(archive.id())
+						&& !inspection.obsoleteIds().contains(archive.id()))
+				.toList();
+		if (earlier.isEmpty()) {
+			throw new IllegalStateException("There are no earlier chains to delete");
+		}
+		return new EarlierChains(inspection.chain().archives(), earlier);
+	}
+
+	private static void checkManifest(DriveScope scope, Archive archive, ArchiveManifest manifest, List<String> problems) {
+		if (!scope.equals(manifest.scope())) {
+			problems.add("Archive " + archive.archivePath() + " belongs to " + manifest.scope() + ", not " + scope);
+		}
+		if (manifest.sequenceNumber() != archive.sequenceNumber() || manifest.mode() != archive.mode()) {
+			problems.add("Archive " + archive.archivePath() + " says it is " + manifest.mode() + " number "
+					+ manifest.sequenceNumber() + " but the records say " + archive.mode() + " number "
+					+ archive.sequenceNumber());
 		}
 	}
 
@@ -287,7 +393,41 @@ public class ArchiveDeletionService implements ArchiveDeletionUseCase {
 		}
 	}
 
+	/**
+	 * An earlier chain shares no index row with the current one (a from-scratch full captures every file again), so
+	 * all of its rows go; a file whose current content is one of them was not captured by the current chain.
+	 */
+	private IndexChanges earlierChainChanges(List<Archive> earlier) {
+		List<Long> remove = new ArrayList<>();
+		List<LostContent> lost = new ArrayList<>();
+		int events = 0;
+		for (Archive archive : earlier) {
+			events += fileEventPort.countByArchiveId(archive.id());
+			for (FileCapture capture : fileCapturePort.findByArchiveId(archive.id())) {
+				remove.add(capture.id());
+				StoredFile file = fileMetadataPort.findByFileId(capture.fileId()).orElse(null);
+				if (file != null && Objects.equals(file.currentVersionId(), capture.id())) {
+					lost.add(new LostContent(file.fileId(), file.name(), capture.revisionId(), file.trashed()
+							? "Trashed file: its content exists only in an earlier chain"
+							: "Not captured by the current chain: its content exists only in an earlier chain"));
+				}
+			}
+		}
+		return new IndexChanges(Map.of(), remove, lost, events);
+	}
+
 	private record Context(Archive merged, Archive tip, List<Archive> obsolete) {
+	}
+
+	private record EarlierChains(List<Archive> chain, List<Archive> earlier) {
+
+		Archive root() {
+			return chain.getFirst();
+		}
+
+		Archive tip() {
+			return chain.getLast();
+		}
 	}
 
 	private record IndexChanges(Map<Long, String> repoint, List<Long> remove, List<LostContent> lostContent, int events) {

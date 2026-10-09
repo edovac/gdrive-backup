@@ -8,6 +8,6 @@ public enum ArchiveState {
 	CHAIN_INCREMENTAL,
 	/** Consumed by a merge in the current chain: its content is carried by the merged full, and it can be deleted. */
 	OBSOLETE,
-	/** Part of an older chain that a later from-scratch full left behind; never offered for deletion. */
+	/** Part of an older chain that a later from-scratch full left behind; deleted only as a whole, on request. */
 	PREVIOUS_CHAIN
 }

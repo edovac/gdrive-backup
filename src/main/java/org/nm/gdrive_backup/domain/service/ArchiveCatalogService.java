@@ -70,7 +70,10 @@ public class ArchiveCatalogService implements ArchiveCatalogUseCase {
 
 		boolean rooted = chain.problem() == null && isRoot(chain.archives().getFirst());
 		boolean canMerge = rooted && chain.archives().size() > 1 && warnings.isEmpty();
-		return new ScopeArchives(scope, labelOf(any), views, warnings, canMerge, !obsoleteIds.isEmpty());
+		boolean hasEarlierChains = warnings.isEmpty()
+				&& views.stream().anyMatch(view -> view.state() == ArchiveState.PREVIOUS_CHAIN);
+		return new ScopeArchives(scope, labelOf(any), views, warnings, canMerge, !obsoleteIds.isEmpty(),
+				hasEarlierChains);
 	}
 
 	private static ArchiveState stateOf(Archive archive, List<Archive> chain, Set<Long> chainIds, Set<Long> obsoleteIds) {

@@ -185,6 +185,24 @@ build order live in [plan.md](plan.md).
   - The merged archive records the archives it was built from — in its
     manifest and in the database (`archive_sources`) — so the relationship is
     checkable without opening the sources.
+- **Removing earlier chains**: as an admin, I want to delete the chains an
+  earlier full backup left behind, so that a drive that started a new chain
+  does not keep its old one forever.
+  - A from-scratch `FULL` starts a new chain and leaves the previous one on
+    disk as an **earlier chain**: every archive of the drive that is neither in
+    the current chain nor made obsolete by a merge in it. They are not needed
+    to restore the drive as it is now.
+  - The Archive manager offers **Delete earlier chains...** per drive. It
+    removes all of a drive's earlier chains together, never part of one, and is
+    not offered while the current chain has a warning (a broken link or a
+    missing file).
+  - The same guard as for obsolete archives applies, but against the whole
+    current chain, since it becomes the drive's only backup: every archive in
+    it is re-read and its entries and sizes checked against its manifest. The
+    admin then sees the exact list of archives to be deleted and confirms.
+  - An earlier chain can hold content the current one does not: files trashed
+    or deleted before the new full ran, or skipped by it. These are listed as
+    content that will be lost before the admin confirms.
 - **Database rebuild**: as an admin, I want to rebuild the database from the
   archives' manifests, so that I can recover from a corrupted or missing
   `backup.db`.
@@ -560,6 +578,14 @@ superseded revisions that no archive carries any more are removed, and the
 `file_events` history rows are kept and re-pointed at the merged full (whose
 manifest records the net-effect events it superseded), so the operation history
 stays complete.
+
+Deleting an earlier chain removes its `archives` and `archive_sources` rows and
+every `file_captures` row that points at them (the current chain has its own
+rows for whatever it captured, so none is re-pointed). A file whose
+`current_version_id` was one of those rows is left without a current version.
+Its `file_events` rows are kept and re-pointed at the current chain's root.
+This history lives only in the database: the surviving manifests do not record
+it, so a later database rebuild does not bring it back.
 
 Each archive's manifest mirrors its `archives` row so the chain can be checked
 and trusted from the archive alone (see **Manifest format**; it links to its
@@ -1062,7 +1088,10 @@ the flat-tree rules (first parent, sanitizing, ` (2)` collisions).
   operation per drive (all current incrementals plus the base into a new full
   that becomes the chain's root, after which incremental backups continue) and
   can choose to delete the obsolete partial archives, with the exact file list
-  shown beforehand and a confirmation step before any deletion.
+  shown beforehand and a confirmation step before any deletion. A chain that a
+  later from-scratch full replaced is shown as an earlier chain, and
+  **Delete earlier chains...** removes it under the same guard (see
+  **Removing earlier chains**).
 - **History view**: query `file_events` + `file_captures` for a selected file
   to show renames/moves/trashes and when its content was captured over time,
   including which archive holds each capture. The admin finds the file by a

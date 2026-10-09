@@ -20,4 +20,14 @@ public interface ArchiveDeletionUseCase {
 	 * that no longer matches the drive's chain.
 	 */
 	DeletionResult execute(DriveScope scope, DeletionPlan plan);
+
+	/**
+	 * The same for the chains an earlier from-scratch full left behind: every archive that is neither in the current
+	 * chain nor obsolete. Re-reads the whole current chain, since it becomes the drive's only backup. In the plan
+	 * {@code mergedArchiveId} is the current chain's root, which takes over the removed archives' history events.
+	 */
+	Optional<DeletionPlan> prepareEarlierChains(DriveScope scope, String scopeDisplayNameOrNull);
+
+	/** Carries out a plan from {@link #prepareEarlierChains}, with the same refusals as {@link #execute}. */
+	DeletionResult executeEarlierChains(DriveScope scope, DeletionPlan plan);
 }
