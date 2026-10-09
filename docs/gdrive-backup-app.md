@@ -199,10 +199,12 @@ build order live in [plan.md](plan.md).
     stays available when no archives are listed because the database is gone.
     The new database is built beside the old one and swapped in only when
     complete; the old file is kept as `backup.db.<date>.bak`, so a failed or
-    cancelled rebuild changes nothing. A `FULL` archive's manifest has no
-    `to_page_token`, so a drive whose newest archive is a from-scratch full
-    gets no cursor and its next incremental backup starts with a full
-    inventory; the result says which drives.
+    cancelled rebuild changes nothing. A `FULL` archive's manifest records
+    the baseline token its run fetched before listing as `to_page_token`, so
+    a drive whose newest archive is a from-scratch full continues its chain
+    too. Full archives written before that was recorded have no
+    `to_page_token`: such a drive gets no cursor and its next incremental
+    backup starts with a full inventory; the result says which drives.
   - It refuses to replace a database that is still usable unless the admin
     confirms, and it never modifies or deletes an archive. An archive whose
     manifest is unreadable, or a chain with a missing link, is reported by name
@@ -542,7 +544,7 @@ archives                   -- one row per archive written; the chain's source of
   created_at
   archive_path             -- relative to backupRoot; where the archive was written
   from_page_token          -- cursor range this delta covers; null for a full archive
-  to_page_token
+  to_page_token            -- where the next incremental resumes; a full archive's is its baseline token
   cancelled                -- true if the run that produced this archive was interrupted
 
 archive_sources            -- which archives a merged archive was built from
@@ -950,7 +952,7 @@ archive, and to re-link it into its chain, without `backup.db`.
 | `sequence_number` | The archive's number within the drive's archive folder; matches the `NNNN` in its filename. |
 | `base_sequence_number` | The archive this one chains onto (an incremental's predecessor). Absent for a chain root (`FULL`, `MERGED_FULL`). It is a sequence number, not the database id, because ids do not survive a rebuild of the database from the archives. |
 | `created_at` | When the archive was built. |
-| `from_page_token`, `to_page_token` | The change-feed range an incremental covers. `to_page_token` on a `MERGED_FULL` is the last merged incremental's. Absent on a from-scratch `FULL`. |
+| `from_page_token`, `to_page_token` | The change-feed range an incremental covers. `to_page_token` on a from-scratch `FULL` is the baseline token fetched before its listing (it has no `from_page_token`), and on a `MERGED_FULL` it is the chain tip's. Either way it is the cursor the next incremental resumes from, which is what a database rebuild restores. Full archives written by older versions have none. |
 | `source_archives` | `MERGED_FULL` only: the `sequence_number` and filename of every archive it was built from. |
 | `files` | One record per file, below. |
 | `events` | The run's events, below. Empty for a full. |

@@ -11,7 +11,7 @@ document.
 
 Status markers: `[x]` complete, `[-]` in progress, `[ ]` not started.
 
-Last reviewed: 2026-10-03
+Last reviewed: 2026-10-09
 
 ### Completed
 
@@ -251,7 +251,11 @@ Last reviewed: 2026-10-03
   Restores archives, sources, files, captures, events, Shared Drive names and the
   cursor of each drive's newest archive; names unreadable archives and broken
   links; exclusive, cancellable, with progress. UI: **Rebuild database...** in the
-  Archive manager. Covered by `DatabaseRebuildEndToEndTest`.
+  Archive manager. Covered by `DatabaseRebuildEndToEndTest`. A from-scratch
+  `FULL` now records its baseline token as `to_page_token` (manifest and
+  `archives` row), so a drive whose newest archive is a full keeps its cursor
+  through a rebuild; before, such a drive started a new chain on its next
+  incremental backup.
 
 ### In progress
 
